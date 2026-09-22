@@ -45,6 +45,41 @@ def request(base, path, key=None, payload=None):
         return exc.code, exc.read()
 
 
+def check_empty(base, revision, key, read_key):
+    """Verify a genesis-only node without inventing historical data or media."""
+    if not key or not read_key or key == read_key:
+        raise ValueError('Distinct full and read-only credentials required')
+    checks = []
+    def expect(name, path, credential, status, payload=None):
+        actual, body = request(base, path, credential, payload)
+        if actual != status:
+            raise AssertionError(f'{name}: HTTP {actual}, expected {status}')
+        checks.append(name)
+        return json.loads(body) if body else None
+    health = expect('build', '/health', None, 200)
+    assert health['build'] == revision[:12] and health['posture'] == 'live'
+    deep = expect('deep health', '/health/deep', read_key, 200)
+    assert deep['status'] == 'ok' and deep['ledger']['entity_count'] == 1
+    assert deep['ledger']['edge_count'] == deep['ledger']['attestation_count'] == 0
+    assert deep['media']['image_attachment_count'] == 0 and deep['media']['integrity'] == 'pass'
+    now = int(time.time()) - 946728000
+    path = '/v1/entities/0'
+    expect('anonymous denied', path+'?as_of=0', None, 401)
+    expect('wrong credential denied', path+'?as_of=0', 'invalid-credential', 401)
+    expect('coordinate required', path, read_key, 400)
+    expect('genesis readable', path+f'?as_of={now}', read_key, 200)
+    recents = expect('system records only', f'/v1/recents?as_of={now}&limit=50', read_key, 200)
+    assert recents['entries'] and all(e['subject'] == 0 for e in recents['entries'])
+    media = expect('media honestly empty', f'/v1/images?entity_id=0&as_of={now}', read_key, 200)
+    assert media['images'] == []
+    expect('read cannot publish', '/v1/images', read_key, 403, DENIAL_PROBE)
+    expect('anonymous cannot publish', '/v1/images', None, 401, DENIAL_PROBE)
+    after = expect('no probe writes', '/health/deep', read_key, 200)
+    assert after['event_count'] == deep['event_count']
+    return {'checks':checks,'passed':len(checks),'historical_corpus':'empty','media':'empty',
+            'media_replay':'not_applicable_no_attachments','deep_health':after}
+
+
 def check(base, revision, entity, key, read_key):
     if not key or not read_key or key == read_key:
         raise ValueError('Distinct full and read-only credentials required')

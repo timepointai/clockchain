@@ -81,8 +81,7 @@ def describe():
     if os.environ.get("CC_DATABASE_URL"):
         return f"direct psql to {DB} (CC_DATABASE_URL)"
     if os.environ.get("CC_USE_RAILWAY") == "1":
-        d = _railway_dir()
-        return f"legacy railway ssh --service {SERVICE} -> {DB} (linked at {d})" if d else "UNREACHABLE"
+        return "UNREACHABLE: Railway transport is retired"
     return "UNREACHABLE"
 
 
@@ -96,10 +95,12 @@ def run(sql, timeout=300):
             raise Unreachable((r.stderr.strip() or r.stdout.strip())[:600])
         return r.stdout
 
+    if os.environ.get("CC_USE_RAILWAY") == "1":
+        raise Unreachable("Railway transport is retired; set CC_DATABASE_URL")
     if os.environ.get("CC_USE_RAILWAY") != "1":
         raise Unreachable(
             "no CC_DATABASE_URL — set it to a connection string. "
-            "Railway ssh is not the default; set CC_USE_RAILWAY=1 only for a cutover dump.")
+            "Legacy Railway transport is retired.")
     if not shutil.which("railway"):
         raise Unreachable(
             "CC_USE_RAILWAY=1 but no railway CLI — set CC_DATABASE_URL instead")

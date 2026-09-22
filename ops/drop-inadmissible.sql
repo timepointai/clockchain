@@ -1,3 +1,5 @@
+-- Retired: projection-only deletion is not a corpus purge; replay resurrects it.
+\quit 1
 -- Remove entities the admission gate would refuse, from the PROJECTION only.
 --
 -- Sean's ruling, 2026-08-17 (Atlas d-20260817-1097b7):

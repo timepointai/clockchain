@@ -13,7 +13,8 @@ credentials and never deploys. Keep operator evidence and credentials outside th
 | `capture_evidence.py`, `evidence_eval.py`, `validate.py` | Capture and evaluate evidence without confusing integrity with truth |
 | `corpus_audit.py` | [Read-only corpus/source audit](../docs/evaluation/corpus-audit.md): aggregates, private capture, API crawl and evidence review queue |
 | `tt-differential.py` | Compare pinned upstream classification vectors |
-| `ccdb.py` | Explicit database connection; legacy Railway resolution is opt-in |
+| `ccdb.py` | Explicit operator database connection |
+| `local_generate.py` | [Local open-model pilot](../docs/LOCAL-GENERATION.md), at most three entries; no publication capability |
 
 Content publication needs its own human approvals and execution. A deploy authorization
 is not a content approval. Do not edit approved artifact bytes, applied migrations,

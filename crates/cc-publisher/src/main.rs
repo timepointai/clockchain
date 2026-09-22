@@ -9,6 +9,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Cmd {
+    /// Validate a private candidate without database access or publication.
+    Validate {
+        #[arg(long)]
+        path: String,
+    },
     BriefStage {
         #[arg(long)]
         id: String,
@@ -69,9 +74,19 @@ fn file(path: &str) -> Result<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Cmd::Validate { path } = &cli.cmd {
+        let candidate = file(path)?;
+        cc_publisher::validate_candidate(&candidate)?;
+        println!(
+            "{}",
+            json!({"valid":true,"entries":candidate["entries"].as_array().unwrap().len(),"edges":candidate["edges"].as_array().unwrap().len()})
+        );
+        return Ok(());
+    }
     let pool = cc_ledger::connect(&std::env::var("DATABASE_URL").context("DATABASE_URL required")?)
         .await?;
     let result = match cli.cmd {
+        Cmd::Validate { .. } => unreachable!("handled before database connection"),
         Cmd::BriefStage { id, path } => {
             cc_publisher::stage_brief(&pool, &id, &file(&path)?).await?
         }
