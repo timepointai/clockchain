@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: clockchain
+      POSTGRES_PASSWORD: clockchain
+      POSTGRES_DB: clockchain
+    ports:
+      # Host port is overridable: if 5432 is already taken (e.g. a native
+      # Postgres), set DB_PORT to a free port and match it in DATABASE_URL.
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - clockchain_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clockchain -d clockchain"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  clockchain_pgdata:

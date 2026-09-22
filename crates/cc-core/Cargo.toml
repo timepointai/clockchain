@@ -1,0 +1,15 @@
+[package]
+name = "cc-core"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Clockchain determinism core: Tick, canon, H0, Ed25519 identity. No I/O, native + wasm32."
+
+[dependencies]
+bnum.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+serde.workspace = true
+thiserror.workspace = true

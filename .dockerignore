@@ -1,0 +1,21 @@
+# Fly's remote builder uploads the whole build context. Without this file that
+# is the local cargo target/ plus .git. Everything below is either rebuilt
+# inside the image or never read by the build.
+#
+# NOTE: .dockerignore has no inline comments — a trailing "# ..." on a pattern
+# line becomes part of the pattern. Comments get their own line.
+
+target
+.git
+.github
+.DS_Store
+.env
+*.log
+HANDOFF.md
+AGENTS.md
+
+.env.*
+*.dump
+*.gpg
+*.bundle
+release-evidence

@@ -1,0 +1,759 @@
+{
+  "what": "TT classification conformance vectors \u2014 TT-SPEC \u00a74 verdicts",
+  "bundle": "tt-ontology/1.0 v2.1.0",
+  "conformance": {
+    "normative": "accepted, normalized (on accept), and the multiset of rejection codes (on reject). An implementation matching these in any language conforms.",
+    "advisory": "rejection detail strings, byte for byte. The reference implementation passes this tier; ports may opt in. The details render numbers as Python's repr() does \u2014 that is reference-implementation habit made visible, not design."
+  },
+  "regenerate": "python3 python/gen_classification_vectors.py bundle/taxonomy-v2.1.json",
+  "vectors": [
+    {
+      "name": "abstention",
+      "input": {
+        "lens_a": {},
+        "lens_b": {},
+        "abstain": true,
+        "bundle": "tt-ontology/1.0 v2.1.0"
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {},
+          "lens_a": {},
+          "abstain": true,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "abstention, bundle unsent",
+      "input": {
+        "lens_a": {},
+        "lens_b": {},
+        "abstain": true
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {},
+          "lens_a": {},
+          "abstain": true,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "single A type at mass 1",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1.0
+        },
+        "lens_b": {}
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {},
+          "lens_a": {
+            "conflict-and-warfare": 1.0
+          },
+          "abstain": false,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "single B type at mass 1",
+      "input": {
+        "lens_a": {},
+        "lens_b": {
+          "bonding-and-kinship": 1.0
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {
+            "bonding-and-kinship": 1.0
+          },
+          "lens_a": {},
+          "abstain": false,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "split mass, both lenses",
+      "input": {
+        "lens_a": {
+          "governance-and-popular-politics": 0.6
+        },
+        "lens_b": {
+          "reconciliation-and-forgiveness": 0.4
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {
+            "reconciliation-and-forgiveness": 0.4
+          },
+          "lens_a": {
+            "governance-and-popular-politics": 0.6
+          },
+          "abstain": false,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "ancestor+descendant (TT permits)",
+      "input": {
+        "lens_a": {
+          "politics-governance-and-law": 0.3,
+          "rulership-and-succession": 0.7
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {},
+          "lens_a": {
+            "politics-governance-and-law": 0.3,
+            "rulership-and-succession": 0.7
+          },
+          "abstain": false,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "three entries, at the cap",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0.3,
+          "religious-life": 0.3,
+          "siege-and-sack": 0.4
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {},
+          "lens_a": {
+            "conflict-and-warfare": 0.3,
+            "religious-life": 0.3,
+            "siege-and-sack": 0.4
+          },
+          "abstain": false,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "abstain with mass in A",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1.0
+        },
+        "abstain": true
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "abstain-with-mass",
+            "detail": "abstain is true but lens masses are present; abstention is empty lenses (\u00a74.4)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "abstain with mass in B",
+      "input": {
+        "lens_b": {
+          "bonding-and-kinship": 0.5
+        },
+        "abstain": true
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "abstain-with-mass",
+            "detail": "abstain is true but lens masses are present; abstention is empty lenses (\u00a74.4)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "abstain with mass in both",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0.5
+        },
+        "lens_b": {
+          "bonding-and-kinship": 0.5
+        },
+        "abstain": true
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "abstain-with-mass",
+            "detail": "abstain is true but lens masses are present; abstention is empty lenses (\u00a74.4)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown id",
+      "input": {
+        "lens_a": {
+          "not-a-real-node": 1.0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "unknown-id",
+            "detail": "lens_a.not-a-real-node: no such id in the bundle"
+          }
+        ]
+      }
+    },
+    {
+      "name": "typo'd id",
+      "input": {
+        "lens_b": {
+          "courtship-and-fallng-in-love": 1.0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "unknown-id",
+            "detail": "lens_b.courtship-and-fallng-in-love: no such id in the bundle"
+          }
+        ]
+      }
+    },
+    {
+      "name": "retired id",
+      "input": {
+        "lens_b": {
+          "everyday-movement-and-commute": 1.0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "retired-id",
+            "detail": "lens_b.everyday-movement-and-commute: retired in 2.1.0; use `journey-and-travel`"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wrong lens",
+      "input": {
+        "lens_b": {
+          "conflict-and-warfare": 1.0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "wrong-lens",
+            "detail": "lens_b.conflict-and-warfare: id is lens A, offered under lens B"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mass zero",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0.0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 0.0 outside (0, 1]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mass above one",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1.5
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 1.5 outside (0, 1]"
+          },
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 1.5; at most 1.0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mass is a bool",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": true
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-not-number",
+            "detail": "lens_a.conflict-and-warfare: mass True is not a number"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mass is a string",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": "1.0"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-not-number",
+            "detail": "lens_a.conflict-and-warfare: mass '1.0' is not a number"
+          }
+        ]
+      }
+    },
+    {
+      "name": "lens sum exceeded",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0.6,
+          "religious-life": 0.6
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 1.2; at most 1.0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "four entries in one lens",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0.1,
+          "religious-life": 0.1,
+          "siege-and-sack": 0.1,
+          "economy-trade-and-labor": 0.1
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "too-many-entries",
+            "detail": "lens_a has 4 entries; at most 3"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown top-level key",
+      "input": {
+        "lens_a": {},
+        "lens_b": {},
+        "surprise": 1
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "unknown-key",
+            "detail": "unknown top-level key `surprise`"
+          }
+        ]
+      }
+    },
+    {
+      "name": "abstain not a bool",
+      "input": {
+        "lens_a": {},
+        "lens_b": {},
+        "abstain": "yes"
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "abstain-not-bool",
+            "detail": "abstain must be true or false, got 'yes'"
+          }
+        ]
+      }
+    },
+    {
+      "name": "lens not an object",
+      "input": {
+        "lens_a": [],
+        "lens_b": {}
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "lens-not-object",
+            "detail": "lens_a must be an object of id: mass"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle names another release",
+      "input": {
+        "lens_a": {},
+        "lens_b": {},
+        "abstain": true,
+        "bundle": "tt-ontology/1.0 v2.0.0"
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "bundle-mismatch",
+            "detail": "classification cites `tt-ontology/1.0 v2.0.0`, loaded bundle is `tt-ontology/1.0 v2.1.0`"
+          }
+        ]
+      }
+    },
+    {
+      "name": "not an object",
+      "input": [
+        1,
+        2,
+        3
+      ],
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "not-an-object",
+            "detail": "classification must be a JSON object"
+          }
+        ]
+      }
+    },
+    {
+      "name": "several failures at once",
+      "input": {
+        "lens_a": {
+          "not-a-node": 5.0
+        },
+        "abstain": true,
+        "surprise": 1
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "unknown-key",
+            "detail": "unknown top-level key `surprise`"
+          },
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.not-a-node: mass 5.0 outside (0, 1]"
+          },
+          {
+            "code": "unknown-id",
+            "detail": "lens_a.not-a-node: no such id in the bundle"
+          },
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 5.0; at most 1.0"
+          },
+          {
+            "code": "abstain-with-mass",
+            "detail": "abstain is true but lens masses are present; abstention is empty lenses (\u00a74.4)"
+          }
+        ]
+      }
+    },
+    {
+      "name": "integer mass, out of range",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 5
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 5 outside (0, 1]"
+          },
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 5.0; at most 1.0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "integer zero mass",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 0 outside (0, 1]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "float zero mass",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0.0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 0.0 outside (0, 1]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exponent form, large",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1e+20
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 1e+20 outside (0, 1]"
+          },
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 1e+20; at most 1.0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "just below Python's sci threshold",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1000000000000000.0
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 1000000000000000.0 outside (0, 1]"
+          },
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 1000000000000000.0; at most 1.0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "at Python's sci threshold",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1e+16
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 1e+16 outside (0, 1]"
+          },
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 1e+16; at most 1.0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "very large float",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1.5e+300
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 1.5e+300 outside (0, 1]"
+          },
+          {
+            "code": "lens-sum-exceeded",
+            "detail": "lens_a masses sum to 1.5e+300; at most 1.0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "float needing full precision",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 1.0000000000000002
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass 1.0000000000000002 outside (0, 1]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "negative mass",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": -0.5
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-out-of-range",
+            "detail": "lens_a.conflict-and-warfare: mass -0.5 outside (0, 1]"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sum in float-error territory",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": 0.1,
+          "religious-life": 0.2
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "normalized": {
+          "lens_b": {},
+          "lens_a": {
+            "conflict-and-warfare": 0.1,
+            "religious-life": 0.2
+          },
+          "abstain": false,
+          "bundle": "tt-ontology/1.0 v2.1.0"
+        }
+      }
+    },
+    {
+      "name": "null mass",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": null
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-not-number",
+            "detail": "lens_a.conflict-and-warfare: mass None is not a number"
+          }
+        ]
+      }
+    },
+    {
+      "name": "nested object as mass",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": {
+            "a": 1
+          }
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-not-number",
+            "detail": "lens_a.conflict-and-warfare: mass {'a': 1} is not a number"
+          }
+        ]
+      }
+    },
+    {
+      "name": "array as mass",
+      "input": {
+        "lens_a": {
+          "conflict-and-warfare": [
+            1,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "rejections": [
+          {
+            "code": "mass-not-number",
+            "detail": "lens_a.conflict-and-warfare: mass [1, 2] is not a number"
+          }
+        ]
+      }
+    }
+  ]
+}

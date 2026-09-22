@@ -1,0 +1,32 @@
+[package]
+name = "cc-filter"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The feasibility filter: the swarm's single-source consensus rule. Depends only on cc-core; no I/O."
+
+[dependencies]
+cc-core.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Test-only. The runtime dependency tree stays cc-core + sha2 + thiserror: a
+# consensus rule should not link anything it does not need to judge.
+hex.workspace = true
+# Pure-function property testing. This is NOT a mock of a service (the no-mocks
+# rule targets faked I/O): `cc-filter` is a pure function of a `CorpusView`, and
+# generating inputs over its domain is the only way to exercise the algebra.
+# Pinned here rather than in the workspace table because M2 is its only consumer;
+# promote it to `[workspace.dependencies]` when a second crate needs it.
+proptest = "1"
+
+[build-dependencies]
+# Build-time only: the bundle is parsed here and emitted as static
+# tables, so the artifact keeps its empty host-import table.
+serde_json = { workspace = true }
+# The bundle's sha, computed over the bytes this build actually read rather than
+# copied from a note. Build-time only, so the artifact tree is unchanged.
+sha2 = { workspace = true }
+hex = { workspace = true }

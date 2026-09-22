@@ -1,0 +1,28 @@
+[package]
+name = "cc-migrator"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The partitioned migrator identity that replays the founding exhibit. No privileged bypass."
+
+[[bin]]
+name = "cc-migrator"
+path = "src/main.rs"
+
+[dependencies]
+cc-authoring.workspace = true
+# Upstream, pinned by rev. cc-filter deliberately does NOT get this.
+tt-core.workspace = true
+serde_json = { workspace = true }
+cc-core.workspace = true
+cc-ledger.workspace = true
+# Genesis must record the version of the rule this build actually runs, not an
+# ordinal standing in for one. That value only exists in cc-filter.
+cc-filter.workspace = true
+tokio.workspace = true
+sqlx.workspace = true
+clap.workspace = true
+sha2.workspace = true
+hex.workspace = true
+anyhow.workspace = true

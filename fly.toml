@@ -1,0 +1,48 @@
+# Fly.io config for the Clockchain ledger node (cc-node).
+# Owner-operated private Flycast service. No public IPs; access through fly proxy.
+app = "timepoint-clockchain-prod"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+  [build.args]
+    # Overridden at deploy: fly deploy --build-arg CC_BUILD_REV=$(git rev-parse --short=12 HEAD)
+    CC_BUILD_REV = "unknown"
+
+[env]
+  CC_NODE_POSTURE = "live"
+  PORT = "8080"
+  RUST_LOG = "info"
+  CC_MEDIA_DIR = "/data/media/objects"
+
+[[mounts]]
+  source = "clockchain_media"
+  destination = "/data/media"
+  processes = ["app"]
+
+[deploy]
+  # Same pre-deploy step Railway ran. Additive, idempotent. The server itself
+  # does no I/O at boot, so this is the only place migrations run.
+  release_command = "cc-node migrate"
+
+[http_service]
+  internal_port = 8080
+  force_https = false
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "10s"
+    grace_period = "30s"
+
+# Single instance: do not scale horizontally. The ledger is one writer.
+# Hourly seal/anchor is NOT a Launch process:
+# process group `tick`, schedule=hourly, restart=no. Stopped between ticks is
+# correct. ops/deploy-fly.sh refreshes its image after deploy.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

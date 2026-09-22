@@ -1,0 +1,18 @@
+{
+  "generator": "Python jcs 0.2.1 + cryptography 50.0.1",
+  "test_seed_hex": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+  "decision_id": "c77e175eef1f883daca199ddbd66f0b556aeecd5e7111cd5aa4f9e14588e8885",
+  "submission": {
+    "manifest": {
+      "schema": "cc.media-absence.v1",
+      "kind": "deliberately_unillustrated",
+      "source_entity_id": "3582419940486658631",
+      "source_body_hash": "0909090909090909090909090909090909090909090909090909090909090909",
+      "reason": "Leave this unillustrated: naïve certainty ≠ evidence.\nNo reconstruction. 🕰",
+      "decided_at_ticks": "-123",
+      "writer": "3f0dda81e6abbcc5f17c359df8517177769d2dfff3d4ce942e7ce9a82dfb0db2"
+    },
+    "author": "3f0dda81e6abbcc5f17c359df8517177769d2dfff3d4ce942e7ce9a82dfb0db2",
+    "signature": "0ae83139e714c22214aa55d91cfdd74609b26806b37c5a33473bd2fff2cd581caf90b543ac83dcce5affc9cf86a438c79c5b344d1773277eb6bf0013cf9cee08"
+  }
+}

@@ -1,0 +1,5 @@
+# Every change to this repo requires review from the owner before it can merge.
+# GitHub review gates merging; Fly deployment requires separate owner authorization.
+# Collaborators (e.g. @sunhaoxiangwang) open PRs; only a code owner can approve+merge.
+
+* @realityinspector

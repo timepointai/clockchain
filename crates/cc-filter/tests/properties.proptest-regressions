@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f6f9b00c57a8818f267cb2b7776c13396e8e4bfc740c22ff9e1dde07682c2bb6 # shrinks to records = [Admissibility { claim: ClaimType(2), recorded_at: Tick(99), via: EventId([172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172]), ruling: Valid }, Admissibility { claim: ClaimType(2), recorded_at: Tick(99), via: EventId([172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172]), ruling: OutsideValidity { band_end: Tick(0) } }], q = FeasibilityQuery { subjects: (EntityId(1), EntityId(1)), t_q: Tick(0), claim: ClaimType(1), k: HopBound(0) }
+cc ccfe09b1272b82ea5f6173cc49b81b98dc7404b1a6d72915877c93250f71282e # shrinks to records = [], q = FeasibilityQuery { subjects: (EntityId(1), EntityId(1)), t_q: Tick(0), claim: ClaimType(1), k: HopBound(0) }, delta = [Window { entity: EntityId(6), recorded_at: Tick(0), via: EventId([54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54]), start: Unknown, end: KnownOpen }, Window { entity: EntityId(6), recorded_at: Tick(1), via: EventId([54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54]), start: Known(Tick(0)), end: KnownOpen }]

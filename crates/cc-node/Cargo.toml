@@ -1,0 +1,61 @@
+[package]
+name = "cc-node"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The axum server binary: read API, health endpoints, migrate subcommand. Wires everything."
+
+# A library target as well as a binary, because the read surface has to be
+# testable *as the server serves it*. The integration tests boot the real router
+# on a real socket against a real Postgres; that is only possible if `serve` and
+# the Postgres `CorpusView` are library items rather than private helpers inside
+# `main.rs`.
+[lib]
+name = "cc_node"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cc-node"
+path = "src/main.rs"
+
+[dependencies]
+# Upstream, pinned by rev. cc-filter deliberately does NOT get this.
+tt-core.workspace = true
+cc-core.workspace = true
+cc-ledger.workspace = true
+# The consensus rule. `cc-node` may never re-implement a feasibility predicate in
+# SQL: a verdict served here must be the same compiled logic a wasm mirror runs,
+# or "same Phi everywhere" stops being a build property.
+cc-filter.workspace = true
+# /health/deep publishes settlement state, and the tables that own it belong to
+# cc-anchor. Reading them through its API keeps this endpoint from re-deriving
+# a root height with a second, subtly different query.
+cc-anchor.workspace = true
+axum.workspace = true
+tokio.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+hex.workspace = true
+# Only ever used to digest the API key so the plaintext never outlives boot, and
+# to fold a corpus identity. Never for `H0` — that lives in `cc-core`.
+sha2.workspace = true
+base64 = "0.22"
+ed25519-dalek.workspace = true
+uuid.workspace = true
+png = "0.17"
+fs2 = "0.4"
+
+[dev-dependencies]
+# Real Postgres, no mocks: every test in `tests/` provisions an ephemeral
+# database and runs the migrations against it.
+cc-testkit.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# An out-of-process HTTP client, so the tests exercise the bound socket, the
+# middleware stack and the status codes a real caller sees — not a `oneshot`
+# against an unlayered router, which is exactly how v2's 401-vs-422 bug hid.
+reqwest.workspace = true

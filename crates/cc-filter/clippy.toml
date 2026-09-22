@@ -1,0 +1,27 @@
+# Determinism is enforced at the crate boundary, not hoped for (INITIATION-PLAN
+# "Determinism is enforced, not hoped for"). A consensus rule that is only
+# *usually* reproducible is not a consensus rule, so the constructs that can make
+# an emitted bit depend on something other than the input events are banned here
+# rather than left to review.
+#
+# Clippy resolves this file from `CARGO_MANIFEST_DIR`, so it scopes to `cc-filter`
+# alone and does not constrain the crates that legitimately do I/O.
+
+disallowed-types = [
+    # SipHash is seeded per-process: iteration order is not reproducible across
+    # runs, let alone across a server and a wasm mirror. Every set/map in the
+    # support path is a BTreeMap/BTreeSet so replay order is total.
+    { path = "std::collections::HashMap", reason = "nondeterministic iteration order; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "nondeterministic iteration order; use BTreeSet" },
+]
+
+disallowed-methods = [
+    # A filter that read wall-clock time would leak the *live* graph into a
+    # t_q-pinned verdict and break monotonicity at the root.
+    { path = "std::time::SystemTime::now", reason = "the filter must never consult live time; every read is pinned to as_of" },
+    { path = "std::time::Instant::now", reason = "the filter must never consult a clock" },
+    # Environment-dependent behaviour is the same class of leak, one level out:
+    # two nodes on the same events would disagree because of a deployment.
+    { path = "std::env::var", reason = "a verdict must depend on the events alone, not the environment" },
+    { path = "std::env::vars", reason = "a verdict must depend on the events alone, not the environment" },
+]

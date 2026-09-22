@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+# Shared dependency pins, declared once and referenced by each crate with
+# `dep.workspace = true`. Keeping versions here is the single source of truth.
+[workspace.dependencies]
+# --- internal crates ---
+cc-authoring = { path = "crates/cc-authoring" }
+cc-core = { path = "crates/cc-core" }
+cc-filter = { path = "crates/cc-filter" }
+cc-ledger = { path = "crates/cc-ledger" }
+cc-anchor = { path = "crates/cc-anchor" }
+cc-testkit = { path = "crates/cc-testkit" }
+
+# --- upstream: Timepoint Telemetry ---
+# TT owns the ontology, the envelope and the distance metric; this repo consumes
+# them. Pinned by REVISION, never a branch — a moving dependency on a semantic
+# authority is a fork that has not noticed yet.
+#
+# **Reachable from cc-node and cc-migrator ONLY, never cc-filter.** That is
+# telemetry's own ruling and it preserves the property `vendor/tt/README.md`
+# calls load-bearing: cc-filter depends on cc-core, sha2 and thiserror, does no
+# I/O, and builds to wasm with an empty host-import table. It keeps consuming
+# the taxonomy as a vendored artifact it byte-checks — which TT's CONSUMERS.md
+# names as an equally legitimate form, not a workaround.
+tt-core = { git = "https://github.com/timepointai/timepoint-telemetry", rev = "6683275" }
+
+# --- external crates ---
+bnum = "0.13"
+sha2 = "0.10"
+ed25519-dalek = "2"
+hex = "0.4"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "migrate",
+    # `macros` provides the compile-time `sqlx::migrate!` (embeds migration
+    # files at build time — needs no database). We deliberately do NOT use the
+    # `query!` macros yet, so the build stays DB-free; adopt them + a committed
+    # `.sqlx` offline cache once the schema settles (see docs/LOCAL-DEV.md).
+    "macros",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+axum = "0.7"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+uuid = { version = "1", features = ["v4"] }
+# The OpenTimestamps calendar hop (cc-anchor only). `rustls-tls` so the TLS stack
+# is the one sqlx already links and no OpenSSL enters the image; no default
+# features, because the entire use of it is one POST of 32 bytes and one GET.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[profile.release]
+# Smaller, faster-to-ship binary for the Docker image; skeleton defaults are fine.
+strip = true

@@ -1,0 +1,21 @@
+[package]
+name = "cc-ledger"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The events log + projector: the single typed INSERT-only write path into the ledger."
+
+[dependencies]
+cc-core.workspace = true
+cc-filter.workspace = true
+sqlx.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+cc-testkit.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

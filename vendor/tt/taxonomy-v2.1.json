@@ -1,0 +1,2164 @@
+{
+  "schema": "tt-ontology/1.0",
+  "version": "2.1.0",
+  "supersedes": "tt-ontology/1.0 v2.0.0",
+  "governance": "structure fluid, identity frozen — ids never change; structural change = semver bump",
+  "metric": {
+    "hierarchy_edge_weight": 1.0,
+    "lateral_edge_weight": 1.6,
+    "distance": "weighted shortest path"
+  },
+  "lenses": {
+    "A": {
+      "label": "Recorded Public Events",
+      "question": "what did the record keep?",
+      "branches": [
+        "politics-governance-and-law",
+        "conflict-and-warfare",
+        "economy-trade-and-labor",
+        "culture-religion-arts-and-ideas",
+        "disaster-disease-and-environment",
+        "science-technology-and-exploration"
+      ]
+    },
+    "B": {
+      "label": "Human Action & Behavior",
+      "question": "what were people doing?",
+      "branches": [
+        "bonding-and-kinship",
+        "life-passages-and-the-body",
+        "movement-and-dwelling",
+        "making-and-cultivating",
+        "knowing-and-meaning",
+        "communication-and-exchange",
+        "play-rite-and-celebration",
+        "work-and-provision",
+        "striving-and-harm"
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "politics-governance-and-law",
+      "lens": "A",
+      "level": "branch",
+      "parent": null,
+      "label": "Politics, Governance & Law",
+      "definition": "Moments centered on political power, statehood, governance institutions, diplomacy, and legal/judicial order rather than culture, economics, or warfare per se."
+    },
+    {
+      "id": "rulership-and-succession",
+      "lens": "A",
+      "level": "species",
+      "parent": "politics-governance-and-law",
+      "label": "Rulership & Succession",
+      "definition": "Transfers and terminations of sovereign authority — how rulers take, give up, or lose the throne."
+    },
+    {
+      "id": "accession-and-coronation",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "rulership-and-succession",
+      "label": "Accession & Coronation",
+      "definition": "A monarch, emperor, or ruler formally assumes power via accession, crowning, or proclamation."
+    },
+    {
+      "id": "royal-death-and-succession",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "rulership-and-succession",
+      "label": "Royal Death & Succession",
+      "definition": "The death (natural, poisoning, or otherwise) of a sovereign and the resulting succession question."
+    },
+    {
+      "id": "abdication-and-deposition",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "rulership-and-succession",
+      "label": "Abdication & Deposition",
+      "definition": "A ruler voluntarily abdicates or is forced to renounce the throne."
+    },
+    {
+      "id": "dynastic-birth",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "rulership-and-succession",
+      "label": "Dynastic Birth",
+      "definition": "Birth of a royal/dynastic heir with succession weight."
+    },
+    {
+      "id": "refusal-and-declining-of-office",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "rulership-and-succession",
+      "label": "Refusal / Declining of Office",
+      "definition": "Declining or refusing an offered crown or office (inverse of accession)."
+    },
+    {
+      "id": "political-violence-and-upheaval",
+      "lens": "A",
+      "level": "species",
+      "parent": "politics-governance-and-law",
+      "label": "Political Violence & Upheaval",
+      "definition": "Violent contests over power — assassinations, coups, revolts, and revolutions that seize or resist authority."
+    },
+    {
+      "id": "assassination",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "political-violence-and-upheaval",
+      "label": "Assassination",
+      "definition": "The targeted killing of a political leader or figure to alter the balance of power."
+    },
+    {
+      "id": "coup-and-usurpation",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "political-violence-and-upheaval",
+      "label": "Coup & Usurpation",
+      "definition": "An extralegal seizure or overthrow of government by a faction, army, or claimant."
+    },
+    {
+      "id": "revolt-uprising-and-revolution",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "political-violence-and-upheaval",
+      "label": "Revolt, Uprising & Revolution",
+      "definition": "Popular or provincial armed resistance against ruling authority, from local revolts to national revolutions."
+    },
+    {
+      "id": "diplomacy-and-treaties",
+      "lens": "A",
+      "level": "species",
+      "parent": "politics-governance-and-law",
+      "label": "Diplomacy & Treaties",
+      "definition": "Negotiated relations between states — treaties, peace accords, alliances, and diplomatic settlements."
+    },
+    {
+      "id": "treaty-alliance-and-peace-accord",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "diplomacy-and-treaties",
+      "label": "Treaty, Alliance & Peace Accord",
+      "definition": "The signing of a treaty, alliance, armistice, or peace settlement between polities."
+    },
+    {
+      "id": "conquest-and-state-formation",
+      "lens": "A",
+      "level": "species",
+      "parent": "politics-governance-and-law",
+      "label": "Conquest & State Formation",
+      "definition": "Changes in the map of sovereignty — conquest, annexation, and occupation on one side; independence and the founding of new states on the other."
+    },
+    {
+      "id": "conquest-annexation-and-occupation",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "conquest-and-state-formation",
+      "label": "Conquest, Annexation & Occupation",
+      "definition": "One polity absorbs, invades, or occupies another’s territory, extinguishing or subordinating its sovereignty."
+    },
+    {
+      "id": "independence-and-state-founding",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "conquest-and-state-formation",
+      "label": "Independence & State Founding",
+      "definition": "A new state, republic, empire, or province comes into being through independence, unification, or formal establishment."
+    },
+    {
+      "id": "law-and-justice",
+      "lens": "A",
+      "level": "species",
+      "parent": "politics-governance-and-law",
+      "label": "Law & Justice",
+      "definition": "The making of law and the administration of justice — legislation, constitutions, trials, and punishment."
+    },
+    {
+      "id": "legislation-edicts-and-decrees",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "law-and-justice",
+      "label": "Legislation, Edicts & Decrees",
+      "definition": "The enactment of a law, act, edict, decree, or royal assent that changes the legal order."
+    },
+    {
+      "id": "constitutions-and-charters",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "law-and-justice",
+      "label": "Constitutions & Charters",
+      "definition": "The granting or adoption of a foundational legal instrument — constitution, charter, or bill of rights."
+    },
+    {
+      "id": "trials-and-political-punishment",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "law-and-justice",
+      "label": "Trials & Political Punishment",
+      "definition": "Judicial or extrajudicial proceedings and their penalties — trials, tribunals, proscriptions, executions, and exile of political figures."
+    },
+    {
+      "id": "governance-and-popular-politics",
+      "lens": "A",
+      "level": "species",
+      "parent": "politics-governance-and-law",
+      "label": "Governance & Popular Politics",
+      "definition": "The routine institutional and mass-participatory side of politics — selecting leaders, forming governments, and popular political action in the streets."
+    },
+    {
+      "id": "elections-and-official-selection",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "governance-and-popular-politics",
+      "label": "Elections & Official Selection",
+      "definition": "The selection of a leader or body through election, referendum, plebiscite, or conclave."
+    },
+    {
+      "id": "appointments-and-government-formation",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "governance-and-popular-politics",
+      "label": "Appointments & Government Formation",
+      "definition": "The appointment of officials (governors, regents, co-rulers, ministers) or the formation of a government, party, or council."
+    },
+    {
+      "id": "protest-riot-and-civil-unrest",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "governance-and-popular-politics",
+      "label": "Protest, Riot & Civil Unrest",
+      "definition": "Mass political action outside formal institutions — protests, riots, strikes, and politically charged massacres."
+    },
+    {
+      "id": "deliberative-assembly-and-congress",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "governance-and-popular-politics",
+      "label": "Deliberative Assembly & Congress",
+      "definition": "Convening of a parliament, diet, estates, or transnational congress."
+    },
+    {
+      "id": "legislature-dissolution",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "governance-and-popular-politics",
+      "label": "Legislature Dissolution",
+      "definition": "Forced or formal dissolution/disbanding of a legislative body."
+    },
+    {
+      "id": "conflict-and-warfare",
+      "lens": "A",
+      "level": "branch",
+      "parent": null,
+      "label": "Conflict & Warfare",
+      "definition": "Organized armed violence as such — pitched battles, sieges and sacks, and massacres — canonicalizing military moments that recur across the political, economic, and religious lenses."
+    },
+    {
+      "id": "battles-and-sieges",
+      "lens": "A",
+      "level": "species",
+      "parent": "conflict-and-warfare",
+      "label": "Battles & Sieges",
+      "definition": "Military engagements: field battles and the investment, storming, and sacking of fortified places."
+    },
+    {
+      "id": "pitched-battle",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "battles-and-sieges",
+      "label": "Pitched Battle",
+      "definition": "A set-piece armed engagement between opposing forces in the field."
+    },
+    {
+      "id": "siege-and-sack",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "battles-and-sieges",
+      "label": "Siege & Sack",
+      "definition": "The blockade, storming, capture, or sacking of a fortified city or stronghold."
+    },
+    {
+      "id": "massacre-and-atrocity",
+      "lens": "A",
+      "level": "species",
+      "parent": "conflict-and-warfare",
+      "label": "Massacre & Atrocity",
+      "definition": "The mass killing of combatants or civilians outside pitched battle — massacres, sackings’ slaughter, and reprisals."
+    },
+    {
+      "id": "war-declaration-and-outbreak",
+      "lens": "A",
+      "level": "species",
+      "parent": "conflict-and-warfare",
+      "label": "War Declaration & Outbreak",
+      "definition": "Formal declaration of war or the outbreak/onset of an armed conflict."
+    },
+    {
+      "id": "economy-trade-and-labor",
+      "lens": "A",
+      "level": "branch",
+      "parent": null,
+      "label": "Economy, Trade & Labor",
+      "definition": "Moments centered on economic life: work and labor conflict, commerce and enterprise, money and finance, trade policy, commercialization of goods, and trade infrastructure."
+    },
+    {
+      "id": "labor-movements",
+      "lens": "A",
+      "level": "species",
+      "parent": "economy-trade-and-labor",
+      "label": "Labor Movements & Worker Conflict",
+      "definition": "Collective action by industrial workers and the reforms that resulted: strikes, lockouts, union organizing, and labor legislation."
+    },
+    {
+      "id": "strike-and-lockout",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "labor-movements",
+      "label": "Strike & Lockout",
+      "definition": "Work stoppages, walkouts, employer lockouts, and worker uprisings over wages and working conditions."
+    },
+    {
+      "id": "labor-reform-and-accord",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "labor-movements",
+      "label": "Labor Reform & Accord",
+      "definition": "Negotiated settlements, labor laws, and international labor institutions that codified worker rights."
+    },
+    {
+      "id": "agrarian-revolt",
+      "lens": "A",
+      "level": "species",
+      "parent": "economy-trade-and-labor",
+      "label": "Agrarian & Feudal Revolt",
+      "definition": "Peasant uprisings against feudal economic burdens, dominated in this corpus by the German Peasants’ War of 1524-25."
+    },
+    {
+      "id": "peasant-demands-and-assembly",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "agrarian-revolt",
+      "label": "Peasant Demands & Assembly",
+      "definition": "Drafting and proclamation of peasant grievances (the Twelve Articles) and the parliaments and assemblies that voiced them."
+    },
+    {
+      "id": "revolt-battle-and-suppression",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "agrarian-revolt",
+      "label": "Revolt Battle & Suppression",
+      "definition": "Battles, massacres, captures, and executions through which authorities crushed the peasant revolt."
+    },
+    {
+      "id": "enterprise-and-commerce",
+      "lens": "A",
+      "level": "species",
+      "parent": "economy-trade-and-labor",
+      "label": "Enterprise & Commerce",
+      "definition": "The chartering, founding, and milestones of commercial organizations, from royal-chartered trading companies and guilds to modern corporations."
+    },
+    {
+      "id": "chartered-company-and-guild",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "enterprise-and-commerce",
+      "label": "Chartered Company & Guild",
+      "definition": "Royal charters establishing trading companies, guilds, and licensed monopolies in the early-modern commercial order."
+    },
+    {
+      "id": "corporate-founding-and-milestone",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "enterprise-and-commerce",
+      "label": "Corporate Founding & Milestone",
+      "definition": "The incorporation, founding, and acquisition of modern companies as business (not scientific) events."
+    },
+    {
+      "id": "money-and-finance",
+      "lens": "A",
+      "level": "species",
+      "parent": "economy-trade-and-labor",
+      "label": "Money & Finance",
+      "definition": "Banking institutions, exchanges, public offerings, currency introductions, and monetary reforms."
+    },
+    {
+      "id": "banking-and-exchange",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "money-and-finance",
+      "label": "Banking & Exchange",
+      "definition": "Founding of banks and exchanges, financier milestones, and equity-market events such as public offerings."
+    },
+    {
+      "id": "currency-and-monetary-reform",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "money-and-finance",
+      "label": "Currency & Monetary Reform",
+      "definition": "Introduction of new currencies and monetary stabilization measures, often responding to inflation or reparations crises."
+    },
+    {
+      "id": "trade-policy-and-economic-governance",
+      "lens": "A",
+      "level": "species",
+      "parent": "economy-trade-and-labor",
+      "label": "Trade Policy & Economic Governance",
+      "definition": "State and multilateral economic action: tariffs, trade agreements, customs unions, reparations, and international economic summits."
+    },
+    {
+      "id": "tariff-and-trade-dispute",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "trade-policy-and-economic-governance",
+      "label": "Tariff & Trade Dispute",
+      "definition": "Imposition of tariffs, withdrawal from trade pacts, customs unions, and other bilateral trade conflicts."
+    },
+    {
+      "id": "economic-summit-and-reparations",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "trade-policy-and-economic-governance",
+      "label": "Economic Summit & Reparations",
+      "definition": "Multilateral economic summits (G20) and coercive economic enforcement such as war reparations and industrial occupation."
+    },
+    {
+      "id": "commercial-product-launch",
+      "lens": "A",
+      "level": "species",
+      "parent": "economy-trade-and-labor",
+      "label": "Commercial Product Launch",
+      "definition": "Market entry and commercialization of goods and technologies: consumer product launches and the debut of foundational commercial hardware."
+    },
+    {
+      "id": "consumer-product-launch",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "commercial-product-launch",
+      "label": "Consumer Product Launch",
+      "definition": "Public unveilings and market releases of consumer goods and services (phones, smart speakers, apps, radios)."
+    },
+    {
+      "id": "foundational-computing-hardware",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "commercial-product-launch",
+      "label": "Foundational Computing Hardware",
+      "definition": "Commercialization and first delivery of foundational computing hardware: integrated circuits, early commercial computers, and mainframes."
+    },
+    {
+      "id": "trade-and-transport-infrastructure",
+      "lens": "A",
+      "level": "species",
+      "parent": "economy-trade-and-labor",
+      "label": "Trade & Transport Infrastructure",
+      "definition": "Openings of railways and transport lines that expanded commerce and the movement of goods and labor."
+    },
+    {
+      "id": "culture-religion-arts-and-ideas",
+      "lens": "A",
+      "level": "branch",
+      "parent": null,
+      "label": "Culture, Religion, Arts & Ideas",
+      "definition": "Moments centered on belief, worship, cultural production, learning, publishing, and the advance of human knowledge and ideas, as distinct from politics, war, or economics."
+    },
+    {
+      "id": "religious-life",
+      "lens": "A",
+      "level": "species",
+      "parent": "culture-religion-arts-and-ideas",
+      "label": "Religious Life & Institutions",
+      "definition": "Events belonging to the governance, doctrine, ritual, conflict, and physical fabric of organized religion."
+    },
+    {
+      "id": "church-governance-and-office",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "religious-life",
+      "label": "Church Governance & Office",
+      "definition": "Institutional acts of religious authority: papal elections and coronations, councils, synods, edicts, bulls, excommunications, schisms, and the founding of orders."
+    },
+    {
+      "id": "reform-doctrine-and-scripture",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "religious-life",
+      "label": "Reform, Doctrine & Scripture",
+      "definition": "Founding statements of faith and doctrine: reformist theses and confessions, prophetic revelation, conversions, and scripture translation or promulgation."
+    },
+    {
+      "id": "religious-conflict-and-martyrdom",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "religious-life",
+      "label": "Religious Conflict & Martyrdom",
+      "definition": "Violence and persecution driven by faith: crusades, heresy trials, martyrdoms, iconoclasm, witch trials, and confessional uprisings."
+    },
+    {
+      "id": "ritual-consecration-and-pilgrimage",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "religious-life",
+      "label": "Ritual, Consecration & Pilgrimage",
+      "definition": "Sacred observances and rites: temple and church dedications, consecrations, canonizations, feasts, jubilees, and pilgrimages."
+    },
+    {
+      "id": "sacred-architecture",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "religious-life",
+      "label": "Sacred Architecture",
+      "definition": "The building, founding, and inauguration of religious structures — temples, cathedrals, basilicas, mosques, and shrines."
+    },
+    {
+      "id": "letters-print-and-media",
+      "lens": "A",
+      "level": "species",
+      "parent": "culture-religion-arts-and-ideas",
+      "label": "Letters, Print & Media",
+      "definition": "The creation and dissemination of texts and broadcast content: authored works, the print revolution, and screen/broadcast media."
+    },
+    {
+      "id": "literary-and-scholarly-works",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "letters-print-and-media",
+      "label": "Literary & Scholarly Works",
+      "definition": "The composition or publication of books, treatises, pamphlets, poems, and other authored works."
+    },
+    {
+      "id": "printing-and-publishing",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "letters-print-and-media",
+      "label": "Printing & Publishing",
+      "definition": "Milestones of the printing trade itself: first printed books, printing technology, and the regulation of the press."
+    },
+    {
+      "id": "broadcast-and-screen-media",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "letters-print-and-media",
+      "label": "Broadcast & Screen Media",
+      "definition": "Radio, television, and film moments — service launches, notable broadcasts, and landmark programs."
+    },
+    {
+      "id": "knowledge-and-institutions",
+      "lens": "A",
+      "level": "species",
+      "parent": "culture-religion-arts-and-ideas",
+      "label": "Knowledge & Learning Institutions",
+      "definition": "The advance and housing of secular knowledge: invention and technological breakthroughs, and the founding of universities and learned societies."
+    },
+    {
+      "id": "learning-institutions",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "knowledge-and-institutions",
+      "label": "Universities & Learned Societies",
+      "definition": "The founding of universities, academies, libraries, and scholarly societies."
+    },
+    {
+      "id": "games-and-sport",
+      "lens": "A",
+      "level": "species",
+      "parent": "culture-religion-arts-and-ideas",
+      "label": "Games & Sport",
+      "definition": "Organized play as public event: Olympiads, tournaments, matches, and sporting firsts."
+    },
+    {
+      "id": "disaster-disease-and-environment",
+      "lens": "A",
+      "level": "branch",
+      "parent": null,
+      "label": "Disaster, Disease & Environment",
+      "definition": "Natural hazards, epidemics, and subsistence crises striking a place or population."
+    },
+    {
+      "id": "natural-disaster",
+      "lens": "A",
+      "level": "species",
+      "parent": "disaster-disease-and-environment",
+      "label": "Natural Disaster",
+      "definition": "Sudden geophysical or weather hazard events."
+    },
+    {
+      "id": "earthquake-and-seismic",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "natural-disaster",
+      "label": "Earthquake & Seismic Event",
+      "definition": "Earthquakes and seismic destruction of a settlement."
+    },
+    {
+      "id": "flood-storm-and-fire",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "natural-disaster",
+      "label": "Flood, Storm & Fire",
+      "definition": "Floods, great storms, and urban conflagrations."
+    },
+    {
+      "id": "volcanic-and-geological",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "natural-disaster",
+      "label": "Volcanic & Geological Event",
+      "definition": "Volcanic eruptions and other geological catastrophes."
+    },
+    {
+      "id": "disease-and-subsistence-crisis",
+      "lens": "A",
+      "level": "species",
+      "parent": "disaster-disease-and-environment",
+      "label": "Disease & Subsistence Crisis",
+      "definition": "Epidemics and food-supply collapses."
+    },
+    {
+      "id": "epidemic-and-plague",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "disease-and-subsistence-crisis",
+      "label": "Epidemic & Plague",
+      "definition": "Outbreaks of contagious disease."
+    },
+    {
+      "id": "famine-and-subsistence-crisis",
+      "lens": "A",
+      "level": "subspecies",
+      "parent": "disease-and-subsistence-crisis",
+      "label": "Famine & Subsistence Crisis",
+      "definition": "Famines and mass food shortages."
+    },
+    {
+      "id": "science-technology-and-exploration",
+      "lens": "A",
+      "level": "branch",
+      "parent": null,
+      "label": "Science, Technology & Exploration",
+      "definition": "The advance of knowledge and reach: discovery, invention, engineering, voyages of exploration, and the push past Earth."
+    },
+    {
+      "id": "invention-and-technology",
+      "lens": "A",
+      "level": "species",
+      "parent": "science-technology-and-exploration",
+      "label": "Invention & Technology",
+      "definition": "Breakthroughs in technology and applied science: inventions, patents, engineering firsts, and computing milestones."
+    },
+    {
+      "id": "scientific-discovery",
+      "lens": "A",
+      "level": "species",
+      "parent": "science-technology-and-exploration",
+      "label": "Scientific Discovery",
+      "definition": "A finding about how the world works — experiments, observations, theories confirmed, prizes recognizing them."
+    },
+    {
+      "id": "exploration-and-voyage",
+      "lens": "A",
+      "level": "species",
+      "parent": "science-technology-and-exploration",
+      "label": "Exploration & Voyage",
+      "definition": "Expeditions into the unmapped: voyages of discovery, circumnavigations, polar and deep journeys."
+    },
+    {
+      "id": "spaceflight-and-frontier",
+      "lens": "A",
+      "level": "species",
+      "parent": "science-technology-and-exploration",
+      "label": "Spaceflight & Frontier",
+      "definition": "Leaving Earth: launches, orbits, landings, stations, and off-world firsts."
+    },
+    {
+      "id": "bonding-and-kinship",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Bonding & Kinship",
+      "definition": "Forming, tending, and repairing human ties — the relational core of a life."
+    },
+    {
+      "id": "courtship-and-falling-in-love",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Courtship & Falling in Love",
+      "definition": "Attraction, courtship, and the forming of romantic bonds."
+    },
+    {
+      "id": "greeting-and-hospitality",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Greeting & Hospitality",
+      "definition": "Meeting, welcoming, and honoring others — handshakes, introductions, receiving guests."
+    },
+    {
+      "id": "marriage-and-union",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Marriage & Union",
+      "definition": "Betrothal, weddings, and the formal joining of partners or families."
+    },
+    {
+      "id": "friendship-and-companionship",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Friendship & Companionship",
+      "definition": "Making friends, keeping company, loyalty and everyday togetherness."
+    },
+    {
+      "id": "intimacy-and-sex",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Intimacy & Sex",
+      "definition": "Physical and emotional intimacy between people."
+    },
+    {
+      "id": "caregiving-and-nurture",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Caregiving & Nurture",
+      "definition": "Raising, feeding, tending, and protecting kin and dependents."
+    },
+    {
+      "id": "parting-and-reunion",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Parting & Reunion",
+      "definition": "Farewells, separations, and coming back together."
+    },
+    {
+      "id": "reconciliation-and-forgiveness",
+      "lens": "B",
+      "level": "species",
+      "parent": "bonding-and-kinship",
+      "label": "Reconciliation & Forgiveness",
+      "definition": "Repairing broken ties — apology, forgiveness, making peace between persons."
+    },
+    {
+      "id": "life-passages-and-the-body",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Life Passages & the Body",
+      "definition": "The biological and existential arc of a body through time, and its daily maintenance."
+    },
+    {
+      "id": "birth-and-begetting",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Birth & Begetting",
+      "definition": "Conceiving, gestating, and giving birth."
+    },
+    {
+      "id": "coming-of-age",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Coming of Age",
+      "definition": "Growing up, initiation, and the passage into adult roles."
+    },
+    {
+      "id": "aging-and-eldership",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Aging & Eldership",
+      "definition": "Growing old, retirement, and the roles of elders."
+    },
+    {
+      "id": "death-and-dying",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Death & Dying",
+      "definition": "Dying and the personal experience of mortality."
+    },
+    {
+      "id": "mourning-and-grief",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Mourning & Grief",
+      "definition": "Grieving, funerary care, and remembrance of the dead."
+    },
+    {
+      "id": "health-illness-and-healing",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Health, Illness & Healing",
+      "definition": "Falling ill, seeking care, healing, and tending the body’s health."
+    },
+    {
+      "id": "eating-and-drinking",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Eating & Drinking",
+      "definition": "Nourishing the body — meals, feasts, and shared food and drink."
+    },
+    {
+      "id": "rest-and-sleep",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Rest & Sleep",
+      "definition": "Sleeping, resting, and daily bodily recovery."
+    },
+    {
+      "id": "grooming-and-adornment",
+      "lens": "B",
+      "level": "species",
+      "parent": "life-passages-and-the-body",
+      "label": "Grooming & Adornment",
+      "definition": "Washing, dressing, adorning, and presenting the body."
+    },
+    {
+      "id": "movement-and-dwelling",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Movement & Dwelling",
+      "definition": "Moving through space and making places to be — travel that the events graph almost never records."
+    },
+    {
+      "id": "journey-and-travel",
+      "lens": "B",
+      "level": "species",
+      "parent": "movement-and-dwelling",
+      "label": "Journey & Travel",
+      "definition": "Setting out and traveling from place to place, for its own sake or purpose."
+    },
+    {
+      "id": "migration-and-resettlement",
+      "lens": "B",
+      "level": "species",
+      "parent": "movement-and-dwelling",
+      "label": "Migration & Resettlement",
+      "definition": "Relocating a life — emigration, displacement, and settling somewhere new."
+    },
+    {
+      "id": "exploration-and-wayfinding",
+      "lens": "B",
+      "level": "species",
+      "parent": "movement-and-dwelling",
+      "label": "Exploration & Wayfinding",
+      "definition": "Venturing into the unknown, navigating, and finding the way."
+    },
+    {
+      "id": "everyday-movement-and-commute",
+      "lens": "B",
+      "level": "species",
+      "parent": "movement-and-dwelling",
+      "label": "Everyday Movement & Commute",
+      "definition": "Routine getting-about — walking, riding, commuting, errands.",
+      "deprecated_in": "2.1.0",
+      "superseded_by": "journey-and-travel",
+      "deprecation_note": "Folded into its sibling: the routine-vs-notable split of movement produced 3 classifications ever (0 real) and no bridge or lateral edge referenced it. journey-and-travel covers setting out and traveling from place to place; routine getting-about is that, at smaller scale."
+    },
+    {
+      "id": "homemaking-and-dwelling",
+      "lens": "B",
+      "level": "species",
+      "parent": "movement-and-dwelling",
+      "label": "Homemaking & Dwelling",
+      "definition": "Making, keeping, and inhabiting a home."
+    },
+    {
+      "id": "making-and-cultivating",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Making & Cultivating",
+      "definition": "Bringing things into being and tending living things — craft, construction, cultivation, and creative work."
+    },
+    {
+      "id": "art-making-and-craft",
+      "lens": "B",
+      "level": "species",
+      "parent": "making-and-cultivating",
+      "label": "Art-Making & Craft",
+      "definition": "Making art and objects — painting, sculpting, weaving, and the crafts."
+    },
+    {
+      "id": "building-and-construction",
+      "lens": "B",
+      "level": "species",
+      "parent": "making-and-cultivating",
+      "label": "Building & Construction",
+      "definition": "Constructing dwellings, structures, and works with the hands."
+    },
+    {
+      "id": "cooking-and-foodways",
+      "lens": "B",
+      "level": "species",
+      "parent": "making-and-cultivating",
+      "label": "Cooking & Foodways",
+      "definition": "Preparing food and drink and the practices around it."
+    },
+    {
+      "id": "cultivating-and-tending",
+      "lens": "B",
+      "level": "species",
+      "parent": "making-and-cultivating",
+      "label": "Cultivating & Tending",
+      "definition": "Gardening, husbandry, and tending plants and animals as living craft."
+    },
+    {
+      "id": "invention-and-tinkering",
+      "lens": "B",
+      "level": "species",
+      "parent": "making-and-cultivating",
+      "label": "Invention & Tinkering",
+      "definition": "Designing, tinkering, and devising new tools and techniques."
+    },
+    {
+      "id": "music-and-performance",
+      "lens": "B",
+      "level": "species",
+      "parent": "making-and-cultivating",
+      "label": "Music & Performance",
+      "definition": "Making music, dancing, acting, and performing for others."
+    },
+    {
+      "id": "writing-and-composition",
+      "lens": "B",
+      "level": "species",
+      "parent": "making-and-cultivating",
+      "label": "Writing & Composition",
+      "definition": "Composing text — writing, poetry, correspondence, and authorship."
+    },
+    {
+      "id": "knowing-and-meaning",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Knowing & Meaning",
+      "definition": "The inner work of understanding, deciding, and making sense of things."
+    },
+    {
+      "id": "learning-and-study",
+      "lens": "B",
+      "level": "species",
+      "parent": "knowing-and-meaning",
+      "label": "Learning & Study",
+      "definition": "Acquiring skill and knowledge through study and practice."
+    },
+    {
+      "id": "teaching-and-mentoring",
+      "lens": "B",
+      "level": "species",
+      "parent": "knowing-and-meaning",
+      "label": "Teaching & Mentoring",
+      "definition": "Instructing, guiding, and passing knowledge to others."
+    },
+    {
+      "id": "inquiry-and-discovery",
+      "lens": "B",
+      "level": "species",
+      "parent": "knowing-and-meaning",
+      "label": "Inquiry & Discovery",
+      "definition": "Investigating, experimenting, and coming to understand something new."
+    },
+    {
+      "id": "contemplation-and-prayer",
+      "lens": "B",
+      "level": "species",
+      "parent": "knowing-and-meaning",
+      "label": "Contemplation & Prayer",
+      "definition": "Reflecting, meditating, and praying — the interior search for meaning."
+    },
+    {
+      "id": "remembering-and-recording",
+      "lens": "B",
+      "level": "species",
+      "parent": "knowing-and-meaning",
+      "label": "Remembering & Recording",
+      "definition": "Recalling, commemorating, and keeping records of experience."
+    },
+    {
+      "id": "deciding-and-judging",
+      "lens": "B",
+      "level": "species",
+      "parent": "knowing-and-meaning",
+      "label": "Deciding & Judging",
+      "definition": "Weighing options, choosing, and forming judgments."
+    },
+    {
+      "id": "believing-and-conversion",
+      "lens": "B",
+      "level": "species",
+      "parent": "knowing-and-meaning",
+      "label": "Believing & Conversion",
+      "definition": "Coming to belief, changing one’s mind, and personal conversion."
+    },
+    {
+      "id": "communication-and-exchange",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Communication & Exchange",
+      "definition": "Passing meaning and value between people — talk, expression, and the trading of things."
+    },
+    {
+      "id": "conversation-and-storytelling",
+      "lens": "B",
+      "level": "species",
+      "parent": "communication-and-exchange",
+      "label": "Conversation & Storytelling",
+      "definition": "Talking, listening, gossip, and telling stories."
+    },
+    {
+      "id": "expression-and-display",
+      "lens": "B",
+      "level": "species",
+      "parent": "communication-and-exchange",
+      "label": "Expression & Display",
+      "definition": "Showing feeling, style, or identity — self-expression and display."
+    },
+    {
+      "id": "persuasion-and-rhetoric",
+      "lens": "B",
+      "level": "species",
+      "parent": "communication-and-exchange",
+      "label": "Persuasion & Rhetoric",
+      "definition": "Convincing, appealing, arguing a case, and moving others to act."
+    },
+    {
+      "id": "trade-and-barter",
+      "lens": "B",
+      "level": "species",
+      "parent": "communication-and-exchange",
+      "label": "Trade & Barter",
+      "definition": "Buying, selling, bartering, and everyday economic exchange between persons."
+    },
+    {
+      "id": "gift-and-reciprocity",
+      "lens": "B",
+      "level": "species",
+      "parent": "communication-and-exchange",
+      "label": "Gift & Reciprocity",
+      "definition": "Giving, receiving, and returning gifts and favors."
+    },
+    {
+      "id": "negotiation-and-agreement",
+      "lens": "B",
+      "level": "species",
+      "parent": "communication-and-exchange",
+      "label": "Negotiation & Agreement",
+      "definition": "Bargaining, promising, and reaching agreement between parties."
+    },
+    {
+      "id": "play-rite-and-celebration",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Play, Rite & Celebration",
+      "definition": "Non-instrumental action done for its own sake or for the sacred — play, festivity, and rite."
+    },
+    {
+      "id": "play-and-games",
+      "lens": "B",
+      "level": "species",
+      "parent": "play-rite-and-celebration",
+      "label": "Play & Games",
+      "definition": "Playing, gaming, and improvised fun."
+    },
+    {
+      "id": "sport-and-contest",
+      "lens": "B",
+      "level": "species",
+      "parent": "play-rite-and-celebration",
+      "label": "Sport & Contest",
+      "definition": "Athletic play and rule-bound physical contest."
+    },
+    {
+      "id": "festivity-and-celebration",
+      "lens": "B",
+      "level": "species",
+      "parent": "play-rite-and-celebration",
+      "label": "Festivity & Celebration",
+      "definition": "Feasts, holidays, parties, and marking joyful occasions."
+    },
+    {
+      "id": "ritual-and-ceremony",
+      "lens": "B",
+      "level": "species",
+      "parent": "play-rite-and-celebration",
+      "label": "Ritual & Ceremony",
+      "definition": "Enacting rites and ceremonies that mark meaning and passage."
+    },
+    {
+      "id": "worship-and-devotion",
+      "lens": "B",
+      "level": "species",
+      "parent": "play-rite-and-celebration",
+      "label": "Worship & Devotion",
+      "definition": "Personal and communal worship, devotion, and observance."
+    },
+    {
+      "id": "humor-and-mirth",
+      "lens": "B",
+      "level": "species",
+      "parent": "play-rite-and-celebration",
+      "label": "Humor & Mirth",
+      "definition": "Joking, laughing, and shared amusement."
+    },
+    {
+      "id": "leisure-and-recreation",
+      "lens": "B",
+      "level": "species",
+      "parent": "play-rite-and-celebration",
+      "label": "Leisure & Recreation",
+      "definition": "Relaxing, hobbies, and unstructured free time."
+    },
+    {
+      "id": "work-and-provision",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Work & Provision",
+      "definition": "Instrumental effort to sustain oneself and others — labor, subsistence, and mutual help."
+    },
+    {
+      "id": "labor-and-toil",
+      "lens": "B",
+      "level": "species",
+      "parent": "work-and-provision",
+      "label": "Labor & Toil",
+      "definition": "Working, laboring, and the daily effort of a trade or task."
+    },
+    {
+      "id": "subsistence-and-foraging",
+      "lens": "B",
+      "level": "species",
+      "parent": "work-and-provision",
+      "label": "Subsistence & Foraging",
+      "definition": "Hunting, gathering, fishing, and drawing a living from the land."
+    },
+    {
+      "id": "service-and-assistance",
+      "lens": "B",
+      "level": "species",
+      "parent": "work-and-provision",
+      "label": "Service & Assistance",
+      "definition": "Serving, helping, and doing for others."
+    },
+    {
+      "id": "cooperation-and-collective-effort",
+      "lens": "B",
+      "level": "species",
+      "parent": "work-and-provision",
+      "label": "Cooperation & Collective Effort",
+      "definition": "Working together — teamwork, mutual aid, and joint undertakings."
+    },
+    {
+      "id": "stewardship-and-provision",
+      "lens": "B",
+      "level": "species",
+      "parent": "work-and-provision",
+      "label": "Stewardship & Provision",
+      "definition": "Providing for, managing, and safeguarding resources and dependents."
+    },
+    {
+      "id": "striving-and-harm",
+      "lens": "B",
+      "level": "branch",
+      "parent": null,
+      "label": "Striving & Harm",
+      "definition": "Contest and injury at the human scale — rivalry, deceit, and violence that the events graph only sees once it becomes a battle."
+    },
+    {
+      "id": "competition-and-rivalry",
+      "lens": "B",
+      "level": "species",
+      "parent": "striving-and-harm",
+      "label": "Competition & Rivalry",
+      "definition": "Competing, rivalry, and striving to win or outdo."
+    },
+    {
+      "id": "argument-and-quarrel",
+      "lens": "B",
+      "level": "species",
+      "parent": "striving-and-harm",
+      "label": "Argument & Quarrel",
+      "definition": "Disputing, quarreling, and interpersonal conflict in words."
+    },
+    {
+      "id": "deception-and-manipulation",
+      "lens": "B",
+      "level": "species",
+      "parent": "striving-and-harm",
+      "label": "Deception & Manipulation",
+      "definition": "Lying, cheating, betraying, and manipulating others."
+    },
+    {
+      "id": "aggression-and-violence",
+      "lens": "B",
+      "level": "species",
+      "parent": "striving-and-harm",
+      "label": "Aggression & Violence",
+      "definition": "Fighting, assault, and interpersonal violence."
+    },
+    {
+      "id": "defense-and-protection",
+      "lens": "B",
+      "level": "species",
+      "parent": "striving-and-harm",
+      "label": "Defense & Protection",
+      "definition": "Defending, guarding, and protecting self and others from harm."
+    },
+    {
+      "id": "punishment-and-retribution",
+      "lens": "B",
+      "level": "species",
+      "parent": "striving-and-harm",
+      "label": "Punishment & Retribution",
+      "definition": "Punishing, avenging, and exacting retribution at the personal scale."
+    },
+    {
+      "id": "dominance-and-submission",
+      "lens": "B",
+      "level": "species",
+      "parent": "striving-and-harm",
+      "label": "Dominance & Submission",
+      "definition": "Asserting authority and yielding to it — commanding, obeying, submitting."
+    }
+  ],
+  "lateral_edges": [
+    {
+      "a": "accession-and-coronation",
+      "b": "royal-death-and-succession",
+      "weight": 1.6
+    },
+    {
+      "a": "royal-death-and-succession",
+      "b": "abdication-and-deposition",
+      "weight": 1.6
+    },
+    {
+      "a": "abdication-and-deposition",
+      "b": "coup-and-usurpation",
+      "weight": 1.6
+    },
+    {
+      "a": "assassination",
+      "b": "coup-and-usurpation",
+      "weight": 1.6
+    },
+    {
+      "a": "coup-and-usurpation",
+      "b": "revolt-uprising-and-revolution",
+      "weight": 1.6
+    },
+    {
+      "a": "revolt-uprising-and-revolution",
+      "b": "protest-riot-and-civil-unrest",
+      "weight": 1.6
+    },
+    {
+      "a": "assassination",
+      "b": "trials-and-political-punishment",
+      "weight": 1.6
+    },
+    {
+      "a": "trials-and-political-punishment",
+      "b": "legislation-edicts-and-decrees",
+      "weight": 1.6
+    },
+    {
+      "a": "legislation-edicts-and-decrees",
+      "b": "constitutions-and-charters",
+      "weight": 1.6
+    },
+    {
+      "a": "treaty-alliance-and-peace-accord",
+      "b": "conquest-annexation-and-occupation",
+      "weight": 1.6
+    },
+    {
+      "a": "conquest-annexation-and-occupation",
+      "b": "independence-and-state-founding",
+      "weight": 1.6
+    },
+    {
+      "a": "independence-and-state-founding",
+      "b": "treaty-alliance-and-peace-accord",
+      "weight": 1.6
+    },
+    {
+      "a": "elections-and-official-selection",
+      "b": "appointments-and-government-formation",
+      "weight": 1.6
+    },
+    {
+      "a": "accession-and-coronation",
+      "b": "elections-and-official-selection",
+      "weight": 1.6
+    },
+    {
+      "a": "appointments-and-government-formation",
+      "b": "independence-and-state-founding",
+      "weight": 1.6
+    },
+    {
+      "a": "conquest-annexation-and-occupation",
+      "b": "pitched-battle",
+      "weight": 1.6
+    },
+    {
+      "a": "conquest-annexation-and-occupation",
+      "b": "siege-and-sack",
+      "weight": 1.6
+    },
+    {
+      "a": "revolt-uprising-and-revolution",
+      "b": "pitched-battle",
+      "weight": 1.6
+    },
+    {
+      "a": "revolt-uprising-and-revolution",
+      "b": "massacre-and-atrocity",
+      "weight": 1.6
+    },
+    {
+      "a": "protest-riot-and-civil-unrest",
+      "b": "massacre-and-atrocity",
+      "weight": 1.6
+    },
+    {
+      "a": "assassination",
+      "b": "massacre-and-atrocity",
+      "weight": 1.6
+    },
+    {
+      "a": "pitched-battle",
+      "b": "siege-and-sack",
+      "weight": 1.6
+    },
+    {
+      "a": "pitched-battle",
+      "b": "massacre-and-atrocity",
+      "weight": 1.6
+    },
+    {
+      "a": "siege-and-sack",
+      "b": "massacre-and-atrocity",
+      "weight": 1.6
+    },
+    {
+      "a": "revolt-battle-and-suppression",
+      "b": "pitched-battle",
+      "weight": 1.6
+    },
+    {
+      "a": "revolt-battle-and-suppression",
+      "b": "massacre-and-atrocity",
+      "weight": 1.6
+    },
+    {
+      "a": "peasant-demands-and-assembly",
+      "b": "revolt-uprising-and-revolution",
+      "weight": 1.6
+    },
+    {
+      "a": "agrarian-revolt",
+      "b": "revolt-uprising-and-revolution",
+      "weight": 1.6
+    },
+    {
+      "a": "strike-and-lockout",
+      "b": "labor-reform-and-accord",
+      "weight": 1.6
+    },
+    {
+      "a": "strike-and-lockout",
+      "b": "revolt-battle-and-suppression",
+      "weight": 1.6
+    },
+    {
+      "a": "banking-and-exchange",
+      "b": "currency-and-monetary-reform",
+      "weight": 1.6
+    },
+    {
+      "a": "chartered-company-and-guild",
+      "b": "corporate-founding-and-milestone",
+      "weight": 1.6
+    },
+    {
+      "a": "corporate-founding-and-milestone",
+      "b": "banking-and-exchange",
+      "weight": 1.6
+    },
+    {
+      "a": "tariff-and-trade-dispute",
+      "b": "economic-summit-and-reparations",
+      "weight": 1.6
+    },
+    {
+      "a": "consumer-product-launch",
+      "b": "foundational-computing-hardware",
+      "weight": 1.6
+    },
+    {
+      "a": "trade-and-transport-infrastructure",
+      "b": "corporate-founding-and-milestone",
+      "weight": 1.6
+    },
+    {
+      "a": "trade-and-transport-infrastructure",
+      "b": "banking-and-exchange",
+      "weight": 1.6
+    },
+    {
+      "a": "tariff-and-trade-dispute",
+      "b": "treaty-alliance-and-peace-accord",
+      "weight": 1.6
+    },
+    {
+      "a": "economic-summit-and-reparations",
+      "b": "treaty-alliance-and-peace-accord",
+      "weight": 1.6
+    },
+    {
+      "a": "currency-and-monetary-reform",
+      "b": "legislation-edicts-and-decrees",
+      "weight": 1.6
+    },
+    {
+      "a": "chartered-company-and-guild",
+      "b": "constitutions-and-charters",
+      "weight": 1.6
+    },
+    {
+      "a": "chartered-company-and-guild",
+      "b": "legislation-edicts-and-decrees",
+      "weight": 1.6
+    },
+    {
+      "a": "labor-reform-and-accord",
+      "b": "legislation-edicts-and-decrees",
+      "weight": 1.6
+    },
+    {
+      "a": "economic-summit-and-reparations",
+      "b": "conquest-annexation-and-occupation",
+      "weight": 1.6
+    },
+    {
+      "a": "foundational-computing-hardware",
+      "b": "invention-and-technology",
+      "weight": 1.6
+    },
+    {
+      "a": "corporate-founding-and-milestone",
+      "b": "invention-and-technology",
+      "weight": 1.6
+    },
+    {
+      "a": "consumer-product-launch",
+      "b": "invention-and-technology",
+      "weight": 1.6
+    },
+    {
+      "a": "consumer-product-launch",
+      "b": "broadcast-and-screen-media",
+      "weight": 1.6
+    },
+    {
+      "a": "church-governance-and-office",
+      "b": "reform-doctrine-and-scripture",
+      "weight": 1.6
+    },
+    {
+      "a": "reform-doctrine-and-scripture",
+      "b": "religious-conflict-and-martyrdom",
+      "weight": 1.6
+    },
+    {
+      "a": "religious-conflict-and-martyrdom",
+      "b": "ritual-consecration-and-pilgrimage",
+      "weight": 1.6
+    },
+    {
+      "a": "ritual-consecration-and-pilgrimage",
+      "b": "sacred-architecture",
+      "weight": 1.6
+    },
+    {
+      "a": "church-governance-and-office",
+      "b": "sacred-architecture",
+      "weight": 1.6
+    },
+    {
+      "a": "reform-doctrine-and-scripture",
+      "b": "literary-and-scholarly-works",
+      "weight": 1.6
+    },
+    {
+      "a": "literary-and-scholarly-works",
+      "b": "printing-and-publishing",
+      "weight": 1.6
+    },
+    {
+      "a": "printing-and-publishing",
+      "b": "broadcast-and-screen-media",
+      "weight": 1.6
+    },
+    {
+      "a": "invention-and-technology",
+      "b": "learning-institutions",
+      "weight": 1.6
+    },
+    {
+      "a": "learning-institutions",
+      "b": "literary-and-scholarly-works",
+      "weight": 1.6
+    },
+    {
+      "a": "invention-and-technology",
+      "b": "printing-and-publishing",
+      "weight": 1.6
+    },
+    {
+      "a": "church-governance-and-office",
+      "b": "elections-and-official-selection",
+      "weight": 1.6
+    },
+    {
+      "a": "church-governance-and-office",
+      "b": "appointments-and-government-formation",
+      "weight": 1.6
+    },
+    {
+      "a": "reform-doctrine-and-scripture",
+      "b": "protest-riot-and-civil-unrest",
+      "weight": 1.6
+    },
+    {
+      "a": "printing-and-publishing",
+      "b": "legislation-edicts-and-decrees",
+      "weight": 1.6
+    },
+    {
+      "a": "religious-conflict-and-martyrdom",
+      "b": "trials-and-political-punishment",
+      "weight": 1.6
+    },
+    {
+      "a": "religious-conflict-and-martyrdom",
+      "b": "revolt-uprising-and-revolution",
+      "weight": 1.6
+    },
+    {
+      "a": "religious-conflict-and-martyrdom",
+      "b": "massacre-and-atrocity",
+      "weight": 1.6
+    },
+    {
+      "a": "earthquake-and-seismic",
+      "b": "flood-storm-and-fire",
+      "weight": 1.6
+    },
+    {
+      "a": "flood-storm-and-fire",
+      "b": "volcanic-and-geological",
+      "weight": 1.6
+    },
+    {
+      "a": "epidemic-and-plague",
+      "b": "famine-and-subsistence-crisis",
+      "weight": 1.6
+    },
+    {
+      "a": "famine-and-subsistence-crisis",
+      "b": "agrarian-revolt",
+      "weight": 1.6
+    },
+    {
+      "a": "famine-and-subsistence-crisis",
+      "b": "siege-and-sack",
+      "weight": 1.6
+    },
+    {
+      "a": "flood-storm-and-fire",
+      "b": "sacred-architecture",
+      "weight": 1.6
+    },
+    {
+      "a": "war-declaration-and-outbreak",
+      "b": "pitched-battle",
+      "weight": 1.6
+    },
+    {
+      "a": "war-declaration-and-outbreak",
+      "b": "treaty-alliance-and-peace-accord",
+      "weight": 1.6
+    },
+    {
+      "a": "war-declaration-and-outbreak",
+      "b": "conquest-annexation-and-occupation",
+      "weight": 1.6
+    },
+    {
+      "a": "dynastic-birth",
+      "b": "royal-death-and-succession",
+      "weight": 1.6
+    },
+    {
+      "a": "dynastic-birth",
+      "b": "accession-and-coronation",
+      "weight": 1.6
+    },
+    {
+      "a": "refusal-and-declining-of-office",
+      "b": "accession-and-coronation",
+      "weight": 1.6
+    },
+    {
+      "a": "refusal-and-declining-of-office",
+      "b": "abdication-and-deposition",
+      "weight": 1.6
+    },
+    {
+      "a": "deliberative-assembly-and-congress",
+      "b": "elections-and-official-selection",
+      "weight": 1.6
+    },
+    {
+      "a": "deliberative-assembly-and-congress",
+      "b": "legislation-edicts-and-decrees",
+      "weight": 1.6
+    },
+    {
+      "a": "legislature-dissolution",
+      "b": "deliberative-assembly-and-congress",
+      "weight": 1.6
+    },
+    {
+      "a": "legislature-dissolution",
+      "b": "coup-and-usurpation",
+      "weight": 1.6
+    },
+    {
+      "a": "invention-and-technology",
+      "b": "scientific-discovery",
+      "weight": 1.6
+    },
+    {
+      "a": "scientific-discovery",
+      "b": "learning-institutions",
+      "weight": 1.6
+    },
+    {
+      "a": "exploration-and-voyage",
+      "b": "conquest-annexation-and-occupation",
+      "weight": 1.6
+    },
+    {
+      "a": "exploration-and-voyage",
+      "b": "spaceflight-and-frontier",
+      "weight": 1.6
+    },
+    {
+      "a": "spaceflight-and-frontier",
+      "b": "invention-and-technology",
+      "weight": 1.6
+    },
+    {
+      "a": "games-and-sport",
+      "b": "ritual-consecration-and-pilgrimage",
+      "weight": 1.6
+    },
+    {
+      "a": "games-and-sport",
+      "b": "broadcast-and-screen-media",
+      "weight": 1.6
+    },
+    {
+      "a": "courtship-and-falling-in-love",
+      "b": "intimacy-and-sex",
+      "weight": 1.6
+    },
+    {
+      "a": "intimacy-and-sex",
+      "b": "marriage-and-union",
+      "weight": 1.6
+    },
+    {
+      "a": "marriage-and-union",
+      "b": "birth-and-begetting",
+      "weight": 1.6
+    },
+    {
+      "a": "birth-and-begetting",
+      "b": "caregiving-and-nurture",
+      "weight": 1.6
+    },
+    {
+      "a": "greeting-and-hospitality",
+      "b": "friendship-and-companionship",
+      "weight": 1.6
+    },
+    {
+      "a": "friendship-and-companionship",
+      "b": "conversation-and-storytelling",
+      "weight": 1.6
+    },
+    {
+      "a": "greeting-and-hospitality",
+      "b": "negotiation-and-agreement",
+      "weight": 1.6
+    },
+    {
+      "a": "greeting-and-hospitality",
+      "b": "gift-and-reciprocity",
+      "weight": 1.6
+    },
+    {
+      "a": "parting-and-reunion",
+      "b": "reconciliation-and-forgiveness",
+      "weight": 1.6
+    },
+    {
+      "a": "reconciliation-and-forgiveness",
+      "b": "argument-and-quarrel",
+      "weight": 1.6
+    },
+    {
+      "a": "caregiving-and-nurture",
+      "b": "service-and-assistance",
+      "weight": 1.6
+    },
+    {
+      "a": "caregiving-and-nurture",
+      "b": "health-illness-and-healing",
+      "weight": 1.6
+    },
+    {
+      "a": "death-and-dying",
+      "b": "mourning-and-grief",
+      "weight": 1.6
+    },
+    {
+      "a": "mourning-and-grief",
+      "b": "ritual-and-ceremony",
+      "weight": 1.6
+    },
+    {
+      "a": "coming-of-age",
+      "b": "ritual-and-ceremony",
+      "weight": 1.6
+    },
+    {
+      "a": "eating-and-drinking",
+      "b": "cooking-and-foodways",
+      "weight": 1.6
+    },
+    {
+      "a": "cooking-and-foodways",
+      "b": "festivity-and-celebration",
+      "weight": 1.6
+    },
+    {
+      "a": "eating-and-drinking",
+      "b": "festivity-and-celebration",
+      "weight": 1.6
+    },
+    {
+      "a": "health-illness-and-healing",
+      "b": "inquiry-and-discovery",
+      "weight": 1.6
+    },
+    {
+      "a": "journey-and-travel",
+      "b": "exploration-and-wayfinding",
+      "weight": 1.6
+    },
+    {
+      "a": "exploration-and-wayfinding",
+      "b": "migration-and-resettlement",
+      "weight": 1.6
+    },
+    {
+      "a": "journey-and-travel",
+      "b": "worship-and-devotion",
+      "weight": 1.6
+    },
+    {
+      "a": "journey-and-travel",
+      "b": "trade-and-barter",
+      "weight": 1.6
+    },
+    {
+      "a": "homemaking-and-dwelling",
+      "b": "building-and-construction",
+      "weight": 1.6
+    },
+    {
+      "a": "homemaking-and-dwelling",
+      "b": "rest-and-sleep",
+      "weight": 1.6
+    },
+    {
+      "a": "art-making-and-craft",
+      "b": "music-and-performance",
+      "weight": 1.6
+    },
+    {
+      "a": "music-and-performance",
+      "b": "writing-and-composition",
+      "weight": 1.6
+    },
+    {
+      "a": "writing-and-composition",
+      "b": "expression-and-display",
+      "weight": 1.6
+    },
+    {
+      "a": "art-making-and-craft",
+      "b": "expression-and-display",
+      "weight": 1.6
+    },
+    {
+      "a": "writing-and-composition",
+      "b": "remembering-and-recording",
+      "weight": 1.6
+    },
+    {
+      "a": "invention-and-tinkering",
+      "b": "inquiry-and-discovery",
+      "weight": 1.6
+    },
+    {
+      "a": "cultivating-and-tending",
+      "b": "subsistence-and-foraging",
+      "weight": 1.6
+    },
+    {
+      "a": "cultivating-and-tending",
+      "b": "labor-and-toil",
+      "weight": 1.6
+    },
+    {
+      "a": "learning-and-study",
+      "b": "teaching-and-mentoring",
+      "weight": 1.6
+    },
+    {
+      "a": "teaching-and-mentoring",
+      "b": "conversation-and-storytelling",
+      "weight": 1.6
+    },
+    {
+      "a": "contemplation-and-prayer",
+      "b": "worship-and-devotion",
+      "weight": 1.6
+    },
+    {
+      "a": "contemplation-and-prayer",
+      "b": "believing-and-conversion",
+      "weight": 1.6
+    },
+    {
+      "a": "believing-and-conversion",
+      "b": "worship-and-devotion",
+      "weight": 1.6
+    },
+    {
+      "a": "deciding-and-judging",
+      "b": "negotiation-and-agreement",
+      "weight": 1.6
+    },
+    {
+      "a": "deciding-and-judging",
+      "b": "argument-and-quarrel",
+      "weight": 1.6
+    },
+    {
+      "a": "persuasion-and-rhetoric",
+      "b": "deception-and-manipulation",
+      "weight": 1.6
+    },
+    {
+      "a": "persuasion-and-rhetoric",
+      "b": "conversation-and-storytelling",
+      "weight": 1.6
+    },
+    {
+      "a": "trade-and-barter",
+      "b": "gift-and-reciprocity",
+      "weight": 1.6
+    },
+    {
+      "a": "trade-and-barter",
+      "b": "negotiation-and-agreement",
+      "weight": 1.6
+    },
+    {
+      "a": "play-and-games",
+      "b": "sport-and-contest",
+      "weight": 1.6
+    },
+    {
+      "a": "sport-and-contest",
+      "b": "competition-and-rivalry",
+      "weight": 1.6
+    },
+    {
+      "a": "festivity-and-celebration",
+      "b": "ritual-and-ceremony",
+      "weight": 1.6
+    },
+    {
+      "a": "ritual-and-ceremony",
+      "b": "worship-and-devotion",
+      "weight": 1.6
+    },
+    {
+      "a": "humor-and-mirth",
+      "b": "leisure-and-recreation",
+      "weight": 1.6
+    },
+    {
+      "a": "leisure-and-recreation",
+      "b": "rest-and-sleep",
+      "weight": 1.6
+    },
+    {
+      "a": "labor-and-toil",
+      "b": "cooperation-and-collective-effort",
+      "weight": 1.6
+    },
+    {
+      "a": "cooperation-and-collective-effort",
+      "b": "service-and-assistance",
+      "weight": 1.6
+    },
+    {
+      "a": "stewardship-and-provision",
+      "b": "caregiving-and-nurture",
+      "weight": 1.6
+    },
+    {
+      "a": "subsistence-and-foraging",
+      "b": "journey-and-travel",
+      "weight": 1.6
+    },
+    {
+      "a": "competition-and-rivalry",
+      "b": "argument-and-quarrel",
+      "weight": 1.6
+    },
+    {
+      "a": "argument-and-quarrel",
+      "b": "aggression-and-violence",
+      "weight": 1.6
+    },
+    {
+      "a": "aggression-and-violence",
+      "b": "defense-and-protection",
+      "weight": 1.6
+    },
+    {
+      "a": "defense-and-protection",
+      "b": "punishment-and-retribution",
+      "weight": 1.6
+    },
+    {
+      "a": "punishment-and-retribution",
+      "b": "reconciliation-and-forgiveness",
+      "weight": 1.6
+    },
+    {
+      "a": "dominance-and-submission",
+      "b": "aggression-and-violence",
+      "weight": 1.6
+    },
+    {
+      "a": "dominance-and-submission",
+      "b": "service-and-assistance",
+      "weight": 1.6
+    }
+  ],
+  "bridges": [
+    {
+      "action": "aggression-and-violence",
+      "relation": "scales-up-to",
+      "event": "conflict-and-warfare",
+      "note": "a battle is fighting, at scale"
+    },
+    {
+      "action": "negotiation-and-agreement",
+      "relation": "scales-up-to",
+      "event": "treaty-alliance-and-peace-accord",
+      "note": "a treaty is a handshake, at scale"
+    },
+    {
+      "action": "trade-and-barter",
+      "relation": "scales-up-to",
+      "event": "enterprise-and-commerce",
+      "note": ""
+    },
+    {
+      "action": "worship-and-devotion",
+      "relation": "scales-up-to",
+      "event": "religious-life",
+      "note": ""
+    },
+    {
+      "action": "labor-and-toil",
+      "relation": "scales-up-to",
+      "event": "labor-movements",
+      "note": ""
+    },
+    {
+      "action": "punishment-and-retribution",
+      "relation": "scales-up-to",
+      "event": "trials-and-political-punishment",
+      "note": ""
+    },
+    {
+      "action": "persuasion-and-rhetoric",
+      "relation": "constitutes",
+      "event": "elections-and-official-selection",
+      "note": "campaigning and oratory are the action inside an election"
+    },
+    {
+      "action": "deciding-and-judging",
+      "relation": "constitutes",
+      "event": "trials-and-political-punishment",
+      "note": "judgment is the action inside a trial"
+    },
+    {
+      "action": "dominance-and-submission",
+      "relation": "constitutes",
+      "event": "rulership-and-succession",
+      "note": "command and obedience are the micro-fabric of rulership"
+    },
+    {
+      "action": "birth-and-begetting",
+      "relation": "recorded-as",
+      "event": "dynastic-birth",
+      "note": "royalty only; everyone else’s birth is invisible to Lens A"
+    },
+    {
+      "action": "death-and-dying",
+      "relation": "recorded-as",
+      "event": "royal-death-and-succession",
+      "note": "royalty only"
+    },
+    {
+      "action": "mourning-and-grief",
+      "relation": "recorded-as",
+      "event": "royal-death-and-succession",
+      "note": "state funerals only"
+    },
+    {
+      "action": "marriage-and-union",
+      "relation": "recorded-as",
+      "event": "rulership-and-succession",
+      "note": "dynastic marriage only"
+    },
+    {
+      "action": "invention-and-tinkering",
+      "relation": "recorded-as",
+      "event": "invention-and-technology",
+      "note": ""
+    },
+    {
+      "action": "inquiry-and-discovery",
+      "relation": "recorded-as",
+      "event": "scientific-discovery",
+      "note": "re-targeted in v1.1 from invention-and-technology"
+    },
+    {
+      "action": "writing-and-composition",
+      "relation": "recorded-as",
+      "event": "literary-and-scholarly-works",
+      "note": ""
+    },
+    {
+      "action": "art-making-and-craft",
+      "relation": "recorded-as",
+      "event": "letters-print-and-media",
+      "note": ""
+    },
+    {
+      "action": "exploration-and-wayfinding",
+      "relation": "recorded-as",
+      "event": "exploration-and-voyage",
+      "note": "re-targeted in v1.1 from invention-and-technology"
+    },
+    {
+      "action": "festivity-and-celebration",
+      "relation": "recorded-as",
+      "event": "ritual-consecration-and-pilgrimage",
+      "note": "feasts and jubilees appear only when sacred or royal"
+    },
+    {
+      "action": "ritual-and-ceremony",
+      "relation": "recorded-as",
+      "event": "ritual-consecration-and-pilgrimage",
+      "note": ""
+    },
+    {
+      "action": "eating-and-drinking",
+      "relation": "recorded-as",
+      "event": "famine-and-subsistence-crisis",
+      "note": "History records eating only when it fails"
+    },
+    {
+      "action": "health-illness-and-healing",
+      "relation": "recorded-as",
+      "event": "epidemic-and-plague",
+      "note": "illness enters the record only at population scale"
+    },
+    {
+      "action": "migration-and-resettlement",
+      "relation": "unrecorded",
+      "event": null,
+      "note": "no event node exists for ordinary migration"
+    },
+    {
+      "action": "journey-and-travel",
+      "relation": "unrecorded",
+      "event": null,
+      "note": "travel is nearly invisible to the events graph"
+    },
+    {
+      "action": "courtship-and-falling-in-love",
+      "relation": "unrecorded",
+      "event": null,
+      "note": "the private core of a life leaves no public event"
+    },
+    {
+      "action": "sport-and-contest",
+      "relation": "recorded-as",
+      "event": "games-and-sport",
+      "note": "bridged in v1.1 — sport leaves the kernel; Olympiads now have a home"
+    }
+  ],
+  "kernel": [
+    "migration-and-resettlement",
+    "journey-and-travel",
+    "courtship-and-falling-in-love"
+  ],
+  "design_principles": [
+    "distributions not labels",
+    "mass-at-branch when species uncertain",
+    "never guess — untagged is valid",
+    "affect/volition/scale are dimensions not branches",
+    "a missing bridge is a finding, not a gap"
+  ]
+}

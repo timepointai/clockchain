@@ -1,0 +1,26 @@
+[package]
+name = "cc-anchor"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Merkle accumulator, consistency proofs, and OpenTimestamps -> Bitcoin anchoring."
+
+[dependencies]
+cc-core.workspace = true
+# A root publication is an ordinary signed node-0 moment appended through the
+# same choke point every other writer uses, never a privileged table write
+# (INITIATION-PLAN §5.4, memo §1). That is what this dependency buys.
+cc-ledger.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+# The anchor tick is a cron entry point, so it owns a runtime and a clock at the
+# edge; nothing in the library reads either.
+tokio.workspace = true
+
+[dev-dependencies]
+cc-testkit.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
