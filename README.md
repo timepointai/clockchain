@@ -30,6 +30,13 @@ Corpus reads require a scoped Bearer credential and explicit `as_of`. A missing
 body, missing evidence, unknown date and deliberate media absence are distinct
 states. Do not replace missing evidence with an assertion.
 
+## Start a small corpus
+
+The checkout contains software and synthetic test fixtures, not a legacy ledger.
+Use the [local permissive-model pilot](docs/LOCAL-GENERATION.md) to generate at
+most three source-backed proposals outside the repository. Model output supplies
+the historical content; software supplies validation and measured provenance.
+
 ## Private operation
 
 GitHub Actions tests code and never deploys. The owner explicitly releases a

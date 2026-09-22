@@ -16,7 +16,7 @@ import time
 import uuid
 
 from acceptance_seed import seed
-from deployed_checks import check, request
+from deployed_checks import check, check_empty, request
 
 
 def docker(*args):
@@ -90,6 +90,9 @@ def accept(image, sha, evidence):
             if attempt == 89:
                 raise RuntimeError('temporary node did not become ready')
             time.sleep(1)
+        docker('exec', app, 'cc-migrator', 'genesis')
+        empty_result = check_empty(url, sha, key, read_key)
+        (evidence / 'empty-corpus.json').write_text(json.dumps(empty_result, indent=2) + '\n')
         entity = seed('docker:' + app, url, key)
         result = check(url, sha, entity, key, read_key)
         result.update({'schema': 'cc.local-acceptance.v1', 'image': image,

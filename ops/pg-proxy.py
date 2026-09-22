@@ -1,3 +1,4 @@
+raise SystemExit('Retired Railway proxy: use the private Fly proxy in docs/CICD-FLY.md')
 #!/usr/bin/env python3
 """Open or close the Railway Postgres TCP proxy, with a watchdog.
 

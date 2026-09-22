@@ -92,3 +92,10 @@ The capture reuses `graphview.feasibility`, the existing browser reader. Output
 is private by default and existing files are never overwritten. Review captured
 corpus material before sharing; do not commit live captures as training data.
 The manifest hashes the local ontology artifact and labels that limited scope.
+
+## Corpus and source audit
+
+[Corpus audit](corpus-audit.md) provides read-only production aggregates, a private
+snapshot/API crawler, bounded source retrieval, and an isolated canonical replay
+comparison. It distinguishes consistency and source availability from historical
+truth, and produces a review queue without publishing any content.

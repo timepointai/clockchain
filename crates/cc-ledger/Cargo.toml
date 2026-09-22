@@ -17,5 +17,6 @@ thiserror.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 cc-testkit.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -192,8 +192,8 @@ fn point(id: &str) -> std::collections::BTreeMap<String, f64> {
 ///     and interesting object, surfaced, claimed nothing about.
 ///
 /// **Source note, carried in the output.** These types come from `claim_type`,
-/// the headline axis — and for 29 claims that headline coexists with a *stored
-/// abstention*, where a classifier declined to read the claim. Deriving edge
+/// the headline axis, which can coexist with a stored abstention when a
+/// classifier declined to read the claim. Deriving edge
 /// context from the headline is legitimate: it is bundle-valid and it is what
 /// exists. But the projection names its source field so nobody reads a
 /// `type_distance` as "the classifier read both endpoints" when one declined.
@@ -291,10 +291,8 @@ pub fn edge_context(src_type: Option<&str>, dst_type: Option<&str>) -> Value {
         "lens_crossing": crossing,
         "type_distance": type_distance,
         "bridge": bridge,
-        "derived_from": "claim_type (the headline axis). 29 claims carry a \
-                         stored abstention alongside their headline type, so a \
-                         type_distance does not imply a classifier read either \
-                         endpoint.",
+        "derived_from": "claim_type (the headline axis). A type_distance does not \
+                         imply a classifier read either endpoint.",
         "not_an_edge_type": "the edge's own relation is Causation/Influence, \
                              which is Clockchain's axis. TT labels nodes and \
                              defines no event-to-event vocabulary.",

@@ -13,7 +13,7 @@ import subprocess
 import time
 
 from acceptance_seed import seed
-from deployed_checks import check, request
+from deployed_checks import check, check_empty, request
 from backup_fly import capture, wake
 from verify_fly_machines import digest, group, verify
 
@@ -114,6 +114,7 @@ def main():
     p.add_argument('--sha', required=True)
     p.add_argument('--config', default='fly.toml')
     p.add_argument('--acceptance', action='store_true')
+    p.add_argument('--empty-corpus', action='store_true')
     p.add_argument('--evidence', type=Path, required=True)
     args = p.parse_args()
     if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
@@ -186,10 +187,13 @@ def main():
                 url = os.environ['CC_NODE_URL'].rstrip('/')
                 # Acceptance replays its own synthetic creation. Production
                 # names a real approved entity and mints nothing.
-                entity = (seed(args.app, url, os.environ['CC_NODE_API_KEY'])
-                          if args.acceptance else os.environ['CC_SMOKE_ENTITY'])
-                result = check(url, args.sha, entity, os.environ['CC_NODE_API_KEY'],
-                               os.environ['CC_NODE_READ_KEY'])
+                if args.empty_corpus:
+                    result = check_empty(url, args.sha, os.environ['CC_NODE_API_KEY'], os.environ['CC_NODE_READ_KEY'])
+                else:
+                    entity = (seed(args.app, url, os.environ['CC_NODE_API_KEY'])
+                              if args.acceptance else os.environ['CC_SMOKE_ENTITY'])
+                    result = check(url, args.sha, entity, os.environ['CC_NODE_API_KEY'],
+                                   os.environ['CC_NODE_READ_KEY'])
                 break
             except (AssertionError, ValueError, OSError):
                 if attempt == 11:
@@ -198,7 +202,7 @@ def main():
         result['publication_was_paused'] = was_paused
         result['image'] = args.image
         result['app'] = args.app
-        if not args.acceptance and not was_paused:
+        if not args.acceptance and not args.empty_corpus and not was_paused:
             fly('ssh', 'console', '--app', args.app, '-C', 'cc-publisher resume --reason deployment-accepted')
         (args.evidence / 'acceptance.json').write_text(json.dumps(result, indent=2))
     except Exception:
