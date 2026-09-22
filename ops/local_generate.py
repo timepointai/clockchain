@@ -139,6 +139,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('brief','sources','policy','output'):
         p.add_argument('--'+name, required=True, type=Path)
+    p.add_argument('--think', action='store_true', help='enable local model reasoning; raw response is retained')
     args = p.parse_args()
     # A generation process has no reason to possess publication credentials.
     if any(os.environ.get(k) for k in ('DATABASE_URL','MIGRATOR_SECRET_KEY','GENESIS_SECRET_KEY','CC_NODE_API_KEY')):
@@ -152,7 +153,7 @@ def main():
     out = private_path(args.output);out.mkdir(mode=0o700, parents=True, exist_ok=False)
     public_sources = [{k:s[k] for k in ('id','publisher','passages')} for s in sources.values()]
     labels = [{k:n[k] for k in ('id','lens')} for n in json.loads((ROOT/'vendor/tt/taxonomy-v2.1.json').read_text())['nodes'] if n.get('level')=='species']
-    payload = {'model':policy['model'],'stream':False,'think':False,'format':output_schema(labels, brief),'keep_alive':0,
+    payload = {'model':policy['model'],'stream':False,'think':args.think,'format':output_schema(labels, brief),'keep_alive':0,
                'options':{'temperature':0,'seed':22,'num_predict':7000,'num_ctx':16384},
                'system':INSTRUCTION,'prompt':json.dumps({'brief':brief,'sources':public_sources,
                'taxonomy':labels,'instruction':INSTRUCTION},ensure_ascii=False)}

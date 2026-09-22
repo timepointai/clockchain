@@ -56,3 +56,22 @@ paused. Existing nonempty releases retain their genuine-media replay checks.
 The old projection-deletion SQL is disabled: deleting a projection does not remove
 its immutable events, and replay restores it. Corpus replacement uses a verified
 private archive and a fresh database. Preserve migrations and signing identity.
+
+## Inspect a populated local test
+
+The existing `ops/browse-v4.py` viewer uses `CC_DATABASE_URL` for a read-only
+loopback PostgreSQL URI (without query parameters), `CC_NODE_URL` for the matching local node, and
+`CC_NODE_READ_KEY` for scoped API reads. Put `psql` on `PATH`, then run
+`python3 ops/browse-v4.py 8766` and open `http://127.0.0.1:8766`. The viewer binds
+only to loopback and does not discover credentials or retired hosting. Use a
+read-only database role and the node's frozen posture for retained rehearsals.
+
+The graph shows stored edge directions, evidence classes and attached mechanism
+evidence. Claim details retain source passages, model provenance and date precision.
+Year-based placement does not establish within-day chronology. The walk button
+checks undirected recorded-graph feasibility, not causal direction or historical
+truth; verify directed endpoints and source entailment separately.
+
+Use `--think` on `ops/local_generate.py` to enable reasoning in a supporting local
+model. The request and complete response remain in the private run directory.
+Reasoning mode does not change evidence admission or authorize publication.

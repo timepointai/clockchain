@@ -1,35 +1,21 @@
 #!/usr/bin/env python3
-"""A localhost window onto the v4 ledger.
+"""Existing loopback ledger viewer; reads CC_DATABASE_URL and CC_NODE_URL.
 
-    python3 ops/browse-v4.py [port]        # default 8766, then open the URL
+    CC_DATABASE_URL=postgres://... CC_NODE_URL=http://127.0.0.1:18080 \
+      CC_NODE_READ_KEY=... python3 ops/browse-v4.py 8766
 
-Why this is not `browse.py`: that one shells out to `psql` against
-`$DATABASE_URL`, and **v4's database has no public route** — no TCP proxy is
-provisioned, so nothing on this laptop can dial it. Queries here go through
-`railway ssh` into the **Postgres** service instead — the node image carries no
-`psql` — batched into ONE round trip per page, so a reload costs a single ~4s
-hop rather than one per panel.
-
-Read-only by construction: every statement is a SELECT, and the tool has no
-path that writes. No auth on localhost — this is a one-user tool on a loopback
-socket, and a login page would be ceremony protecting nothing.
-
-**It shows epistemic tiers rather than flattening them.** A window start that is
-Unknown renders as unknown, not as a guessed year. A model-asserted claim says
-so. That is the whole point of the v4 schema and a browser that hid it would
-misrepresent the thing it exists to display.
+Use a read-only database role. The HTTP listener binds only to 127.0.0.1.
+Queries run in one read-only transaction. No retired hosting discovery occurs.
 """
 
-import base64
+import csv
+import io
 import html
 import json
 import urllib.parse
 import urllib.request
 import os
 import subprocess
-import sys as _sys, os as _os
-_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-import ccdb
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -37,24 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import graphview as gv  # noqa: E402
 import image_preview
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8766
-DB = "clockchain_v4"
-SEP = "~|~"
-NODE = "http://127.0.0.1:18080"
+PORT = 8766
+NODE = os.environ.get("CC_NODE_URL", "http://127.0.0.1:18080").rstrip("/")
 
 
 def node_key():
-    """Prefer the current issued read credential; legacy discovery is fallback."""
-    if os.environ.get('CC_NODE_READ_KEY'):
-        return os.environ['CC_NODE_READ_KEY']
-    out = subprocess.run(
-        ["railway", "variables", "--service", "clockchain-v3", "--kv"],
-        capture_output=True, text=True, timeout=90,
-        cwd=ccdb._railway_dir())
-    for line in out.stdout.splitlines():
-        if line.startswith("CC_NODE_API_KEY="):
-            return line.split("=", 1)[1].strip()
-    return None
+    return os.environ.get('CC_NODE_READ_KEY')
 
 
 KEY = None
@@ -78,10 +52,11 @@ QUERIES = {
     ),
     "edges": (
         "select x.src_entity, x.dst_entity, s.canonical_name, d.canonical_name, "
-        "  x.relation, x.evidence_class "
+        "  x.relation, x.evidence_class, coalesce(ev.evidence::text, '') "
         "from edges x "
         "join entities s on s.entity_id = x.src_entity "
         "join entities d on d.entity_id = x.dst_entity "
+        "left join edge_evidence ev on ev.event_id = x.edge_id "
         "order by s.canonical_name limit 500"
     ),
     "vocab": (
@@ -103,36 +78,43 @@ EVIDENCE = {0: "primary document", 1: "secondary source",
             2: "inference", 3: "assertion"}
 
 
-def fetch():
-    """Every panel in one ssh hop. Returns {name: [[col, ...], ...]}.
+def database_env():
+    """Pass local connection fields through the environment, never process argv."""
+    url = urllib.parse.urlsplit(os.environ.get('CC_DATABASE_URL', ''))
+    if url.scheme not in ('postgres', 'postgresql') or url.hostname not in ('127.0.0.1', 'localhost', '::1'):
+        raise ValueError('CC_DATABASE_URL must name a loopback PostgreSQL server')
+    if not url.path.strip('/') or url.query or url.fragment:
+        raise ValueError('Use a local database URI without query parameters')
+    env = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
+    env.update(PGHOST=url.hostname, PGPORT=str(url.port or 5432),
+               PGDATABASE=urllib.parse.unquote(url.path[1:]), PGCONNECT_TIMEOUT='10')
+    for key, value in (('PGUSER', url.username), ('PGPASSWORD', url.password)):
+        if value is not None:
+            env[key] = urllib.parse.unquote(value)
+    return env
 
-    The SQL is base64'd rather than quoted through. It contains single quotes
-    (`encode(x,'hex')`) and would otherwise cross two shell layers — the local
-    one and the container's — where one of them always wins and the failure is
-    a bare "psql failed" with no clue which quote broke. base64's alphabet is
-    shell-safe by construction, so there is nothing left to escape.
-    """
-    script = "\n".join(
-        f"\\echo ===={name}\n{q};" for name, q in QUERIES.items()
-    )
-    b64 = base64.b64encode(script.encode()).decode()
-    cmd = (f"echo {b64} | base64 -d > /tmp/q.sql && "
-           f"PAGER=cat psql -U postgres -d {DB} -At -F '{SEP}' -f /tmp/q.sql")
-    out = subprocess.run(
-        ["railway", "ssh", "--service", "Postgres", cmd],
-        capture_output=True, text=True, timeout=180,
-        cwd=ccdb._railway_dir(),
-    )
-    if out.returncode != 0 or "====" not in out.stdout:
-        raise RuntimeError((out.stderr.strip() or out.stdout.strip())[:500]
-                           or "psql produced nothing")
-    blocks, cur = {}, None
-    for line in out.stdout.splitlines():
-        if line.startswith("===="):
-            cur = line[4:].strip()
-            blocks[cur] = []
-        elif cur and line.strip():
-            blocks[cur].append(line.split(SEP))
+
+def fetch():
+    """Read every panel in one consistent, read-only local database transaction."""
+    if not os.environ.get('CC_DATABASE_URL'):
+        raise ValueError('CC_DATABASE_URL is required')
+    script = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+    script += "\n".join(f"\\echo ===={name}\n{query};" for name, query in QUERIES.items())
+    script += "\nCOMMIT;\n"
+    env = database_env()
+    result = subprocess.run(['psql', '-X', '-qAt', '--csv', '-v', 'ON_ERROR_STOP=1'],
+                            input=script, env=env, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise RuntimeError('Read-only database query failed; check the local connection and schema')
+    blocks, current = {}, None
+    for row in csv.reader(io.StringIO(result.stdout)):
+        if len(row) == 1 and row[0].startswith('===='):
+            current = row[0][4:].strip()
+            blocks[current] = []
+        elif current and row:
+            blocks[current].append(row)
+    if set(blocks) != set(QUERIES):
+        raise ValueError('Incomplete database response')
     return blocks
 
 
@@ -154,8 +136,10 @@ def prov_line(body_json):
         bits.append(f'<span class="m">measured</span> generated by '
                     f'<code>{esc(m["text_model"])}</code>')
     if b.get("prov_asserted"):
-        bits.append('<span class="a">asserted</span> the history itself is '
-                    'model-asserted; no source consulted')
+        bits.append('<span class="a">asserted</span> historical content is model-generated')
+        bits.append(esc(b.get('summary', '')))
+        bits.append('<details><summary>Claim, date precision and source evidence</summary><pre style="white-space:pre-wrap">'
+                    + esc(json.dumps({'asserted': b['prov_asserted'], 'measured': m}, indent=2)) + '</pre></details>')
     if b.get("claim_type_alternatives"):
         bits.append('<span class="a">disputed</span> classifier also proposed '
                     + ", ".join(f"<code>{esc(x)}</code>"
@@ -223,16 +207,10 @@ def page(walk=None):
     isolated = len(nodes) - len(connected)
 
     o.append("<h2 id=graph>The causal graph</h2>")
-    o.append(f"<p class=note>{len(comps)} connected component"
-             f"{'' if len(comps) == 1 else 's'} over <b>{len(connected)}</b> entities. "
-             f"Arrows run earlier &rarr; later and are labelled with the relation. "
-             f"<span class=a>Amber</span> is asserted causation &mdash; a model said so, "
-             f"evidence class <i>assertion</i>, not a document. A dashed arc would mean a "
-             f"link pointing backwards in time; it is drawn rather than hidden.</p>")
-    o.append(f"<p class=note><b>{isolated}</b> entities have no edges at all &mdash; the "
-             f"pilot batch, generated as independent events before chains existed. They are "
-             f"counted here rather than drawn, because a page of unconnected boxes would "
-             f"suggest a graph that is not there.</p>")
+    o.append(f"<p class=note>{len(comps)} connected components over <b>{len(connected)}</b> entities. "
+             "Arrows show the stored direction; amber marks causation. Evidence classes are listed below. "
+             "Year-based layout does not establish within-day order; a curved arrow may join same-year nodes.</p>")
+    o.append(f"<p class=note>{isolated} entities have no edges (including any system entity).</p>")
 
     for i, group in enumerate(comps):
         svg, ordered = gv.svg_component(group, nodes, edges_l, i)
@@ -245,11 +223,10 @@ def page(walk=None):
         o.append("</div>")
 
     # --- the live walk -----------------------------------------------------
-    o.append("<h2 id=walk>Live walk &mdash; the acceptance test as a button</h2>")
-    o.append("<p class=note>This runs the REAL feasibility query against the live node. "
-             "It is not a diagram of the mechanism; it is the mechanism answering. "
-             "A verdict names the events it consulted, and a factor that vanished says "
-             "which one and why.</p>")
+    o.append("<h2 id=walk>Recorded graph walk</h2>")
+    o.append("<p class=note>This runs the node's undirected recorded-graph feasibility query. "
+             "The verdict names the events it consulted; it does not establish causal direction or historical truth. "
+             "Inspect the directed edges and their source mechanisms separately.</p>")
     if walk:
         o.append(walk)
     else:
@@ -275,26 +252,23 @@ def page(walk=None):
     o.append("</table>")
 
     o.append("<h2 id=edges>Edges</h2>")
-    o.append("<p class=note>Every generated edge is evidence class "
-             "<b>assertion</b>: a model said so. Not a document, not an inference over "
-             "evidence held. An edge takes effect at the later endpoint, because a cause "
-             "cannot be evidenced as connected to its effect before the effect exists.</p>")
+    o.append("<p class=note>Each edge lists its recorded evidence class and any attached mechanism evidence. "
+             "A signature verifies attribution and integrity; it does not establish historical truth.</p>")
     o.append("<table><tr><th>from</th><th>relation</th><th>to</th><th>evidence</th></tr>")
     for r in b.get("edges", []):
         src, dst, rel, ev = r[2], r[3], r[4], r[5]
         o.append(f"<tr><td>{esc(src)}</td>"
                  f"<td><span class=pill>{esc(RELATION.get(int(rel), rel))}</span></td>"
                  f"<td>{esc(dst)}</td>"
-                 f"<td><span class=pill>{esc(EVIDENCE.get(int(ev), ev))}</span></td></tr>")
+                 f"<td><span class=pill>{esc(EVIDENCE.get(int(ev), ev))}</span>"
+                 f"<details><summary>Mechanism and evidence</summary><pre style='white-space:pre-wrap'>{esc(r[6] if len(r) > 6 and r[6] else 'No evidence recorded')}</pre></details></td></tr>")
     if not b.get("edges"):
         o.append("<tr><td colspan=4 class=no>no edges</td></tr>")
     o.append("</table>")
 
     o.append("<h2 id=claims>Claims &amp; provenance</h2>")
-    o.append("<p class=note>The generation is <span class=m>measured</span> &mdash; we ran "
-             "the pipeline and logged it. The history is <span class=a>asserted</span> "
-             "&mdash; a model said so and no source was consulted. They are separate "
-             "objects on every record so they cannot be mistaken for one another.</p>")
+    o.append("<p class=note>Model execution is measured; historical claims are asserted. "
+             "Inspect the retained source passages and date precision on each record.</p>")
     o.append("<table><tr><th>subject</th><th>provenance</th></tr>")
     for r in b.get("bodies", []):
         _h, name, body = r[0], r[1], (r[2] if len(r) > 2 else None)
@@ -324,20 +298,17 @@ def render_walk(a, b):
         KEY = node_key()
     if not KEY:
         return ('<div class=verdict><span class=uns>no credential</span>'
-                '<p class=note>Could not read CC_NODE_API_KEY. This is an error, '
+                '<p class=note>Set CC_NODE_READ_KEY. This is an error, '
                 'not a verdict.</p></div>')
     import time
     as_of = int(time.time()) - 946_728_000
     # The claim must be admissible or the verdict is about the vocabulary, not
     # the graph. Any declared type works; this one is present in the corpus.
     try:
-        claim = subprocess.run(
-            ["railway", "ssh", "--service", "Postgres",
-             "PAGER=cat psql -U postgres -d clockchain_v4 -At -c "
-             "\"select claim_type from vocabulary limit 1\""],
-            capture_output=True, text=True, timeout=90,
-            cwd=ccdb._railway_dir(),
-        ).stdout.strip().splitlines()[-1].strip()
+        vocabulary = fetch()['vocab']
+        claim = vocabulary[0][0] if vocabulary else None
+        if claim is None:
+            raise ValueError('No vocabulary recorded')
         d = gv.feasibility(NODE, KEY, a, b, claim, as_of)
     except Exception as e:
         return (f'<div class=verdict><span class=uns>query failed</span>'
@@ -346,6 +317,7 @@ def render_walk(a, b):
     res = d.get("result", "?")
     cls = "sup" if res == "Supported" else "uns"
     o = [f'<div class=verdict><span class={cls}>{esc(res)}</span>']
+    o.append('<p class=note>Recorded graph feasibility; factual verification is not assessed by this query.</p>')
     o.append(f'<p class=note>subjects <code>{esc(a)}</code> and <code>{esc(b)}</code>, '
              f'claim <code>{esc(claim)}</code>, pinned at '
              f'<code>{esc(as_of)}</code>.</p>')
@@ -598,7 +570,7 @@ class H(BaseHTTPRequestHandler):
                     f"<main><h2>could not read the ledger</h2>"
                     f"<pre style='color:#f7768e;white-space:pre-wrap'>{html.escape(str(e))}"
                     f"</pre><p class=note>This is an error, not an empty ledger. "
-                    f"Check <code>railway whoami</code>.</p></main>").encode()
+                    f"Check the configured local database and node connection.</p></main>").encode()
             code = 503
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -611,6 +583,7 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    PORT = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
     print(f"clockchain v4 browser  ->  http://localhost:{PORT}")
-    print("reads through `railway ssh`; v4 has no public database route")
+    print("reads the configured database; loopback access only")
     HTTPServer(("127.0.0.1", PORT), H).serve_forever()

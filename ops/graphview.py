@@ -79,10 +79,20 @@ def svg_component(group, nodes, edges, idx):
     """One chain, left to right in time order."""
     members = set(group)
     ce = [e for e in edges if e[0] in members and e[1] in members]
-    # Time order is the honest x-axis for a causal chain. A node with no year
-    # sorts last rather than being placed at an invented coordinate.
-    ordered = sorted(group, key=lambda n: (nodes[n]["year"] is None,
-                                           nodes[n]["year"] or 0))
+    # Date buckets determine placement; within a tied year use edge direction
+    # without asserting a finer historical timestamp. Preserve cycles visibly.
+    ordered = []
+    buckets = {}
+    for node in group:
+        buckets.setdefault(nodes[node]['year'], []).append(node)
+    for year in sorted(buckets, key=lambda value: (value is None, value or 0)):
+        remaining = set(buckets[year])
+        while remaining:
+            ready = sorted(n for n in remaining
+                           if not any(dst == n and src in remaining for src, dst, _, _ in ce))
+            node = ready[0] if ready else min(remaining)
+            ordered.append(node)
+            remaining.remove(node)
     pos = {n: i for i, n in enumerate(ordered)}
     BW, BH, GAP, TOP = 210, 54, 66, 40
     W = max(1, len(ordered)) * (BW + GAP) + 40
@@ -102,9 +112,8 @@ def svg_component(group, nodes, edges, idx):
         y = TOP + BH / 2
         col = REL_COLOR.get(rel, "#6b7280")
         back = x2 < x1
-        # An arrow that points backwards in time is drawn as an arc rather than
-        # hidden: it means the model asserted a cause later than its effect, and
-        # that is worth seeing, not smoothing away.
+        # Leftward arcs preserve stored direction, including same-year cycles;
+        # layout alone cannot establish reverse chronology within a year.
         if back:
             o.append(f'<path d="M{x1 - BW},{y + BH/2} C{x1 - BW},{y + 58} '
                      f'{x2 + BW},{y + 58} {x2 + BW},{y + BH/2}" fill="none" '
