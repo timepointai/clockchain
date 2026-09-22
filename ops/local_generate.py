@@ -141,6 +141,13 @@ def output_schema(labels, brief):
     return {'type':'object','required':['entries','edges'],'properties':{'entries':{'type':'array','minItems':1,'maxItems':brief['max_entries'],'items':entry},'edges':{'type':'array','maxItems':brief['max_edges'],'items':edge}},'additionalProperties':False}
 
 
+def decode_output(content):
+    text = content.strip()
+    if text.startswith('```json\n') and text.endswith('\n```'):
+        text = text[8:-4]
+    return json.loads(text)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('brief','sources','policy','output'):
@@ -159,23 +166,35 @@ def main():
     out = private_path(args.output);out.mkdir(mode=0o700, parents=True, exist_ok=False)
     public_sources = [{k:s[k] for k in ('id','publisher','passages')} for s in sources.values()]
     labels = [{k:n[k] for k in ('id','lens')} for n in json.loads((ROOT/'vendor/tt/taxonomy-v2.1.json').read_text())['nodes'] if n.get('level')=='species']
-    payload = {'model':policy['model'],'stream':False,'think':args.think,'format':output_schema(labels, brief),'keep_alive':0,
-               'options':{'temperature':0.6 if args.think else 0.7,'top_p':0.95 if args.think else 0.8,'top_k':20,'min_p':0,'seed':22,'num_predict':7000,'num_ctx':16384},
-               'system':INSTRUCTION,'prompt':json.dumps({'brief':brief,'sources':public_sources,
-               'taxonomy':labels,'instruction':INSTRUCTION},ensure_ascii=False)}
+    prompt = json.dumps({'brief':brief,'sources':public_sources,
+                         'taxonomy':labels,'instruction':INSTRUCTION},ensure_ascii=False)
+    payload = {'model':policy['model'],'stream':False,'think':args.think,'keep_alive':0,
+               'options':{'temperature':0.6 if args.think else 0.7,'top_p':0.95 if args.think else 0.8,
+                          'top_k':20,'min_p':0,'seed':22,'num_predict':7000,'num_ctx':16384}}
+    if args.think:
+        # Native reasoning precedes the final JSON. A JSON-only grammar can
+        # suppress that reasoning; admission still validates the final object.
+        payload['messages'] = [{'role':'system','content':INSTRUCTION + ' Keep reasoning concise. Return entries before edges.'},
+                               {'role':'user','content':prompt}]
+        endpoint = '/api/chat'
+    else:
+        payload.update(format=output_schema(labels, brief), system=INSTRUCTION, prompt=prompt)
+        endpoint = '/api/generate'
     save(out/'request.json',payload)
     (out/'request-wire.json').write_bytes(wire(payload))
     (out/'request-wire.json').chmod(0o600)
-    response = call('/api/generate',payload);save(out/'response.json',response)
+    response = call(endpoint,payload);save(out/'response.json',response)
     policy_check(policy, call('/api/tags'), call('/api/show', {'model':policy['model']}))
     if response.get('model') != policy['model'] or response.get('done') is not True or response.get('done_reason') != 'stop':
         raise ValueError('model mismatch or truncated generation; raw response retained')
-    model_output = json.loads(response['response']);save(out/'model-output.json',model_output)
+    content = response['message']['content'] if args.think else response['response']
+    model_output = decode_output(content);save(out/'model-output.json',model_output)
     candidate = proposal(model_output,sources,policy,brief,out.name,digest(canonical(payload)),digest(canonical(response)))
     save(out/'proposal.json',candidate);save(out/'brief.json',brief);save(out/'policy.json',policy)
     save(out/'run.json',{'model':policy['model'],'model_digest':policy['model_digest'],'proposal_sha256':digest(canonical(candidate)),
                          'brief_sha256':digest(canonical(brief)),'entries':len(candidate['entries']),'edges':len(candidate['edges']),
-                         'api_charge_usd':0,'published':False,'admission':'not_run','human_content_review':'pending',
+                         'api_charge_usd':0,'reasoning_requested':args.think,
+                         'reasoning_trace_present':bool(response.get('message',{}).get('thinking',response.get('thinking'))),'published':False,'admission':'not_run','human_content_review':'pending',
                          'eval_count':response.get('eval_count'),'eval_duration_ns':response.get('eval_duration')})
     print('Private model-generated proposal retained; admission and content review remain separate.')
 

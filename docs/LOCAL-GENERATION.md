@@ -72,9 +72,11 @@ Year-based placement does not establish within-day chronology. The walk button
 checks undirected recorded-graph feasibility, not causal direction or historical
 truth; verify directed endpoints and source entailment separately.
 
-Use `--think` on `ops/local_generate.py` to enable reasoning in a supporting local
-model. The request and complete response remain in the private run directory.
-Reasoning mode does not change evidence admission or authorize publication.
+Use `--think` on `ops/local_generate.py` to request native chat reasoning in a
+supporting local model. This path permits reasoning before final JSON instead of
+forcing a JSON-only output grammar; publisher admission is still required. The
+request, complete response and presence or absence of a reasoning trace remain
+in the private run directory. Reasoning mode does not authorize publication.
 
 The wire request preserves JSON-schema field order so nodes precede edges.
 `request-wire.json` retains those exact request bytes; provenance request hashes

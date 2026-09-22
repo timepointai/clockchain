@@ -58,3 +58,9 @@ class LocalGenerationTests(unittest.TestCase):
         sent=json.loads(g.wire(value))
         self.assertEqual(list(sent['format']['properties']), ['entries','edges'])
         self.assertEqual(g.canonical(sent),g.canonical(value))
+
+    def test_native_reasoning_final_json_does_not_rewrite_claim_strings(self):
+        text='model-authored <text> \u2192 unchanged'
+        value={'entries':[{'summary':text}],'edges':[]}
+        self.assertEqual(g.decode_output('```json\n'+json.dumps(value)+'\n```'),value)
+        with self.assertRaises(ValueError):g.decode_output('Here is a claim: '+json.dumps(value))
