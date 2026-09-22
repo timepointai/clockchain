@@ -96,3 +96,19 @@ runs; neither follows from an integrity PASS.
 
 Operate and deploy through [the Fly guide](CICD-FLY.md). Railway URLs and deployment
 commands belong to the retired host.
+
+## Source date precision in controlled publication
+
+Candidates may supply `prov_asserted.event_date` as a strict `YYYY-MM-DD`
+and `prov_asserted.date_precision: "day"`. The Gregorian date must match
+the claim year (CE 1–2100); captured source evidence must explicitly include
+`date` support. Publication uses the start of that calendar day for entity
+windows, moments and vocabulary, and the later endpoint for an edge. A cause
+or influence dated after its effect is rejected, including within one year.
+
+This is a day bucket under the existing calendar-to-coordinate convention,
+not evidence of an exact instant or within-day order. Causal mechanisms need
+separate source evidence. The title/year identity and TT envelope stay unchanged.
+Candidates without a day retain their existing year mapping; applied events and
+migration bytes are never rewritten. A source interval must not be represented
+as an invented exact day.

@@ -2,8 +2,8 @@
 use anyhow::{bail, ensure, Context, Result};
 use cc_authoring::{admission, body_hash, claim_identity, now_tick, year_tick};
 use cc_core::{
-    EdgeBody, EdgeRelation, EntityBirth, EventBody, EventContent, EvidenceClass, ExistenceWindow,
-    MomentBody, SecretKey, VocabularyEntry, WindowEnd, WindowStart,
+    B256Constants, EdgeBody, EdgeRelation, EntityBirth, EventBody, EventContent, EvidenceClass,
+    ExistenceWindow, MomentBody, SecretKey, Tick, VocabularyEntry, WindowEnd, WindowStart,
 };
 use cc_ledger::Signed;
 use serde_json::{json, Value};
@@ -64,6 +64,68 @@ fn source_profile(v: &Value, required: &[&str]) -> Result<()> {
     }
     Ok(())
 }
+/// Optional day precision is outside title/year identity but inside each new
+/// event's canonical coordinate. Legacy candidates retain their exact mapping.
+pub fn entry_coordinate(entry: &Value) -> Result<Tick> {
+    let year = entry["year"].as_i64().context("entry year missing")?;
+    let provenance = &entry["prov_asserted"];
+    let Some(date) = provenance.get("event_date") else {
+        ensure!(
+            provenance.get("date_precision").is_none() || provenance["date_precision"] == "year",
+            "day precision requires event_date"
+        );
+        return Ok(year_tick(year));
+    };
+    ensure!(
+        provenance["date_precision"] == "day",
+        "event_date requires day precision"
+    );
+    let date = date.as_str().context("event_date must be YYYY-MM-DD")?;
+    let bytes = date.as_bytes();
+    ensure!(
+        bytes.len() == 10
+            && bytes[4] == b'-'
+            && bytes[7] == b'-'
+            && bytes
+                .iter()
+                .enumerate()
+                .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit()),
+        "event_date must be YYYY-MM-DD"
+    );
+    let y: i64 = date[..4].parse()?;
+    let month: usize = date[5..7].parse()?;
+    let day: i64 = date[8..].parse()?;
+    ensure!(
+        y == year && (1..=2100).contains(&y),
+        "event_date year must match entry year"
+    );
+    ensure!((1..=12).contains(&month), "invalid event_date month");
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    ensure!(
+        (1..=days[month - 1]).contains(&day),
+        "invalid event_date day"
+    );
+    let offset = (days[..month - 1].iter().sum::<i64>() + day - 1) * 86_400;
+    Ok(Tick::from_i256(
+        year_tick(year).to_i256()
+            + Tick::from_whole_ticks(offset, B256Constants::V0.split).to_i256(),
+    ))
+}
+
 fn endpoint(v: &Value) -> Result<(i64, i64)> {
     let year = v["year"].as_i64().context("edge endpoint year missing")?;
     Ok((claim_identity(string(v, "title")?, year).0, year))
@@ -128,6 +190,7 @@ pub fn validate_candidate(v: &Value) -> Result<()> {
     let rejections = admission::admit_batch(entries);
     ensure!(rejections.is_empty(), "admission refused: {rejections:?}");
     let mut ids = HashSet::new();
+    let mut coordinates = BTreeMap::new();
     for e in entries {
         ensure!(
             e["prov_measured"]["source_evidence_schema"] == "cc.source-evidence.v1",
@@ -138,7 +201,13 @@ pub fn validate_candidate(v: &Value) -> Result<()> {
             &["title", "year", "summary"],
         )?;
         source_support(e)?;
-        ids.insert(claim_identity(string(e, "title")?, e["year"].as_i64().unwrap()).0);
+        let at = entry_coordinate(e)?;
+        if e["prov_asserted"].get("event_date").is_some() {
+            source_profile(&e["prov_measured"]["source_evidence"], &["date"])?;
+        }
+        let id = claim_identity(string(e, "title")?, e["year"].as_i64().unwrap()).0;
+        ids.insert(id);
+        coordinates.insert(id, at);
     }
     for e in v["edges"].as_array().context("edges array missing")? {
         let (src, sy) = endpoint(&e["from"])?;
@@ -156,6 +225,15 @@ pub fn validate_candidate(v: &Value) -> Result<()> {
             ids.contains(&src) && ids.contains(&dst),
             "edge endpoints must exist in this candidate"
         );
+        if matches!(
+            relation(e)?,
+            EdgeRelation::Causation | EdgeRelation::Influence
+        ) {
+            ensure!(
+                coordinates[&src] <= coordinates[&dst],
+                "cause follows effect at declared date precision"
+            );
+        }
         relation(e)?;
         source_profile(&e["evidence"], &["relation"])?;
     }
@@ -370,11 +448,13 @@ pub async fn publish(pool: &PgPool, id: &str, hash: &[u8], sk: &SecretKey) -> Re
     let mut events = Vec::new();
     let mut moments = Vec::new();
     let mut first = BTreeMap::new();
+    let mut coordinates = BTreeMap::new();
     for e in v["entries"].as_array().unwrap() {
         let title = string(e, "title")?;
         let year = e["year"].as_i64().unwrap();
         let (subject, key) = claim_identity(title, year);
-        let at = year_tick(year);
+        let at = entry_coordinate(e)?;
+        coordinates.insert(subject, at);
         let birth = EventContent {
             event_time: at,
             record_time: rt,
@@ -427,14 +507,14 @@ pub async fn publish(pool: &PgPool, id: &str, hash: &[u8], sk: &SecretKey) -> Re
         let label = string(e, "claim_type")?.to_owned();
         first
             .entry(label)
-            .and_modify(|y: &mut i64| *y = (*y).min(year))
-            .or_insert(year);
+            .and_modify(|t: &mut Tick| *t = (*t).min(at))
+            .or_insert(at);
     }
-    for (label, year) in first {
+    for (label, at) in first {
         let s = Signed::sign(
             sk,
             EventContent {
-                event_time: year_tick(year),
+                event_time: at,
                 record_time: rt,
                 author,
                 supersedes: None,
@@ -442,7 +522,7 @@ pub async fn publish(pool: &PgPool, id: &str, hash: &[u8], sk: &SecretKey) -> Re
                     claim_type: cc_filter::version::claim_code(&label),
                     label,
                     band: ExistenceWindow {
-                        start: WindowStart::Known(year_tick(year)),
+                        start: WindowStart::Known(at),
                         end: WindowEnd::UnknownClosure,
                     },
                 }),
@@ -452,12 +532,12 @@ pub async fn publish(pool: &PgPool, id: &str, hash: &[u8], sk: &SecretKey) -> Re
         events.push(s.id().to_hex());
     }
     for e in v["edges"].as_array().unwrap() {
-        let (src, sy) = endpoint(&e["from"])?;
-        let (dst, dy) = endpoint(&e["to"])?;
+        let (src, _) = endpoint(&e["from"])?;
+        let (dst, _) = endpoint(&e["to"])?;
         let s = Signed::sign(
             sk,
             EventContent {
-                event_time: year_tick(sy.max(dy)),
+                event_time: coordinates[&src].max(coordinates[&dst]),
                 record_time: rt,
                 author,
                 supersedes: None,

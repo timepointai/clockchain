@@ -107,3 +107,153 @@ async fn pause_approval_and_worker_role_are_enforced() {
     pool.close().await;
     cleanup.cleanup().await;
 }
+
+fn dated_candidate() -> Value {
+    let mut v = candidate();
+    let raw = b"Synthetic cause occurred on April 13, 1970. Synthetic effect occurred on April 14, 1970 because the synthetic cause disabled its power supply.";
+    let path = std::env::temp_dir().join(format!("cc-source-{}", hex::encode(digest(raw))));
+    std::fs::write(&path, raw).unwrap();
+    let mut source = v["entries"][0]["prov_measured"]["source_evidence"][0].clone();
+    source["capture_path"] = json!(path);
+    source["content_sha256"] = json!(hex::encode(digest(raw)));
+    source["excerpt"] = json!(std::str::from_utf8(raw).unwrap());
+    source["supports"] = json!(["title", "year", "summary", "date", "relation"]);
+    let mut first = v["entries"][0].clone();
+    first["title"] = json!("Synthetic cause");
+    first["year"] = json!(1970);
+    first["summary"] = json!(std::str::from_utf8(raw).unwrap());
+    first["prov_measured"]["source_evidence"] = json!([source.clone()]);
+    first["prov_asserted"]["event_date"] = json!("1970-04-13");
+    first["prov_asserted"]["date_precision"] = json!("day");
+    let mut second = first.clone();
+    second["title"] = json!("Synthetic effect");
+    second["prov_asserted"]["event_date"] = json!("1970-04-14");
+    v["entries"] = json!([first, second]);
+    v["edges"] = json!([{"from":{"title":"Synthetic cause","year":1970},"to":{"title":"Synthetic effect","year":1970},"relation":"causation","evidence_class":"PrimaryDocument","rationale":std::str::from_utf8(raw).unwrap(),"evidence":[source]}]);
+    v
+}
+#[test]
+fn day_precision_validates_gregorian_dates_and_causal_order() {
+    let legacy = candidate();
+    assert_eq!(
+        entry_coordinate(&legacy["entries"][0]).unwrap(),
+        cc_authoring::year_tick(-1274)
+    );
+    let mut v = dated_candidate();
+    validate_candidate(&v).unwrap();
+    let expected =
+        cc_core::Tick::from_whole_ticks(-946728000 + 102 * 86400, cc_core::B256Constants::V0.split);
+    assert_eq!(entry_coordinate(&v["entries"][0]).unwrap(), expected);
+    for date in [
+        "1970-02-29",
+        "1970-00-10",
+        "1970-13-01",
+        "1970-04-31",
+        "1970-04-00",
+        "1970-4-13",
+        "1970-04-13T00:00Z",
+        "1969-04-13",
+    ] {
+        v["entries"][0]["prov_asserted"]["event_date"] = json!(date);
+        assert!(validate_candidate(&v).is_err(), "accepted invalid {date}");
+    }
+    v = dated_candidate();
+    v["entries"][0]["year"] = json!(2000);
+    v["entries"][0]["prov_asserted"]["event_date"] = json!("2000-02-29");
+    assert!(entry_coordinate(&v["entries"][0]).is_ok());
+    v["entries"][0]["year"] = json!(1900);
+    v["entries"][0]["prov_asserted"]["event_date"] = json!("1900-02-29");
+    assert!(entry_coordinate(&v["entries"][0]).is_err());
+    v = dated_candidate();
+    v["entries"][1]["prov_asserted"]["event_date"] = json!("1970-04-12");
+    assert!(
+        validate_candidate(&v).is_err(),
+        "same-year reversed cause accepted"
+    );
+    v = dated_candidate();
+    v["entries"][0]["prov_measured"]["source_evidence"][0]["supports"] =
+        json!(["title", "year", "summary"]);
+    assert!(
+        validate_candidate(&v).is_err(),
+        "day accepted without source support"
+    );
+}
+#[tokio::test]
+async fn precise_dates_reach_entities_moments_edges_and_vocabulary() {
+    let (pool, cleanup) = cc_testkit::ephemeral_db().await;
+    let b = stage_brief(
+        &pool,
+        "days",
+        &json!({"fixture":"day-precision","max_entries":2}),
+    )
+    .await
+    .unwrap();
+    approve(
+        &pool,
+        "brief",
+        "days",
+        &hex::decode(b["digest"].as_str().unwrap()).unwrap(),
+        "test-human",
+    )
+    .await
+    .unwrap();
+    let candidate = dated_candidate();
+    let c = stage_candidate(&pool, "days", "days", &candidate)
+        .await
+        .unwrap();
+    let hash = hex::decode(c["digest"].as_str().unwrap()).unwrap();
+    approve(&pool, "candidate", "days", &hash, "test-human")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE publication_control SET paused=false")
+        .execute(&pool)
+        .await
+        .unwrap();
+    publish(
+        &pool,
+        "days",
+        &hash,
+        &cc_core::SecretKey::from_seed([79; 32]),
+    )
+    .await
+    .unwrap();
+    let at = entry_coordinate(&candidate["entries"][0])
+        .unwrap()
+        .to_canon_bytes()
+        .to_vec();
+    let later = entry_coordinate(&candidate["entries"][1])
+        .unwrap()
+        .to_canon_bytes()
+        .to_vec();
+    let before = cc_authoring::year_tick(1970).to_canon_bytes().to_vec();
+    let early: i64 = sqlx::query_scalar("SELECT count(*) FROM entities WHERE birth_event_time<=$1")
+        .bind(before)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(early, 0, "day events appeared at start of year");
+    let starts: Vec<Vec<u8>> =
+        sqlx::query_scalar("SELECT window_start FROM entities ORDER BY window_start")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let moments: Vec<Vec<u8>> = sqlx::query_scalar("SELECT coord FROM moments ORDER BY coord")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(starts, vec![at.clone(), later.clone()]);
+    assert_eq!(moments, starts);
+    let edge: Vec<u8> = sqlx::query_scalar("SELECT event_time FROM edges")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(edge, later);
+    let band: Vec<u8> = sqlx::query_scalar("SELECT band_start FROM vocabulary")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(band, at);
+    cc_ledger::rebuild(&pool).await.unwrap();
+    pool.close().await;
+    cleanup.cleanup().await;
+}
