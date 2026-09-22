@@ -1,9 +1,22 @@
 use cc_publisher::*;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+fn source_capture(raw: &[u8]) -> std::path::PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    // Parallel tests must never truncate a capture another test is validating.
+    let path = std::env::temp_dir().join(format!(
+        "cc-source-{}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+        hex::encode(digest(raw))
+    ));
+    std::fs::write(&path, raw).unwrap();
+    path
+}
 fn candidate() -> Value {
     let raw=b"Egyptian and Hittite forces fought at Kadesh in 1274 BCE. This fixture records the battle and does not establish causal relationships.";
-    let path = std::env::temp_dir().join(format!("cc-source-{}", hex::encode(digest(raw))));
-    std::fs::write(&path, raw).unwrap();
+    let path = source_capture(raw);
     let source = json!({"url":"https://example.org/source","retrieved_at":"2026-09-15T00:00:00Z","content_sha256":hex::encode(digest(raw)),"capture_path":path,"excerpt":std::str::from_utf8(raw).unwrap(),"license":"CC0-1.0","publisher":"Fixture","locator":"paragraph 1","supports":["title","year","summary"]});
     json!({"entries":[{"title":"Battle of Kadesh","year":-1274,"claim_type":"conflict-and-warfare","lens":"A","summary":std::str::from_utf8(raw).unwrap(),"date_is_known":true,"temporal_kind":"event","observed_count":1,"tt_release":"tt-ontology/2.1.0","tt_bundle_sha256":cc_filter::version::TT_BUNDLE_SHA256,
  "prov_measured":{"text_model":"fixture","provider":"fixture","method":"test","run":"frozen-test","generated_at":"2026-09-15T00:00:00Z","source_evidence_schema":"cc.source-evidence.v1","source_evidence":[source]},
@@ -111,8 +124,7 @@ async fn pause_approval_and_worker_role_are_enforced() {
 fn dated_candidate() -> Value {
     let mut v = candidate();
     let raw = b"Synthetic cause occurred on April 13, 1970. Synthetic effect occurred on April 14, 1970 because the synthetic cause disabled its power supply.";
-    let path = std::env::temp_dir().join(format!("cc-source-{}", hex::encode(digest(raw))));
-    std::fs::write(&path, raw).unwrap();
+    let path = source_capture(raw);
     let mut source = v["entries"][0]["prov_measured"]["source_evidence"][0].clone();
     source["capture_path"] = json!(path);
     source["content_sha256"] = json!(hex::encode(digest(raw)));
