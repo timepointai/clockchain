@@ -120,7 +120,7 @@ def proposal(raw, sources, policy, brief, run, request_sha, response_sha):
     return {'entries':entries,'edges':edges,'images':[]}
 
 
-def output_schema(labels):
+def output_schema(labels, brief):
     text = {'type':'string','minLength':1}
     evidence = {'type':'array','minItems':1,'items':{'type':'object','required':['source_id','excerpt','supports'],
         'properties':{'source_id':text,'excerpt':text,'supports':{'type':'array','minItems':1,'items':{'type':'string','enum':['title','year','summary','date','relation']}}},'additionalProperties':False}}
@@ -132,7 +132,7 @@ def output_schema(labels):
     relation_evidence = json.loads(json.dumps(evidence))
     relation_evidence['items']['properties']['supports']['items']['enum'] = ['relation']
     edge = {'type':'object','properties':{'from':endpoint,'to':endpoint,'relation':{'type':'string','enum':['causation','influence']},'evidence_class':{'type':'string','enum':['SecondarySource']},'rationale':text,'evidence':relation_evidence},'required':['from','to','relation','evidence_class','rationale','evidence'],'additionalProperties':False}
-    return {'type':'object','required':['entries','edges'],'properties':{'entries':{'type':'array','minItems':1,'maxItems':3,'items':entry},'edges':{'type':'array','maxItems':2,'items':edge}},'additionalProperties':False}
+    return {'type':'object','required':['entries','edges'],'properties':{'entries':{'type':'array','minItems':1,'maxItems':brief['max_entries'],'items':entry},'edges':{'type':'array','maxItems':brief['max_edges'],'items':edge}},'additionalProperties':False}
 
 
 def main():
@@ -152,7 +152,7 @@ def main():
     out = private_path(args.output);out.mkdir(mode=0o700, parents=True, exist_ok=False)
     public_sources = [{k:s[k] for k in ('id','publisher','passages')} for s in sources.values()]
     labels = [{k:n[k] for k in ('id','lens')} for n in json.loads((ROOT/'vendor/tt/taxonomy-v2.1.json').read_text())['nodes'] if n.get('level')=='species']
-    payload = {'model':policy['model'],'stream':False,'think':False,'format':output_schema(labels),'keep_alive':0,
+    payload = {'model':policy['model'],'stream':False,'think':False,'format':output_schema(labels, brief),'keep_alive':0,
                'options':{'temperature':0,'seed':22,'num_predict':7000,'num_ctx':16384},
                'system':INSTRUCTION,'prompt':json.dumps({'brief':brief,'sources':public_sources,
                'taxonomy':labels,'instruction':INSTRUCTION},ensure_ascii=False)}
