@@ -85,3 +85,11 @@ its upstream recommendations (temperature 0.6/top-p 0.95 when reasoning is
 requested, 0.7/0.8 otherwise, top-k 20, min-p 0). The seed and all settings are
 retained; a fixed seed is not a guarantee of reproducibility across runtimes.
 See https://huggingface.co/Qwen/Qwen3-8B#best-practices .
+
+For a slower local runtime, `--stream` retains every response chunk in
+`response-stream.ndjson` and reports character progress. A missing completion,
+model change, output truncation, or stream exceeding 8 MB / 20 minutes is a
+refusal, not a partial candidate. `--context 8192` and `--max-output 4096` can
+bound a small request; ensure the selected context fits the brief and sources.
+An optional brief `allowed_claim_types` list selects only valid pinned TT labels
+for a domain-specific pilot. These controls never repair historical prose.

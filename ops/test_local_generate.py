@@ -64,3 +64,15 @@ class LocalGenerationTests(unittest.TestCase):
         value={'entries':[{'summary':text}],'edges':[]}
         self.assertEqual(g.decode_output('```json\n'+json.dumps(value)+'\n```'),value)
         with self.assertRaises(ValueError):g.decode_output('Here is a claim: '+json.dumps(value))
+
+    def test_stream_retains_all_chunks_and_requires_completion(self):
+        chunks=[{'model':'m','response':'{"entries":','done':False},
+                {'model':'m','response':'[],"edges":[]}','done':True,'done_reason':'stop'}]
+        lines=[(json.dumps(c)+'\n').encode() for c in chunks];saved=[]
+        result=g.collect_stream(lines,'m',saved.append)
+        self.assertEqual(saved,lines)
+        self.assertEqual(json.loads(result['response']),{'entries':[],'edges':[]})
+        with self.assertRaisesRegex(ValueError,'without completion'):
+            g.collect_stream(lines[:1],'m',lambda line:None)
+        with self.assertRaisesRegex(ValueError,'mismatch'):
+            g.collect_stream(lines,'other',lambda line:None)
