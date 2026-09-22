@@ -75,3 +75,11 @@ truth; verify directed endpoints and source entailment separately.
 Use `--think` on `ops/local_generate.py` to enable reasoning in a supporting local
 model. The request and complete response remain in the private run directory.
 Reasoning mode does not change evidence admission or authorize publication.
+
+The wire request preserves JSON-schema field order so nodes precede edges.
+`request-wire.json` retains those exact request bytes; provenance request hashes
+use the order-independent canonical JSON representation. Qwen sampling follows
+its upstream recommendations (temperature 0.6/top-p 0.95 when reasoning is
+requested, 0.7/0.8 otherwise, top-k 20, min-p 0). The seed and all settings are
+retained; a fixed seed is not a guarantee of reproducibility across runtimes.
+See https://huggingface.co/Qwen/Qwen3-8B#best-practices .

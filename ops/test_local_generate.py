@@ -52,3 +52,9 @@ class LocalGenerationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):g.policy_check(changed,tags,shown)
             p.write_text('changed')
             with self.assertRaises(ValueError):g.policy_check(policy,tags,shown)
+
+    def test_wire_preserves_node_before_edge_schema_order(self):
+        value={'format':{'properties':{'entries':{'type':'array'},'edges':{'type':'array'}}}}
+        sent=json.loads(g.wire(value))
+        self.assertEqual(list(sent['format']['properties']), ['entries','edges'])
+        self.assertEqual(g.canonical(sent),g.canonical(value))

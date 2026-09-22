@@ -26,8 +26,14 @@ def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def wire(value):
+    # Preserve schema property order: entries must be generated before edges.
+    # Canonical hashes remain order-independent and are used for provenance only.
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
+
+
 def call(path, value=None):
-    request = urllib.request.Request(ORIGIN + path, data=None if value is None else canonical(value),
+    request = urllib.request.Request(ORIGIN + path, data=None if value is None else wire(value),
                                      headers={'Content-Type': 'application/json'})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     with opener.open(request, timeout=600) as response:
@@ -154,10 +160,12 @@ def main():
     public_sources = [{k:s[k] for k in ('id','publisher','passages')} for s in sources.values()]
     labels = [{k:n[k] for k in ('id','lens')} for n in json.loads((ROOT/'vendor/tt/taxonomy-v2.1.json').read_text())['nodes'] if n.get('level')=='species']
     payload = {'model':policy['model'],'stream':False,'think':args.think,'format':output_schema(labels, brief),'keep_alive':0,
-               'options':{'temperature':0,'seed':22,'num_predict':7000,'num_ctx':16384},
+               'options':{'temperature':0.6 if args.think else 0.7,'top_p':0.95 if args.think else 0.8,'top_k':20,'min_p':0,'seed':22,'num_predict':7000,'num_ctx':16384},
                'system':INSTRUCTION,'prompt':json.dumps({'brief':brief,'sources':public_sources,
                'taxonomy':labels,'instruction':INSTRUCTION},ensure_ascii=False)}
     save(out/'request.json',payload)
+    (out/'request-wire.json').write_bytes(wire(payload))
+    (out/'request-wire.json').chmod(0o600)
     response = call('/api/generate',payload);save(out/'response.json',response)
     policy_check(policy, call('/api/tags'), call('/api/show', {'model':policy['model']}))
     if response.get('model') != policy['model'] or response.get('done') is not True or response.get('done_reason') != 'stop':
