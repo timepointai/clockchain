@@ -1,4 +1,7 @@
 import hashlib
+import os
+from unittest.mock import patch
+import acceptance_seed
 import struct
 import tempfile
 import unittest
@@ -7,6 +10,22 @@ from local_acceptance import accept
 from acceptance_seed import png, seed
 
 class AcceptanceBoundaryTests(unittest.TestCase):
+    def test_private_fixture_permissions_are_transferred_to_runtime_owner(self):
+        observed = []
+        def command(args):
+            if args[1] == 'cp':
+                self.assertEqual(Path(args[2]).stat().st_mode & 0o777, 0o600)
+            observed.append(args)
+        mask = os.umask(0o077)
+        try:
+            with patch.object(acceptance_seed, 'local_container', return_value='isolated'), \
+                 patch.object(acceptance_seed.subprocess, 'check_call', side_effect=command):
+                acceptance_seed.put('docker:isolated', 'source.txt', b'synthetic only')
+        finally:
+            os.umask(mask)
+        self.assertIn(['docker','exec','--user','root','isolated','chown','clockchain:clockchain','/tmp/cc-acceptance/source.txt'], observed)
+        self.assertIn(['docker','exec','--user','root','isolated','chmod','600','/tmp/cc-acceptance/source.txt'], observed)
+
     def test_fixture_matches_production_size_class(self):
         raw = png()
         self.assertGreater(len(raw), 1700000)

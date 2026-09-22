@@ -93,7 +93,13 @@ def put(app, name, data):
         with tempfile.TemporaryDirectory(prefix='cc-fixture-') as temporary:
             path = Path(temporary) / name
             path.write_bytes(data)
-            subprocess.check_call(['docker', 'cp', str(path), container + ':' + REMOTE + '/' + name])
+            destination = REMOTE + '/' + name
+            subprocess.check_call(['docker', 'cp', str(path), container + ':' + destination])
+            # docker cp creates root-owned files; owner umask 077 must work.
+            subprocess.check_call(['docker', 'exec', '--user', 'root', container,
+                                   'chown', 'clockchain:clockchain', destination])
+            subprocess.check_call(['docker', 'exec', '--user', 'root', container,
+                                   'chmod', '600', destination])
         return
     encoded = base64.b64encode(data).decode()
     subprocess.check_call([
