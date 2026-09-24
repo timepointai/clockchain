@@ -49,7 +49,7 @@ def verify_archive(archive, rows):
     return checked
 
 
-def restore_verify(bundle):
+def restore_verify(bundle, *, allow_zero=False):
     name = 'cc-restore-' + uuid.uuid4().hex[:12]
     def db(query):
         return run('docker', 'exec', name, 'psql', '-U', 'postgres', '-d', 'restore',
@@ -70,12 +70,30 @@ def restore_verify(bundle):
         objects = verify_archive(bundle / 'media.tar', rows)
         counts = {table: int(db('SELECT count(*) FROM ' + table))
                   for table in ('events', 'exhibits', 'image_attachments')}
-        # A restored ledger with no events is not a restore worth claiming.
+        # Zero-event restores require an explicit release mode.
         # Other guarded tables may be legitimately empty — an acceptance chain
         # has no frozen corpus — so their guards are recorded as NOT RUN rather
         # than silently skipped or reported as proven.
+        if not counts['events'] and not allow_zero:
+            raise ValueError('restored ledger has no events; explicit zero-event release required')
+        migrations = db("SELECT version || ':' || encode(checksum,'hex') FROM _sqlx_migrations WHERE success ORDER BY version")
+        if not migrations or int(db('SELECT count(*) FROM _sqlx_migrations WHERE NOT success')):
+            raise ValueError('restored migration history incomplete')
+        truncate = subprocess.run(['docker','exec',name,'psql','-U','postgres','-d','restore',
+            '-X','-v','ON_ERROR_STOP=1','-c','BEGIN; TRUNCATE events CASCADE; ROLLBACK;'],capture_output=True,text=True)
+        if truncate.returncode == 0 or 'events is append-only' not in truncate.stderr:
+            raise ValueError('restored event truncate guard missing')
+        zero_counts = {}
         if not counts['events']:
-            raise ValueError('restored ledger has no events')
+            tables = db("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename").splitlines()
+            for table in tables:
+                if not table.replace('_','').isalnum(): raise ValueError('unexpected table name')
+                zero_counts[table] = int(db('SELECT count(*) FROM "' + table + '"'))
+            allowed = {'_sqlx_migrations','event_digest','publication_control'}
+            if any(n for table,n in zero_counts.items() if table not in allowed):
+                raise ValueError('zero-event restore contains leftover projections or operational content')
+            if db("SELECT n || ':' || encode(acc,'hex') FROM event_digest") != '0:'+'0'*64:
+                raise ValueError('zero-event commitment mismatch')
         guards = {}
         for table, expected_error, assignment in [('events', 'events is append-only', 'payload=payload'),
                                                   ('exhibits', 'exhibits are immutable', 'byte_len=byte_len')]:
@@ -90,7 +108,8 @@ def restore_verify(bundle):
                     raise ValueError('restored guard did not produce expected refusal: ' + table)
             guards[table] = 'proven'
         report = {'schema': 'cc.backup-restore.v1', 'restore_verified': True, 'counts': counts,
-                  'guards': guards,
+                  'guards': guards, 'event_truncate_guard':'proven', 'zero_event_restore':not counts['events'],
+                  'migration_checksums':migrations.splitlines(), 'zero_table_counts':zero_counts,
                   'objects': objects, 'dump_sha256': file_sha(bundle / 'database.dump'),
                   'media_sha256': file_sha(bundle / 'media.tar'), 'projection_replay_verified': False}
         (bundle / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -118,7 +137,7 @@ def wake(app):
     raise ValueError('app machine did not start for backup: ' + app)
 
 
-def capture(app, db_app, database, user, bundle):
+def capture(app, db_app, database, user, bundle, *, allow_zero=False):
     bundle.mkdir(mode=0o700, parents=True)
     remote = '/tmp/cc-backup-' + uuid.uuid4().hex
     def ssh(target, command):
@@ -144,7 +163,7 @@ def capture(app, db_app, database, user, bundle):
                 ssh(target, 'rm -f ' + shlex.quote(remote + suffix))
             except subprocess.CalledProcessError:
                 pass
-    return restore_verify(bundle)
+    return restore_verify(bundle, allow_zero=allow_zero)
 
 
 if __name__ == '__main__':

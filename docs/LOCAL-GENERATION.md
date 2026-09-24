@@ -1,5 +1,9 @@
 # Small local open-model pilot
 
+For the planned shared hosted/local pipeline and recurring model qualification,
+see [adaptive generation](ADAPTIVE-GENERATION.md). The bounded pilot below remains
+the current local implementation.
+
 Start with an empty production corpus and keep publication paused. Production data,
 model responses, source captures, policies and legacy archives stay outside this
 repository. Test fixtures are software tests, never the historical corpus.
@@ -56,3 +60,40 @@ paused. Existing nonempty releases retain their genuine-media replay checks.
 The old projection-deletion SQL is disabled: deleting a projection does not remove
 its immutable events, and replay restores it. Corpus replacement uses a verified
 private archive and a fresh database. Preserve migrations and signing identity.
+
+## Inspect a populated local test
+
+The existing `ops/browse-v4.py` viewer uses `CC_DATABASE_URL` for a read-only
+loopback PostgreSQL URI (without query parameters), `CC_NODE_URL` for the matching local node, and
+`CC_NODE_READ_KEY` for scoped API reads. Put `psql` on `PATH`, then run
+`python3 ops/browse-v4.py 8766` and open `http://127.0.0.1:8766`. The viewer binds
+only to loopback and does not discover credentials or retired hosting. Use a
+read-only database role and the node's frozen posture for retained rehearsals.
+
+The graph shows stored edge directions, evidence classes and attached mechanism
+evidence. Claim details retain source passages, model provenance and date precision.
+Year-based placement does not establish within-day chronology. The walk button
+checks undirected recorded-graph feasibility, not causal direction or historical
+truth; verify directed endpoints and source entailment separately.
+
+Use `--think` on `ops/local_generate.py` to request native chat reasoning in a
+supporting local model. This path permits reasoning before final JSON instead of
+forcing a JSON-only output grammar; publisher admission is still required. The
+request, complete response and presence or absence of a reasoning trace remain
+in the private run directory. Reasoning mode does not authorize publication.
+
+The wire request preserves JSON-schema field order so nodes precede edges.
+`request-wire.json` retains those exact request bytes; provenance request hashes
+use the order-independent canonical JSON representation. Qwen sampling follows
+its upstream recommendations (temperature 0.6/top-p 0.95 when reasoning is
+requested, 0.7/0.8 otherwise, top-k 20, min-p 0). The seed and all settings are
+retained; a fixed seed is not a guarantee of reproducibility across runtimes.
+See https://huggingface.co/Qwen/Qwen3-8B#best-practices .
+
+For a slower local runtime, `--stream` retains every response chunk in
+`response-stream.ndjson` and reports character progress. A missing completion,
+model change, output truncation, or stream exceeding 8 MB / 20 minutes is a
+refusal, not a partial candidate. `--context 8192` and `--max-output 4096` can
+bound a small request; ensure the selected context fits the brief and sources.
+An optional brief `allowed_claim_types` list selects only valid pinned TT labels
+for a domain-specific pilot. These controls never repair historical prose.

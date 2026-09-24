@@ -61,7 +61,7 @@ RUN CC_BUILD_REV="${CC_BUILD_REV:-${RAILWAY_GIT_COMMIT_SHA:-$(git rev-parse --sh
 # --- runtime ---------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates python3 python3-jsonschema python3-cryptography python3-psycopg \
     && rm -rf /var/lib/apt/lists/*
 # Never root: the node's whole job is refusing unauthorized writes, and a
 # container that can rewrite its own filesystem weakens that for no benefit.
@@ -82,6 +82,8 @@ COPY --from=builder /build/target/release/cc-publisher /usr/local/bin/cc-publish
 # Migrations are embedded in the binary; the dir is copied for operator use
 # (e.g. `cc-node migrate` and manual inspection).
 COPY --from=builder /build/migrations /app/migrations
+COPY --from=builder /build/ops/model_policy.py /build/ops/model_runtime.py /build/ops/model_transport.py /build/ops/model_catalog.py /build/ops/model_evaluate.py /build/ops/local_generate.py /build/ops/corpus_audit.py /build/ops/generation_worker.py /app/ops/
+COPY --from=builder /build/vendor/tt /app/vendor/tt
 USER clockchain
 EXPOSE 8080
 CMD ["cc-node"]

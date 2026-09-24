@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 import urllib.request
 
 from corpus_audit import NoRedirect, private_path, save
@@ -26,8 +27,14 @@ def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def wire(value):
+    # Preserve schema property order: entries must be generated before edges.
+    # Canonical hashes remain order-independent and are used for provenance only.
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
+
+
 def call(path, value=None):
-    request = urllib.request.Request(ORIGIN + path, data=None if value is None else canonical(value),
+    request = urllib.request.Request(ORIGIN + path, data=None if value is None else wire(value),
                                      headers={'Content-Type': 'application/json'})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     with opener.open(request, timeout=600) as response:
@@ -35,6 +42,45 @@ def call(path, value=None):
     if len(raw) > 2_000_000:
         raise ValueError('local response exceeds limit')
     return json.loads(raw)
+
+
+def collect_stream(lines, model, retain):
+    content, thinking, total, final = [], [], 0, None
+    started = progress = time.monotonic()
+    chat = False
+    for line in lines:
+        total += len(line)
+        if total > 8_000_000 or time.monotonic() - started > 1200:
+            raise ValueError('local stream exceeded byte or time bounds')
+        retain(line)
+        chunk = json.loads(line)
+        if chunk.get('model') != model or chunk.get('error'):
+            raise ValueError('local stream model mismatch or provider error')
+        chat = chat or 'message' in chunk
+        part = chunk.get('message', chunk)
+        content.append(part.get('content' if chat else 'response', ''))
+        thinking.append(part.get('thinking', ''))
+        if time.monotonic() - progress >= 45:
+            print('Local model progress:', sum(map(len, content)), 'final-text characters received', flush=True)
+            progress = time.monotonic()
+        if chunk.get('done'):
+            final = chunk
+            break
+    if final is None:
+        raise ValueError('local stream ended without completion')
+    if chat:
+        final['message'] = {'role':'assistant','content':''.join(content),'thinking':''.join(thinking)}
+    else:
+        final.update(response=''.join(content), thinking=''.join(thinking))
+    return final
+
+
+def generate_stream(endpoint, payload, out):
+    request = urllib.request.Request(ORIGIN + endpoint, data=wire(payload), headers={'Content-Type':'application/json'})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    fd = os.open(out/'response-stream.ndjson', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'wb', buffering=0) as retained, opener.open(request, timeout=600) as response:
+        return collect_stream(response, payload['model'], retained.write)
 
 
 def policy_check(policy, tags, shown):
@@ -135,11 +181,24 @@ def output_schema(labels, brief):
     return {'type':'object','required':['entries','edges'],'properties':{'entries':{'type':'array','minItems':1,'maxItems':brief['max_entries'],'items':entry},'edges':{'type':'array','maxItems':brief['max_edges'],'items':edge}},'additionalProperties':False}
 
 
+def decode_output(content):
+    text = content.strip()
+    if text.startswith('```json\n') and text.endswith('\n```'):
+        text = text[8:-4]
+    return json.loads(text)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('brief','sources','policy','output'):
         p.add_argument('--'+name, required=True, type=Path)
+    p.add_argument('--think', action='store_true', help='enable local model reasoning; raw response is retained')
+    p.add_argument('--stream', action='store_true', help='retain bounded response chunks and report progress')
+    p.add_argument('--context', type=int, choices=(8192,16384), default=16384)
+    p.add_argument('--max-output', type=int, default=7000)
     args = p.parse_args()
+    if not 512 <= args.max_output <= 7000:
+        p.error('max-output must be between 512 and 7000')
     # A generation process has no reason to possess publication credentials.
     if any(os.environ.get(k) for k in ('DATABASE_URL','MIGRATOR_SECRET_KEY','GENESIS_SECRET_KEY','CC_NODE_API_KEY')):
         p.error('remove database and signing credentials from generation environment')
@@ -152,21 +211,41 @@ def main():
     out = private_path(args.output);out.mkdir(mode=0o700, parents=True, exist_ok=False)
     public_sources = [{k:s[k] for k in ('id','publisher','passages')} for s in sources.values()]
     labels = [{k:n[k] for k in ('id','lens')} for n in json.loads((ROOT/'vendor/tt/taxonomy-v2.1.json').read_text())['nodes'] if n.get('level')=='species']
-    payload = {'model':policy['model'],'stream':False,'think':False,'format':output_schema(labels, brief),'keep_alive':0,
-               'options':{'temperature':0,'seed':22,'num_predict':7000,'num_ctx':16384},
-               'system':INSTRUCTION,'prompt':json.dumps({'brief':brief,'sources':public_sources,
-               'taxonomy':labels,'instruction':INSTRUCTION},ensure_ascii=False)}
+    if brief.get('allowed_claim_types'):
+        allowed = set(brief['allowed_claim_types'])
+        if not allowed.issubset({n['id'] for n in labels}):
+            p.error('brief names an unknown TT claim type')
+        labels = [n for n in labels if n['id'] in allowed]
+    prompt = json.dumps({'brief':brief,'sources':public_sources,
+                         'taxonomy':labels,'instruction':INSTRUCTION},ensure_ascii=False)
+    payload = {'model':policy['model'],'stream':args.stream,'think':args.think,'keep_alive':0,
+               'options':{'temperature':0.6 if args.think else 0.7,'top_p':0.95 if args.think else 0.8,
+                          'top_k':20,'min_p':0,'seed':22,'num_predict':args.max_output,'num_ctx':args.context}}
+    if args.think:
+        # Native reasoning precedes the final JSON. A JSON-only grammar can
+        # suppress that reasoning; admission still validates the final object.
+        payload['messages'] = [{'role':'system','content':INSTRUCTION + ' Keep reasoning concise. Return entries before edges.'},
+                               {'role':'user','content':prompt}]
+        endpoint = '/api/chat'
+    else:
+        payload.update(format=output_schema(labels, brief), system=INSTRUCTION, prompt=prompt)
+        endpoint = '/api/generate'
     save(out/'request.json',payload)
-    response = call('/api/generate',payload);save(out/'response.json',response)
+    (out/'request-wire.json').write_bytes(wire(payload))
+    (out/'request-wire.json').chmod(0o600)
+    response = generate_stream(endpoint,payload,out) if args.stream else call(endpoint,payload)
+    save(out/'response.json',response)
     policy_check(policy, call('/api/tags'), call('/api/show', {'model':policy['model']}))
     if response.get('model') != policy['model'] or response.get('done') is not True or response.get('done_reason') != 'stop':
         raise ValueError('model mismatch or truncated generation; raw response retained')
-    model_output = json.loads(response['response']);save(out/'model-output.json',model_output)
+    content = response['message']['content'] if args.think else response['response']
+    model_output = decode_output(content);save(out/'model-output.json',model_output)
     candidate = proposal(model_output,sources,policy,brief,out.name,digest(canonical(payload)),digest(canonical(response)))
     save(out/'proposal.json',candidate);save(out/'brief.json',brief);save(out/'policy.json',policy)
     save(out/'run.json',{'model':policy['model'],'model_digest':policy['model_digest'],'proposal_sha256':digest(canonical(candidate)),
                          'brief_sha256':digest(canonical(brief)),'entries':len(candidate['entries']),'edges':len(candidate['edges']),
-                         'api_charge_usd':0,'published':False,'admission':'not_run','human_content_review':'pending',
+                         'api_charge_usd':0,'reasoning_requested':args.think,
+                         'reasoning_trace_present':bool(response.get('message',{}).get('thinking',response.get('thinking'))),'published':False,'admission':'not_run','human_content_review':'pending',
                          'eval_count':response.get('eval_count'),'eval_duration_ns':response.get('eval_duration')})
     print('Private model-generated proposal retained; admission and content review remain separate.')
 

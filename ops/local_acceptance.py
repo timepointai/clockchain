@@ -16,7 +16,7 @@ import time
 import uuid
 
 from acceptance_seed import seed
-from deployed_checks import check, check_empty, request
+from deployed_checks import check, check_empty, check_zero, request
 
 
 def docker(*args):
@@ -90,6 +90,10 @@ def accept(image, sha, evidence):
             if attempt == 89:
                 raise RuntimeError('temporary node did not become ready')
             time.sleep(1)
+        zero_result = check_zero(url, sha, key, read_key)
+        (evidence / 'zero-events.json').write_text(json.dumps(zero_result, indent=2) + '\n')
+        docker('exec', app, 'python3', '/app/ops/model_catalog.py', '--help')
+        docker('exec', app, 'python3', '/app/ops/model_runtime.py', '--help')
         docker('exec', app, 'cc-migrator', 'genesis')
         empty_result = check_empty(url, sha, key, read_key)
         (evidence / 'empty-corpus.json').write_text(json.dumps(empty_result, indent=2) + '\n')

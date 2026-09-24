@@ -13,7 +13,7 @@ import subprocess
 import time
 
 from acceptance_seed import seed
-from deployed_checks import check, check_empty, request
+from deployed_checks import check, check_empty, check_zero, request
 from backup_fly import capture, wake
 from verify_fly_machines import digest, group, verify
 
@@ -114,7 +114,9 @@ def main():
     p.add_argument('--sha', required=True)
     p.add_argument('--config', default='fly.toml')
     p.add_argument('--acceptance', action='store_true')
-    p.add_argument('--empty-corpus', action='store_true')
+    modes=p.add_mutually_exclusive_group()
+    modes.add_argument('--empty-corpus', action='store_true')
+    modes.add_argument('--zero-events', action='store_true')
     p.add_argument('--evidence', type=Path, required=True)
     args = p.parse_args()
     if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
@@ -139,7 +141,7 @@ def main():
                 raise
     if not args.acceptance:
         capture(args.app, os.environ['CC_BACKUP_DB_APP'], os.environ['CC_BACKUP_DATABASE'],
-                os.environ['CC_BACKUP_USER'], args.evidence / 'backup')
+                os.environ['CC_BACKUP_USER'], args.evidence / 'backup', allow_zero=args.zero_events)
     before = machines(args.app)
     # A freshly created acceptance app has no machines, so there is no previous
     # release to name and nothing to roll back to. Only the acceptance lane may
@@ -187,7 +189,9 @@ def main():
                 url = os.environ['CC_NODE_URL'].rstrip('/')
                 # Acceptance replays its own synthetic creation. Production
                 # names a real approved entity and mints nothing.
-                if args.empty_corpus:
+                if args.zero_events:
+                    result = check_zero(url, args.sha, os.environ['CC_NODE_API_KEY'], os.environ['CC_NODE_READ_KEY'])
+                elif args.empty_corpus:
                     result = check_empty(url, args.sha, os.environ['CC_NODE_API_KEY'], os.environ['CC_NODE_READ_KEY'])
                 else:
                     entity = (seed(args.app, url, os.environ['CC_NODE_API_KEY'])
@@ -202,7 +206,7 @@ def main():
         result['publication_was_paused'] = was_paused
         result['image'] = args.image
         result['app'] = args.app
-        if not args.acceptance and not args.empty_corpus and not was_paused:
+        if not args.acceptance and not (args.empty_corpus or args.zero_events) and not was_paused:
             fly('ssh', 'console', '--app', args.app, '-C', 'cc-publisher resume --reason deployment-accepted')
         (args.evidence / 'acceptance.json').write_text(json.dumps(result, indent=2))
     except Exception:

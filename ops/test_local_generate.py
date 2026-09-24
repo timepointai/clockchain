@@ -52,3 +52,27 @@ class LocalGenerationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):g.policy_check(changed,tags,shown)
             p.write_text('changed')
             with self.assertRaises(ValueError):g.policy_check(policy,tags,shown)
+
+    def test_wire_preserves_node_before_edge_schema_order(self):
+        value={'format':{'properties':{'entries':{'type':'array'},'edges':{'type':'array'}}}}
+        sent=json.loads(g.wire(value))
+        self.assertEqual(list(sent['format']['properties']), ['entries','edges'])
+        self.assertEqual(g.canonical(sent),g.canonical(value))
+
+    def test_native_reasoning_final_json_does_not_rewrite_claim_strings(self):
+        text='model-authored <text> \u2192 unchanged'
+        value={'entries':[{'summary':text}],'edges':[]}
+        self.assertEqual(g.decode_output('```json\n'+json.dumps(value)+'\n```'),value)
+        with self.assertRaises(ValueError):g.decode_output('Here is a claim: '+json.dumps(value))
+
+    def test_stream_retains_all_chunks_and_requires_completion(self):
+        chunks=[{'model':'m','response':'{"entries":','done':False},
+                {'model':'m','response':'[],"edges":[]}','done':True,'done_reason':'stop'}]
+        lines=[(json.dumps(c)+'\n').encode() for c in chunks];saved=[]
+        result=g.collect_stream(lines,'m',saved.append)
+        self.assertEqual(saved,lines)
+        self.assertEqual(json.loads(result['response']),{'entries':[],'edges':[]})
+        with self.assertRaisesRegex(ValueError,'without completion'):
+            g.collect_stream(lines[:1],'m',lambda line:None)
+        with self.assertRaisesRegex(ValueError,'mismatch'):
+            g.collect_stream(lines,'other',lambda line:None)

@@ -30,3 +30,25 @@ class EmptyCorpusTests(unittest.TestCase):
         changes=[lambda d:d['ledger'].update(entity_count=2),lambda d:d['ledger'].update(edge_count=1),lambda d:d['media'].update(image_attachment_count=1)]
         for change in changes:
             with self.assertRaises(AssertionError):self.call(change)
+
+class ZeroEventTests(unittest.TestCase):
+    def run_zero(self, mutate=lambda d:None):
+        from deployed_checks import check_zero
+        deep={'status':'ok','event_count':0,'ledger':None,'media':{'image_attachment_count':0,'integrity':'pass'}}
+        mutate(deep);writes=[]
+        def request(base,path,key=None,payload=None):
+            if payload is not None:writes.append(key);return (403 if key=='read' else 401),b'{}'
+            if path=='/health':return 200,json.dumps({'build':'a'*12,'posture':'live'}).encode()
+            if key not in ('full','read'):return 401,b'{}'
+            if path=='/health/deep':return 200,json.dumps(deep).encode()
+            if path=='/v1/entities/0':return 400,b'{}'
+            if path.startswith('/v1/entities/0?'):return 404,b'{}'
+            if path.startswith('/v1/recents'):return 200,b'{"entries":[]}'
+            raise AssertionError(path)
+        with patch('deployed_checks.request',side_effect=request):result=check_zero('http://127.0.0.1:1','a'*40,'full','read')
+        self.assertNotIn('full',writes);return result
+    def test_zero_event_release_does_not_create_genesis(self):
+        result=self.run_zero();self.assertFalse(result['initialization_performed'])
+    def test_nonempty_or_stale_statistics_refused(self):
+        for mutation in (lambda d:d.update(event_count=1),lambda d:d.update(ledger={'entity_count':0}),lambda d:d['media'].update(image_attachment_count=1)):
+            with self.assertRaises(AssertionError):self.run_zero(mutation)

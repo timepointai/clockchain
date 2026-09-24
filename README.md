@@ -37,6 +37,11 @@ Use the [local permissive-model pilot](docs/LOCAL-GENERATION.md) to generate at
 most three source-backed proposals outside the repository. Model output supplies
 the historical content; software supplies validation and measured provenance.
 
+The [model operating workflow](docs/MODEL-OPERATIONS.md) provides daily discovery,
+human model selection, bounded hosted evaluation and a configurable proposal-only
+runtime. [Adaptive generation](docs/ADAPTIVE-GENERATION.md) describes the longer-term
+batch and local-inference architecture. Deployment does not enable generation.
+
 ## Private operation
 
 GitHub Actions tests code and never deploys. The owner explicitly releases a
