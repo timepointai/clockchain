@@ -27,7 +27,9 @@ def main():
     parser.add_argument('--image', required=True, help='registry.fly.io/<app>@sha256:<digest>')
     parser.add_argument('--app', required=True)
     parser.add_argument('--config', default='fly.toml')
-    parser.add_argument('--empty-corpus', action='store_true', help='verify genesis-only production without media fixtures')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--zero-events', action='store_true', help='verify a completely empty uninitialized production ledger')
+    modes.add_argument('--empty-corpus', action='store_true', help='verify genesis-only production without media fixtures')
     parser.add_argument('--evidence', type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r'registry\.fly\.io/' + re.escape(args.app) + r'@sha256:[0-9a-f]{64}', args.image):
@@ -45,7 +47,7 @@ def main():
         parser.error('a successful exact-SHA CI run is required')
     required = ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY',
                 'CC_BACKUP_DB_APP', 'CC_BACKUP_DATABASE', 'CC_BACKUP_USER')
-    if not args.empty_corpus:
+    if not (args.empty_corpus or args.zero_events):
         required += ('CC_SMOKE_ENTITY',)
     if any(not os.environ.get(name) for name in required):
         parser.error('operator environment needs: ' + ', '.join(required))
@@ -91,7 +93,7 @@ def main():
             env = {**os.environ, 'CC_NODE_URL': url}
             subprocess.run([sys.executable, 'ops/deploy_digest.py', '--app', args.app,
                             '--config', args.config, '--sha', sha, '--image', args.image,
-                            '--evidence', str(args.evidence / 'production')] + (['--empty-corpus'] if args.empty_corpus else []), env=env, check=True)
+                            '--evidence', str(args.evidence / 'production')] + (['--empty-corpus'] if args.empty_corpus else ['--zero-events'] if args.zero_events else []), env=env, check=True)
             private_ips()
         finally:
             proxy.terminate()

@@ -1,5 +1,9 @@
 # Small local open-model pilot
 
+For the planned shared hosted/local pipeline and recurring model qualification,
+see [adaptive generation](ADAPTIVE-GENERATION.md). The bounded pilot below remains
+the current local implementation.
+
 Start with an empty production corpus and keep publication paused. Production data,
 model responses, source captures, policies and legacy archives stay outside this
 repository. Test fixtures are software tests, never the historical corpus.

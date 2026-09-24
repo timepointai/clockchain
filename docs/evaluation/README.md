@@ -1,5 +1,9 @@
 # Evidence audit and evaluation
 
+The [adaptive generation plan](../ADAPTIVE-GENERATION.md) defines a separate
+generation-quality evaluator and recurring route qualification. The tools below
+continue to evaluate recorded-graph evidence and externally graded consumer runs.
+
 The API now states `evidence_scope: recorded_graph_feasibility`,
 `factual_verification: not_assessed`, and
 `verdict_policy: first_zero_in_factor_order`. `audit.schema` is

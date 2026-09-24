@@ -45,6 +45,36 @@ def request(base, path, key=None, payload=None):
         return exc.code, exc.read()
 
 
+def check_zero(base, revision, key, read_key):
+    """Verify an intentionally uninitialized zero-event node; never seed it."""
+    if not key or not read_key or key == read_key:
+        raise ValueError('Distinct full and read-only credentials required')
+    checks=[]
+    def expect(name,path,credential,status,payload=None):
+        actual,body=request(base,path,credential,payload)
+        if actual != status: raise AssertionError(f'{name}: HTTP {actual}, expected {status}')
+        checks.append(name)
+        return json.loads(body) if body else None
+    health=expect('build','/health',None,200)
+    assert health['build']==revision[:12] and health['posture']=='live'
+    deep=expect('zero-event health','/health/deep',read_key,200)
+    assert deep['status']=='ok' and deep['event_count']==0 and deep['ledger'] is None
+    assert deep['media']['image_attachment_count']==0 and deep['media']['integrity']=='pass'
+    coord=int(time.time())-946728000
+    expect('anonymous denied','/v1/entities/0?as_of=0',None,401)
+    expect('wrong credential denied','/v1/entities/0?as_of=0','invalid-credential',401)
+    expect('coordinate required','/v1/entities/0',read_key,400)
+    expect('node zero absent',f'/v1/entities/0?as_of={coord}',read_key,404)
+    recent=expect('no records',f'/v1/recents?as_of={coord}&limit=50',read_key,200)
+    assert recent['entries']==[]
+    expect('read cannot publish','/v1/images',read_key,403,DENIAL_PROBE)
+    expect('anonymous cannot publish','/v1/images',None,401,DENIAL_PROBE)
+    after=expect('no probe writes','/health/deep',read_key,200)
+    assert after['event_count']==0 and after['ledger'] is None
+    return {'checks':checks,'passed':len(checks),'ledger':'zero_events','media':'empty',
+            'deep_health':after,'initialization_performed':False}
+
+
 def check_empty(base, revision, key, read_key):
     """Verify a genesis-only node without inventing historical data or media."""
     if not key or not read_key or key == read_key:

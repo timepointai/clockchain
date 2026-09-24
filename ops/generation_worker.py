@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import socket
+import signal
 import subprocess
 import sys
 import time
@@ -47,7 +48,7 @@ class Jobs:
         if not row or row['paused']: raise ValueError('operator/deployment pause active')
         if os.environ.get('CC_GENERATION_ENABLED') != '1' or (self.root / 'STOP').exists():
             raise ValueError('generation disabled (CC_GENERATION_ENABLED=1 and no STOP file required)')
-        for key in ('MIGRATOR_SECRET_KEY', 'CC_LEDGER_SIGNING_KEY', 'CC_NODE_API_KEY'):
+        for key in ('MIGRATOR_SECRET_KEY', 'CC_LEDGER_SIGNING_KEY', 'CC_NODE_API_KEY', 'GENESIS_SECRET_KEY'):
             if os.environ.get(key): raise ValueError('worker environment contains ledger signing material')
     def enqueue(self, job, brief):
         with self.transaction():
@@ -94,6 +95,17 @@ def validate_brief(brief):
     if brief.get('scope') not in SCOPES or not brief.get('text', '').strip(): raise ValueError('explicit allowed scope and text required')
     policy = load_policy()
     if brief.get('policy_sha256') != sha(POLICY_PATH.read_bytes()): raise ValueError('brief must bind reviewed policy bytes')
+    if policy['schema'] == 'cc.generation-policy.v2':
+        from model_policy import selected
+        _, selection = selected(policy['registry'])
+        if brief.get('selection_sha256') != selection:
+            raise ValueError('brief must bind the human-selected model configuration')
+        if type(brief.get('max_entries')) is not int or not 1 <= brief['max_entries'] <= 3:
+            raise ValueError('v2 proposal bound is one to three entries')
+        if type(brief.get('max_edges')) is not int or not 0 <= brief['max_edges'] <= 2:
+            raise ValueError('v2 causal bound is zero to two edges')
+        if not all(source.get('passages') for source in brief.get('sources', [])):
+            raise ValueError('v2 requires human-selected literal source passages')
     if not isinstance(brief.get('max_entries'), int) or not 1 <= brief['max_entries'] <= 5: raise ValueError('max_entries must be 1..5')
     if brief.get('claim_mode') != 'observed_or_attributed_announcement': raise ValueError('unsupported claim mode')
     if not 1 <= len(brief.get('sources', [])) <= 10: raise ValueError('one to ten human-selected sources required')
@@ -129,6 +141,12 @@ def capture(source, directory):
 
 def load_policy():
     policy=json.loads(POLICY_PATH.read_text())
+    if policy.get('schema') == 'cc.generation-policy.v2':
+        from model_policy import selected
+        if set(policy) != {'schema','registry','reviewer','gpu'} or not policy['reviewer']:
+            raise ValueError('invalid v2 worker policy')
+        selected(policy['registry'])
+        return policy
     if policy.get('schema')!='cc.generation-policy.v1' or not policy.get('reviewer') or not policy.get('approved_at'):
         raise ValueError('operator-reviewed policy required')
     if datetime.fromisoformat(policy['expires_at'].replace('Z','+00:00')) <= datetime.now(timezone.utc):
@@ -146,6 +164,8 @@ def load_policy():
 def generate(brief, sources, jobs, job, fence):
     policy=load_policy()
     if brief['policy_sha256']!=sha(POLICY_PATH.read_bytes()): raise ValueError('approved policy changed')
+    if policy['schema'] == 'cc.generation-policy.v2':
+        return generate_selected(brief, sources, jobs, job, fence, policy)
     saved=jobs.root/job/'model-response.json'
     if saved.exists(): return json.loads(saved.read_text())
     taxonomy = json.loads((OPS.parent/'vendor/tt/taxonomy-v2.1.json').read_text())
@@ -179,6 +199,50 @@ def generate(brief, sources, jobs, job, fence):
     raise ValueError('approved text endpoints exhausted: '+','.join(failures))
 
 
+def generate_selected(brief, sources, jobs, job, fence, config):
+    """Run the shared proposal-only adapter in a credential-isolated child.
+
+    Operational leases/pause stay in this parent. Paid accounting is shared by
+    all inference children through the single operator registry, not the legacy
+    zero-price reservation table. No result cache crosses route/policy versions.
+    """
+    from model_policy import selected
+    _, selection = selected(config['registry'], brief.get('selection_sha256'))
+    directory = jobs.root/job/str(fence)
+    manifest = [{**s,'id':'source-'+str(i+1)} for i,s in enumerate(sources)]
+    task = {'id':job,'scope':brief['scope'],'instruction':brief['text'],
+            'max_entries':brief['max_entries'],'max_edges':brief['max_edges']}
+    if brief.get('allowed_claim_types'): task['allowed_claim_types']=brief['allowed_claim_types']
+    write_json(directory/'sources.json',manifest); write_json(directory/'task.json',task)
+    env = {k:v for k,v in os.environ.items() if k in ('PATH','HOME','TMPDIR','LANG','OPENROUTER_API_KEY','CC_PUBLISHER_BIN')}
+    command = [sys.executable,str(OPS/'model_runtime.py'),'--registry',config['registry'],
+               '--brief',str(directory/'task.json'),'--sources',str(directory/'sources.json'),
+               '--output',str(directory/'inference'),'--expect-selection',selection]
+    with (directory/'inference.log').open('x') as log:
+        process = subprocess.Popen(command,env=env,stdout=log,stderr=log,start_new_session=True)
+        try:
+            while process.poll() is None:
+                jobs.guard(job,fence)
+                if brief['policy_sha256'] != sha(POLICY_PATH.read_bytes()):
+                    raise ValueError('approved worker policy changed')
+                selected(config['registry'],selection)
+                time.sleep(2)
+            jobs.guard(job,fence)
+            selected(config['registry'],selection)
+            if brief['policy_sha256'] != sha(POLICY_PATH.read_bytes()):
+                raise ValueError('approved worker policy changed')
+            if process.returncode: raise ValueError('selected model request failed; inspect private attempt receipt')
+            result=json.loads((directory/'inference/result.json').read_text())
+            if result['status'] != 'proposal':
+                raise ValueError('model abstained or needs evidence; no publishable proposal')
+            return json.loads((directory/'inference/proposal.json').read_text())
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid,signal.SIGTERM)
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: os.killpg(process.pid,signal.SIGKILL); process.wait()
+
+
 def check_sources(candidate, sources, maximum):
     if not isinstance(candidate.get('entries'),list) or not 1<=len(candidate['entries'])<=maximum: raise ValueError('invalid entry count')
     if not isinstance(candidate.get('edges'),list): raise ValueError('edges must be array')
@@ -195,7 +259,7 @@ def check_sources(candidate, sources, maximum):
 
 
 def run_job(jobs, job):
-    fence,brief_id=jobs.acquire(job,600)
+    fence,brief_id=jobs.acquire(job,1800)
     directory=jobs.root/job/str(fence); directory.mkdir(parents=True,exist_ok=True)
     try:
         receipt=publisher('brief-show','--id',brief_id)

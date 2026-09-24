@@ -66,8 +66,11 @@ jobs:
       - name: Test (against the Postgres service)
         run: cargo test --all
 
+      - name: Build operator integration-test binary
+        run: cargo build -p cc-node --bin cc-node
+
       - name: Install operator test dependency
-        run: python3 -m pip install cryptography
+        run: python3 -m pip install -r ops/requirements.txt
 
       - name: Offline evaluation contract
         run: python3 -m unittest discover -s ops -p 'test_*.py'

@@ -67,3 +67,13 @@ safe for arbitrary destructive migrations. Failure details are retained in
 `recovery.json`; do not infer recovery from a successful rollback command alone.
 Database restore is separate disaster recovery. Preserve signing keys and media.
 Projection replay is not established by an ordinary dump/restore result.
+
+## Releasing onto a completely empty chain
+
+Use `--zero-events` when production has no genesis, claims or media. It is mutually
+exclusive with `--empty-corpus` (genesis-only). The zero-event release checks the
+restored table counts, migration checksums and zero commitment, verifies the
+append-only truncate guard, and leaves publication paused. It never initializes
+the ledger to make a smoke check pass. `CC_SMOKE_ENTITY` is unnecessary in either
+empty mode. Exact-image Docker acceptance still exercises zero, genesis-only and
+synthetic populated states in its isolated database.
