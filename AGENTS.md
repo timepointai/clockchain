@@ -1,6 +1,10 @@
 # Clockchain core — working instructions
 
 Public Rust/Postgres core. Read README.md and the relevant current contract.
+For session continuity on the owner's workstation, read
+`~/clockchain-private/HANDOFF.md` and `~/clockchain-private/MEMORY.md` before local
+test cleanup or a live kickoff. Those private records supersede older status
+notes; recheck dated observations before acting. See docs/SESSION-HANDOFF.md.
 Production data, credentials, source captures, approval records and backups stay
 outside this checkout. Do not restore retired Railway or wrapper tooling.
 
