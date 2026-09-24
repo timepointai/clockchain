@@ -51,6 +51,7 @@ def payload(route, messages):
     settings = route['settings']; prices = route['prices']
     return {'model':route['model'],'provider':{'only':[route['provider_slug']],
             'allow_fallbacks':False,'data_collection':'deny','require_parameters':True,
+            'quantizations':[route['quantization']],
             'max_price':{'prompt':float(policy.amount(prices['prompt_per_million_usd'])),
                          'completion':float(policy.amount(prices['completion_per_million_usd']))}},
             'temperature':settings['temperature'],'top_p':settings['top_p'],
@@ -71,6 +72,8 @@ def check_endpoint(route, request, catalog):
     endpoints = catalog['data']['endpoints']
     choices = [e for e in endpoints if e.get('provider_name') == route['provider']]
     if not choices: raise ValueError('selected provider unavailable; human must choose another route')
+    if len(choices) != 1:
+        raise ValueError('ambiguous provider endpoints; human must review routing')
     required = {'max_tokens','temperature','top_p','reasoning'}
     for endpoint in choices:
         if endpoint.get('name') != route['endpoint_name'] or endpoint.get('quantization') != route['quantization']: continue

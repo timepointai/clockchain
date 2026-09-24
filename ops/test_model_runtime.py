@@ -114,6 +114,11 @@ class ModelTests(unittest.TestCase):
             result=catalog.refresh(self.root)
         self.assertFalse(result['automatic_selection']);self.assertEqual((self.root/'active.json').read_bytes(),before)
         self.assertIn('not a quality ranking',(self.root/'daily-review.html').read_text())
+    def test_route_pins_quantization_and_rejects_ambiguous_endpoint(self):
+        request=r.payload(self.route,[])
+        self.assertEqual(request['provider']['quantizations'],['bf16'])
+        endpoint=copy.deepcopy(self.endpoint);endpoint['data']['endpoints']*=2
+        with self.assertRaisesRegex(ValueError,'ambiguous'):r.check_endpoint(self.route,request,endpoint)
     def test_duplicate_json_and_nonfinite_money_rejected(self):
         f=self.root/'invalid.json';f.write_text('{"a":1,"a":2}')
         with self.assertRaises(ValueError):p.read(f)
