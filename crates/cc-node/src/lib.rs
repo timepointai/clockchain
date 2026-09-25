@@ -48,6 +48,7 @@ pub mod health;
 pub mod media;
 pub mod media_absence;
 pub mod protocol;
+mod security;
 pub mod state;
 pub mod view;
 
@@ -67,8 +68,8 @@ use crate::state::AppState;
 ///
 /// # The auth boundary is a shape, not a habit
 ///
-/// `/health` is added to one router; everything else is added to a second one
-/// that is then wrapped in the bearer layer. Because the layer wraps the route
+/// `/health` and static `/robots.txt` are anonymous; data routes are mounted on
+/// routers wrapped in the bearer layer. Because the layer wraps the route
 /// *service*, it completes before any handler extractor runs — which is the
 /// structural fix for the `422`-before-`401` bug: there is no point in the
 /// pipeline at which a body could be parsed by an unauthenticated caller.
@@ -178,11 +179,13 @@ pub fn router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health::health))
+        .route("/robots.txt", get(security::robots))
         .with_state(state)
         .merge(readable)
         .merge(gallery)
         .merge(entity_read)
         .merge(writable)
+        .layer(axum::middleware::from_fn(security::response_headers))
 }
 
 /// The fallback, which sits *inside* the auth boundary.

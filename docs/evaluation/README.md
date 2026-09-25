@@ -1,7 +1,7 @@
 # Evidence audit and evaluation
 
-The [adaptive generation plan](../ADAPTIVE-GENERATION.md) defines a separate
-generation-quality evaluator and recurring route qualification. The tools below
+The [model operating workflow](../MODEL-OPERATIONS.md) describes the separate
+generation-quality evaluator and human route qualification. The tools below
 continue to evaluate recorded-graph evidence and externally graded consumer runs.
 
 The API now states `evidence_scope: recorded_graph_feasibility`,
@@ -75,11 +75,6 @@ closed existence windows, unknown closure, valid paths lacking evidence of the
 requested interaction, and corrections discovered after the historical event.
 Keep event time and knowledge/capture time explicit. Existing `as_of` alone is
 not a claim of bitemporal replay.
-
-A first pilot should exercise one research assistant's historical claim-checking
-workflow. Do not infer willingness to pay from recording gaps. Proceed to a
-pricing experiment only after measuring useful answers retained, errors avoided,
-and the added latency and cost. No pilot results are claimed by this release.
 
 ## Capture the running node
 

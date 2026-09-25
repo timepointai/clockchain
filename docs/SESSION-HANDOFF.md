@@ -1,38 +1,50 @@
-# Continuing an owner session
+# Ready to prepare the first live entry
 
-Read `AGENTS.md`, `README.md`, and the relevant current contract first. On the
-owner's workstation, continue with `~/clockchain-private/HANDOFF.md`, then
-`~/clockchain-private/MEMORY.md`. These files contain the current scope, dated
-observations, cleanup inventory, evidence locations and exact operator handoff.
-They stay outside this public repository. If they are unavailable, establish the
-current state with the owner; archived planning documents are not a substitute.
+Start with the first live brief and its source material. Read `AGENTS.md`,
+`README.md`, the current model/publication contracts, and the owner's private
+`HANDOFF.md` and `MEMORY.md` at the location supplied outside this checkout.
+Private records hold exact paths, dated checks, budgets and operator commands.
+If unavailable, obtain their location from the owner; old plans are not orders.
 
-Before local cleanup, identify each process and database from its saved service
-record and current runtime identity. PIDs may be reused. A PostgreSQL data
-directory may live under an old experiment directory; do not move or delete it
-while the database is running. Preserve source captures and qualification evidence
-needed by the selected model route before retiring a test. Do not reset its budget
-or erase charge reservations as part of cleanup. Keep the software's regression
-tests; a request to remove generated test content does not retire those checks.
+## Next action
 
-Before a live kickoff, recheck the deployed image/build, private access, publication
-pause, chain state, selected model and provider, rights expiry, budget and source
-packet. The current code supports a fully zero-event chain: use `--zero-events`
-verification and never create genesis just to satisfy a genesis-only smoke check.
-Distinguish the deployed executable revision from later documentation commits.
+1. Choose the historical event or question and a bounded scope with the owner.
+2. Assemble a source packet with reviewed commercial reuse/training rights,
+   retained original captures, SHA-256 hashes and literal passages. Keep all
+   material outside the public checkout.
+3. Before paid generation, recheck the deployed image and health, private access,
+   publication pause, chain state, selected route, rights expiry/capabilities and
+   the owner's finite budget for this live attempt. A prior experiment allowance
+   is not recurring authorization.
+4. Generate a fresh private proposal with the selected model and credential-isolated
+   runner. At most three nodes and two edges are maxima, not quotas. Omit unsupported
+   causality; retain unknowns, refusals, failed attempts and their costs.
+5. Inspect every field, date rationale and causal mechanism against the sources.
+   Prepare the exact final candidate and evidence for the human operator.
 
-Humans choose model changes. Daily discovery is a review inbox, not an activation
-or publication mechanism. Source-bound inference produces a private candidate;
-structural admission and model agreement do not establish historical truth.
-Inspect all claims, date rationales and causal mechanisms against their sources.
+Humans choose models and operate initialization, staging, digest-bound approval,
+signing and publication. A Git commit does not commit an entry to the ledger.
+Infrastructure work does not cross this boundary. Preserve original bytes and
+hashes when transferring source captures; changed candidate paths require
+validation and approval of the final candidate digest and expected heads.
 
-Follow the owner's fresh scope. Infrastructure permission does not authorize
-human-only staging, approval recording, signing or publication. Existing exact
-approvals remain scoped to their artifacts and conditions; an archived canary is
-not automatically the next kickoff. Prepare evidence and concrete commands for
-the designated human operator without silently executing that boundary.
+## State and continuity
 
-Update the private handoff and memory at closeout, preserving superseded records
-as historical evidence. Record checks actually run, known limits, remaining work,
-and which processes or artifacts remain. Do not copy credentials, production data
-or private approval records into repository documentation or commits.
+Recheck dated observations before acting. A zero-event chain is intentionally
+uninitialized: use `--zero-events` and never create genesis to satisfy a smoke
+check. Distinguish the deployed executable revision from later source commits.
+Deployment does not start generation. An old local draft is not the first live
+entry, and archived content approvals are not generic publication permission.
+
+Local cleanup is a separate scoped action recorded in the private inventory.
+Identify current processes and configuration before stopping them; PIDs can be
+reused. Never move or delete a running PostgreSQL data directory, including one
+under an old experiment tree. Preserve source captures, model qualification,
+immutable receipts, backups, spending and outstanding charge reservations.
+Keep repository regression tests. Do not claim cleanup happened unless verified.
+
+At closeout, update the private handoff and memory with checks actually run,
+remaining resources and limitations. Retain superseded records privately. Public
+source contains reusable contracts, not live briefs, source captures, operator
+paths, approval records, production evidence or an active product roadmap.
+See [security boundaries](../SECURITY.md) before releasing runtime changes.

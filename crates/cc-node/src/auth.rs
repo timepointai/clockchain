@@ -1,4 +1,4 @@
-//! Bearer authentication for every endpoint except `/health`.
+//! Bearer authentication for every endpoint except `/health` and `/robots.txt`.
 //!
 //! # Why this is a layer and not an extractor
 //!
@@ -82,7 +82,7 @@ pub async fn require_gallery(State(state): State<AppState>, req: Request, next: 
         Some(t) if state.api_key.matches(t) => next.run(req).await,
         Some(t) if state.read_key.as_ref().is_some_and(|k| k.matches(t)) => next.run(req).await,
         Some(t) if state.gallery_key.as_ref().is_some_and(|k| k.matches(t)) => next.run(req).await,
-        // Telemetry, added on Sean's direct authorisation 2026-08-18.
+        // Telemetry, added on the owner's scope decision 2026-08-18.
         //
         // Their daily gate verifies the published `(head_event_id, author_key,
         // signature)` triple under stock Ed25519, and that check is worth less

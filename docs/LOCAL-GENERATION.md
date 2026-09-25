@@ -1,7 +1,7 @@
 # Small local open-model pilot
 
-For the planned shared hosted/local pipeline and recurring model qualification,
-see [adaptive generation](ADAPTIVE-GENERATION.md). The bounded pilot below remains
+For implemented hosted generation and its limits,
+see [generation boundaries](ADAPTIVE-GENERATION.md). The bounded pilot below remains
 the current local implementation.
 
 Start with an empty production corpus and keep publication paused. Production data,

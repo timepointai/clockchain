@@ -418,7 +418,7 @@ async fn health_bytes_are_stable_across_requests() {
 // Access control
 // ===========================================================================
 
-/// Every route except `/health`, including one that does not exist.
+/// Protected routes, including one that does not exist.
 const PROTECTED: &[(&str, &str)] = &[
     ("GET", "/health/deep"),
     ("GET", "/v1/entities/1?as_of=100"),

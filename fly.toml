@@ -21,7 +21,7 @@ primary_region = "sjc"
   processes = ["app"]
 
 [deploy]
-  # Same pre-deploy step Railway ran. Additive, idempotent. The server itself
+  # Owner-run pre-deploy step. Additive, idempotent. The server itself
   # does no I/O at boot, so this is the only place migrations run.
   release_command = "cc-node migrate"
 
@@ -31,6 +31,13 @@ primary_region = "sjc"
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+
+  # Bounds simultaneous proxy requests to the single 512 MiB writer.
+  # This is not a per-client rate limit and does not cover direct 6PN traffic.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 8
+    hard_limit = 16
 
   [[http_service.checks]]
     method = "GET"

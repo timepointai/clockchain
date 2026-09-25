@@ -22,6 +22,13 @@ Flycast uses private HTTP; do not force an HTTPS redirect to a public endpoint.
 `fly.toml` describes this private service. Promotion explicitly disables public IP
 allocation. Keep exactly one app writer and a stopped-between-runs hourly tick.
 
+Check IP allocations on both app and database and inspect actual machine services,
+not just this file. The checked-in request concurrency is soft 8 / hard 16; it
+applies through Fly Proxy after an owner-run release and is not a per-client
+rate limit. Read [security boundaries](../SECURITY.md) for crawler, cache and
+egress limits. Retain live inspection evidence privately; a private ingress
+address does not prove outbound traffic is restricted.
+
 ## Build, accept and release
 
 Use a clean checkout of current main with a passing exact-SHA CI run. Install

@@ -113,7 +113,7 @@ use V::{Accept, Forbidden, Unauthorized};
 /// The fourth element is the route TEMPLATE as `router()` registers it, which
 /// is what `every_authenticated_route_appears_in_the_matrix` censuses against.
 /// `None` marks the fallback probe, which is not a registered route.
-const BOUNDARIES: [(&str, &str, &str, Option<&str>); 14] = [
+const BOUNDARIES: [(&str, &str, &str, Option<&str>); 15] = [
     // (label, method, request path, route template in router())
     (
         "health (unauthenticated)",
@@ -200,36 +200,42 @@ const BOUNDARIES: [(&str, &str, &str, Option<&str>); 14] = [
         "/v1/edges/00/evidence?as_of=0",
         Some("/v1/edges/:id/evidence"),
     ),
+    (
+        "robots (unauthenticated)",
+        "GET",
+        "/robots.txt",
+        Some("/robots.txt"),
+    ),
 ];
 
 /// **The matrix.** Rows are credentials, columns are `BOUNDARIES` in order.
 /// Every cell written out; nothing derived.
 #[rustfmt::skip]
-const MATRIX: [(Cred, [V; 14]); 7] = [
+const MATRIX: [(Cred, [V; 15]); 7] = [
     //                health   read:deep     read:moments  gallery       entity        feasibility   write         unknown
-    (Cred::Full,      [Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept      , Accept, Accept, Accept, Accept, Accept, Accept]),
+    (Cred::Full,      [Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept      , Accept, Accept, Accept, Accept, Accept, Accept, Accept]),
     // The read key is accepted on gallery and entity_read on purpose: it can
     // already reach that data by other routes, so refusing it there would be
     // ceremony rather than a boundary. On write it is 403, never 401.
-    (Cred::Read,      [Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Forbidden,    Accept      , Accept, Accept, Forbidden, Accept, Forbidden, Accept]),
+    (Cred::Read,      [Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Forbidden,    Accept      , Accept, Accept, Forbidden, Accept, Forbidden, Accept, Accept]),
     // Gallery opens exactly one route. Everything else, including the unknown
     // path, is the same 401 a stranger gets.
-    (Cred::Gallery,   [Accept, Unauthorized, Unauthorized, Accept,       Unauthorized, Unauthorized, Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized]),
+    (Cred::Gallery,   [Accept, Unauthorized, Unauthorized, Accept,       Unauthorized, Unauthorized, Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized, Accept]),
     // Beta asked for these two routes and nothing else. The read key would
     // additionally hand them /v1/moments and /health/deep — a scope that grants
     // more than was asked for is not a scope, and those two cells say so.
-    (Cred::Beta,      [Accept, Unauthorized, Unauthorized, Unauthorized, Accept,       Accept,       Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized]),
+    (Cred::Beta,      [Accept, Unauthorized, Unauthorized, Unauthorized, Accept,       Accept,       Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized, Accept]),
     // Telemetry holds beta's scope on a separate secret, PLUS the gallery route
-    // as of Sean's direct authorisation 2026-08-18 — so their daily gate can run
+    // as of the owner's scope decision 2026-08-18 — so their daily gate can run
     // the Ed25519 triple check on their own credential against the live surface
     // rather than reading my output. The gallery cell below and the arm in
     // `require_gallery` are the whole of that change. Still refused on
     // /health/deep and /v1/moments: they asked for one route and got one route.
-    (Cred::Telemetry, [Accept, Unauthorized, Unauthorized, Accept,       Accept,       Accept,       Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized]),
+    (Cred::Telemetry, [Accept, Unauthorized, Unauthorized, Accept,       Accept,       Accept,       Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized, Accept]),
     // A known-format token this node never issued is unknown everywhere — 401,
     // never 403, because 403 would confirm the token is real.
-    (Cred::Stranger,  [Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
-    (Cred::None,      [Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
+    (Cred::Stranger,  [Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Accept]),
+    (Cred::None,      [Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Accept]),
 ];
 
 /// Boot the real router over a real ephemeral database.
@@ -293,7 +299,31 @@ async fn the_credential_scope_matrix_holds() {
             if let Some(t) = cred.token() {
                 req = req.bearer_auth(t);
             }
-            let status = req.send().await.expect("request").status().as_u16();
+            let response = req.send().await.expect("request");
+            let status = response.status().as_u16();
+            for (name, value) in [
+                ("cache-control", "private, no-store"),
+                ("x-robots-tag", "noindex, nofollow, noarchive"),
+                ("x-content-type-options", "nosniff"),
+                ("referrer-policy", "no-referrer"),
+                (
+                    "content-security-policy",
+                    "default-src 'none'; frame-ancestors 'none'",
+                ),
+            ] {
+                assert_eq!(response.headers().get(name).unwrap(), value, "{label}");
+            }
+            if *path == "/robots.txt" {
+                assert_eq!(status, 200);
+                assert!(response.headers()["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("text/plain"));
+                assert_eq!(
+                    response.text().await.unwrap(),
+                    "User-agent: *\nDisallow: /\n"
+                );
+            }
             let got = match status {
                 401 => Unauthorized,
                 403 => Forbidden,

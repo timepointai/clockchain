@@ -2,8 +2,12 @@
 
 # Using the node
 
-The live base URL is `http://127.0.0.1:18080`. `/health` alone is
-anonymous. Corpus reads require an issued Bearer credential and explicit `as_of`.
+The live base URL is `http://127.0.0.1:18080`. `/health` and the static deny-all
+`/robots.txt` are anonymous. Corpus reads require an issued Bearer credential and
+explicit `as_of`. Responses carry `Cache-Control: private, no-store`, crawler
+exclusion and browser security headers. These hints do not replace authentication.
+This describes source behavior; verify the deployed revision before relying on
+changes from a newer commit.
 
 ```sh
 BASE=http://127.0.0.1:18080

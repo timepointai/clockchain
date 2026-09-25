@@ -30,17 +30,25 @@ Corpus reads require a scoped Bearer credential and explicit `as_of`. A missing
 body, missing evidence, unknown date and deliberate media absence are distinct
 states. Do not replace missing evidence with an assertion.
 
-## Start a small corpus
+## Prepare the first live entry
 
 The checkout contains software and synthetic test fixtures, not a legacy ledger.
-Use the [local permissive-model pilot](docs/LOCAL-GENERATION.md) to generate at
-most three source-backed proposals outside the repository. Model output supplies
-the historical content; software supplies validation and measured provenance.
+Begin with the first live brief and source packet: choose a bounded historical
+question, review source reuse rights, and retain exact captures, hashes and
+literal passages privately. Follow the [session handoff](docs/SESSION-HANDOFF.md)
+to recheck deployment, publication pause, chain state, model rights and the
+owner's generation budget before a fresh proposal. Bounds are at most three nodes
+and two edges; unsupported causality must be omitted.
+
+The selected model supplies historical content; software validates structure and
+measured provenance. Review every claim against its sources. The human operator
+stages, approves, initializes if needed, signs and publishes the exact reviewed
+candidate. A Git commit, deployment or local draft is not ledger publication.
 
 The [model operating workflow](docs/MODEL-OPERATIONS.md) provides daily discovery,
 human model selection, bounded hosted evaluation and a configurable proposal-only
-runtime. [Adaptive generation](docs/ADAPTIVE-GENERATION.md) describes the longer-term
-batch and local-inference architecture. Deployment does not enable generation.
+runtime. [Generation boundaries](docs/ADAPTIVE-GENERATION.md) records implemented
+capabilities and limits. Deployment does not enable generation.
 
 ## Private operation
 
@@ -53,3 +61,6 @@ The production app, private Postgres and scheduled tick remain on Fly.
 See [owner operations](docs/CICD-FLY.md), [API](docs/USING-THE-NODE.md),
 [media](docs/TYPED-MEDIA-ABSENCE.md), [evaluation](docs/evaluation/README.md) and
 [contributing](CONTRIBUTING.md). No continuous generation or public service is implied.
+
+See the [security policy](SECURITY.md) for access boundaries, private reporting,
+artifact handling and the limits of crawler directives on public source.
