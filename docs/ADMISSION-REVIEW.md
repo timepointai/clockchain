@@ -3,6 +3,10 @@
 This describes source behavior, not a deployment receipt. Standing owner
 constraints are in [HOLD.md](../HOLD.md).
 
+The [multi-signer v1 design](design/MULTI-SIGNER.md) proposes the implementation
+contract for #6, including a new canonical encoding version. It is pending owner
+approval and does not change the implemented behavior described here.
+
 ## Owner decision — 2026-09-28: immutable HTTP body bindings
 
 The repository records a **DECIDED** timepoint-telemetry ruling in
