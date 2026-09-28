@@ -333,6 +333,7 @@ dependencies = [
  "axum",
  "base64",
  "cc-anchor",
+ "cc-authoring",
  "cc-core",
  "cc-filter",
  "cc-ledger",

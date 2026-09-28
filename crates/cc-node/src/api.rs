@@ -148,7 +148,10 @@ pub async fn get_entity(
     let readings_json: Vec<Value> = readings
         .iter()
         .zip(&reading_hashes)
-        .map(|((bh, _), ch)| json!({"body_hash": bh, "content_hash": ch}))
+        .map(|((bh, body), ch)| {
+            json!({"body_hash": bh, "content_hash": ch,
+            "body":body, "body_status":if body.is_some(){"retained"}else{"unavailable"}})
+        })
         .collect();
     let tt_layer = match view.claim_body_for(id, as_of).await? {
         None => json!({"present": false,
@@ -845,13 +848,10 @@ pub struct SubmitResponse {
     appended: &'static str,
 }
 
-/// Append one signed event through `cc-ledger`'s single write choke point.
-///
-/// Everything that makes the write safe already lives below this handler:
-/// `Signed::seal` recomputes `H0` and verifies the signature, and it is the only
-/// constructor of the only type `commit` will store, so an unverified event is
-/// not representable as a storable value. This function adds no bypass — it
-/// decodes hex and calls the same gate every other writer calls.
+/// Verify the signed envelope, then admit the event under projection locks.
+/// `Signed::seal` establishes signature validity. The node admission guard
+/// separately rejects subject substitution before the ledger appends/projects.
+/// Neither check establishes historical truth.
 pub async fn submit_event(
     State(state): State<AppState>,
     Json(req): Json<SubmitRequest>,
@@ -872,7 +872,7 @@ pub async fn submit_event(
     })?;
     let event_id = signed.id().to_hex();
 
-    match cc_ledger::commit(&state.pool, &signed).await {
+    match crate::admission::commit(&state.pool, &signed).await {
         Ok(appended) => Ok((
             StatusCode::CREATED,
             Json(SubmitResponse {
@@ -880,11 +880,8 @@ pub async fn submit_event(
                 appended: if appended.is_new() { "new" } else { "unioned" },
             }),
         )),
-        // A write that could not reach the store is `Unavailable`, loudly — the
-        // caller must be able to retry knowing nothing was recorded.
-        Err(e) => Err(ApiError::Unavailable(format!(
-            "the event could not be appended: {e}"
-        ))),
+        // Preserve typed 409 admission conflicts and 503 store failures.
+        Err(e) => Err(e),
     }
 }
 

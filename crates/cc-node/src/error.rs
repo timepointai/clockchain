@@ -12,6 +12,7 @@
 //!   the refusal is a stated posture rather than an outage.
 //! * `404` — the projection is silent about this identifier *at the pinned
 //!   coordinate*. Distinct from `Unsupported`, which is a filter verdict.
+//! * `409` — a new event conflicts with a retained subject binding; no append.
 //! * `503` — the node could not answer: the store was unreachable or returned
 //!   something undecodable. This is `Unavailable`, and it is **never** a
 //!   verdict. A view failure reported as `Unsupported` would sell a certain
@@ -29,9 +30,39 @@ use serde_json::json;
 
 use crate::coord::CoordError;
 
-/// Everything the read surface can refuse with.
+/// A new HTTP event would reuse or ambiguously bind a subject. These codes are
+/// admission conflicts, not an outage or a historical truth judgment.
+#[derive(Debug, thiserror::Error)]
+pub enum SubjectConflict {
+    #[error("destination_subject_changed")]
+    DestinationChanged,
+    #[error("source_subject_changed")]
+    SourceChanged,
+    #[error("subject_identity_reused")]
+    IdentityReused,
+    #[error("edge_target_mismatch")]
+    EdgeTargetMismatch,
+    #[error("subject_binding_unavailable")]
+    BindingUnavailable,
+}
+impl SubjectConflict {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::DestinationChanged => "destination_subject_changed",
+            Self::SourceChanged => "source_subject_changed",
+            Self::IdentityReused => "subject_identity_reused",
+            Self::EdgeTargetMismatch => "edge_target_mismatch",
+            Self::BindingUnavailable => "subject_binding_unavailable",
+        }
+    }
+}
+
+/// Everything the node surface can refuse with.
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
+    #[error("{0}")]
+    SubjectConflict(#[from] SubjectConflict),
+
     /// The request is not a question this node can answer.
     #[error("{0}")]
     BadRequest(String),
@@ -64,6 +95,7 @@ impl ApiError {
     fn tag(&self) -> &'static str {
         match self {
             ApiError::BadRequest(_) => "malformed_request",
+            ApiError::SubjectConflict(conflict) => conflict.code(),
             ApiError::Frozen => "frozen",
             ApiError::NotFound(_) => "not_recorded",
             ApiError::Unavailable(_) => "unavailable",
@@ -74,6 +106,7 @@ impl ApiError {
     fn status(&self) -> StatusCode {
         match self {
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::SubjectConflict(_) => StatusCode::CONFLICT,
             ApiError::Frozen => StatusCode::FORBIDDEN,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,

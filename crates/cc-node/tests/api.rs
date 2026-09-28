@@ -2143,12 +2143,11 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
         400
     );
     let (_, no_records, _) = node.get(&path, Some(READ_KEY)).await;
-    assert_eq!(no_records["readings"].as_array().unwrap().len(), 2);
-    assert!(no_records["readings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|r| r["state"] == "no_generation_recorded"));
+    assert_eq!(
+        no_records["readings"],
+        json!([]),
+        "claims alone do not create media readings"
+    );
     let before: Vec<Vec<u8>> = sqlx::query_scalar("SELECT event_id FROM events ORDER BY event_id")
         .fetch_all(&node.pool)
         .await
@@ -2175,9 +2174,9 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
     assert_eq!(replay["appended"], "existing");
     let (_, typed, _) = node.get(&path, Some(READ_KEY)).await;
     assert_eq!(typed["projection_basis"], "current");
-    assert_eq!(typed["readings"][0]["state"], "no_generation_recorded");
-    assert_eq!(typed["readings"][1]["state"], "deliberately_unillustrated");
-    let decision = &typed["readings"][1]["absence_decisions"][0];
+    assert_eq!(typed["readings"].as_array().unwrap().len(), 1);
+    assert_eq!(typed["readings"][0]["state"], "deliberately_unillustrated");
+    let decision = &typed["readings"][0]["absence_decisions"][0];
     assert_eq!(decision["manifest"], payload["manifest"]);
     assert_eq!(decision["signature"], payload["signature"]);
     assert!(decision["admitted_coord"]
@@ -2191,13 +2190,13 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
             Some(READ_KEY),
         )
         .await;
-    assert_eq!(earlier["readings"][1]["state"], "no_generation_recorded");
+    assert_eq!(earlier["readings"], json!([]));
     let at_admission = format!(
         "/v2/media?entity_id={entity}&as_of={}",
         decision["admitted_coord"].as_str().unwrap()
     );
     assert_eq!(
-        node.get(&at_admission, Some(READ_KEY)).await.1["readings"][1]["state"],
+        node.get(&at_admission, Some(READ_KEY)).await.1["readings"][0]["state"],
         "deliberately_unillustrated"
     );
     let (_, sibling, _) = node
@@ -2206,7 +2205,7 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
             Some(READ_KEY),
         )
         .await;
-    assert_eq!(sibling["readings"][0]["state"], "no_generation_recorded");
+    assert_eq!(sibling["readings"], json!([]));
     let (_, legacy, _) = node
         .get(
             &format!("/v1/images?entity_id={entity}&as_of=9999999999"),
@@ -2314,16 +2313,12 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
         .unwrap();
     moment(&node.pool, &key, entity, t(3), 7).await;
     let (_, corrected, _) = node.get(&path, Some(READ_KEY)).await;
-    assert_eq!(corrected["readings"][0]["state"], "no_generation_recorded");
+    assert_eq!(corrected["readings"].as_array().unwrap().len(), 1);
     assert_eq!(
-        corrected["readings"][0]["source_binding"],
-        "currently_projected"
-    );
-    assert_eq!(
-        corrected["readings"][2]["state"],
+        corrected["readings"][0]["state"],
         "deliberately_unillustrated"
     );
-    assert_eq!(corrected["readings"][2]["source_binding"], "stale_source");
+    assert_eq!(corrected["readings"][0]["source_binding"], "stale_source");
     assert_eq!(
         node.post(
             "/v2/media/absence-decisions",
@@ -2348,4 +2343,345 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
         403
     );
     frozen.done().await;
+}
+
+#[tokio::test]
+async fn reviewer_gets_exact_stored_claim_prose_or_explicit_unavailability() {
+    let node = Node::boot(Posture::Live).await;
+    let sk = SecretKey::from_seed([62; 32]);
+    let raw = "{\n  \"title\": \"Synthetic exact retained subject\", \"year\": 2001,\n  \"prov_asserted\": {\"historical_claim\": \"An exact synthetic claim <script>must stay text</script>.\"},\n  \"prov_measured\": {\"source_evidence\": [{\"excerpt\": \"Literal synthetic evidence.\"}]}\n}";
+    let hash = cc_authoring::body_hash("claim_v4", raw);
+    birth(
+        &node.pool,
+        &sk,
+        903,
+        "Synthetic exact retained subject",
+        WindowStart::Known(t(0)),
+        WindowEnd::KnownOpen,
+        t(0),
+    )
+    .await;
+    let claim = synthetic_moment(&sk, 903, hash, 20);
+    assert_eq!(
+        node.post("/v1/events", Some(TEST_KEY), &signed_request(&claim, &sk))
+            .await
+            .0,
+        201
+    );
+    let (status, missing, _) = node.get("/v1/entities/903?as_of=100", Some(READ_KEY)).await;
+    assert_eq!(status, 200);
+    let reading = &missing["readings"]["all"][0];
+    assert_eq!(reading["body_hash"], hex::encode(hash));
+    assert_eq!(reading["body_status"], "unavailable");
+    assert!(reading["body"].is_null());
+    // Local attachment setup only: no publisher, model, or private fixture.
+    sqlx::query("INSERT INTO claim_bodies(body_hash,body) VALUES($1,$2)")
+        .bind(hash.to_vec())
+        .bind(raw)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    let (status, retained, _) = node.get("/v1/entities/903?as_of=100", Some(READ_KEY)).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        retained["readings"]["all"][0]["body_hash"],
+        hex::encode(hash)
+    );
+    assert_eq!(retained["readings"]["all"][0]["body_status"], "retained");
+    assert_eq!(retained["readings"]["all"][0]["body"], raw);
+    let (_, earlier, _) = node.get("/v1/entities/903?as_of=19", Some(READ_KEY)).await;
+    assert_eq!(earlier["readings"]["count"], 0);
+    let (status, media, _) = node
+        .get("/v2/media?entity_id=903&as_of=100", Some(READ_KEY))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(media["readings"], serde_json::json!([]));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM media_absence_decisions")
+            .fetch_one(&node.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    node.done().await;
+}
+
+fn signed_request(content: &EventContent, sk: &SecretKey) -> String {
+    let (_, signature) = sk.seal(content);
+    serde_json::json!({
+        "payload": hex::encode(cc_core::canon_event(content)),
+        "event_time": hex::encode(content.event_time.to_canon_bytes()),
+        "record_time": hex::encode(content.record_time.to_canon_bytes()),
+        "author": hex::encode(sk.author().to_bytes()),
+        "signature": hex::encode(signature.to_bytes()),
+    })
+    .to_string()
+}
+
+fn synthetic_moment(sk: &SecretKey, subject: i64, body_hash: [u8; 32], at: i64) -> EventContent {
+    EventContent {
+        event_time: t(at),
+        record_time: t(at),
+        author: sk.author(),
+        supersedes: None,
+        body: EventBody::Moment(MomentBody { subject, body_hash }),
+    }
+}
+
+#[tokio::test]
+async fn node_rejects_portable_edge_subject_rewrite_without_writing() {
+    let node = Node::boot(Posture::Live).await;
+    let sk = SecretKey::from_seed([61; 32]);
+    for (id, name) in [(901, "Synthetic demonstration"), (902, "Synthetic machine")] {
+        birth(
+            &node.pool,
+            &sk,
+            id,
+            name,
+            WindowStart::Known(t(0)),
+            WindowEnd::KnownOpen,
+            t(0),
+        )
+        .await;
+        moment(&node.pool, &sk, id, t(1), id as u8).await;
+    }
+    let relationship = EventContent {
+        event_time: t(2),
+        record_time: t(2),
+        author: sk.author(),
+        supersedes: None,
+        body: EventBody::Edge(EdgeBody {
+            src: 901,
+            dst: 902,
+            relation: EdgeRelation::Influence,
+            evidence_class: EvidenceClass::SecondarySource,
+        }),
+    };
+    let edge_request = signed_request(&relationship, &sk);
+    assert_eq!(
+        node.post("/v1/events", Some(TEST_KEY), &edge_request)
+            .await
+            .0,
+        201
+    );
+    let before = cc_ledger::view_root(&node.pool).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM events")
+        .fetch_one(&node.pool)
+        .await
+        .unwrap();
+    // A later document about the machine is a different body, not a replacement
+    // destination for the retained influence edge. No private history is used.
+    let replacement = synthetic_moment(&sk, 902, [99; 32], 3);
+    let (status, response, _) = node
+        .post(
+            "/v1/events",
+            Some(TEST_KEY),
+            &signed_request(&replacement, &sk),
+        )
+        .await;
+    assert_eq!(
+        status, 409,
+        "portable-edge rewrite was admitted: {response}"
+    );
+    assert_eq!(response["error"], "destination_subject_changed");
+    assert_eq!(cc_ledger::view_root(&node.pool).await.unwrap(), before);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM events")
+            .fetch_one(&node.pool)
+            .await
+            .unwrap(),
+        count
+    );
+    let source_replacement = synthetic_moment(&sk, 901, [98; 32], 3);
+    let (status, response, _) = node
+        .post(
+            "/v1/events",
+            Some(TEST_KEY),
+            &signed_request(&source_replacement, &sk),
+        )
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(response["error"], "source_subject_changed");
+    assert_eq!(cc_ledger::view_root(&node.pool).await.unwrap(), before);
+    let (_, retried, _) = node.post("/v1/events", Some(TEST_KEY), &edge_request).await;
+    assert_eq!(retried["appended"], "unioned");
+    node.done().await;
+}
+
+#[tokio::test]
+async fn node_rejects_identity_reuse_and_unbound_edges() {
+    let node = Node::boot(Posture::Live).await;
+    let sk = SecretKey::from_seed([63; 32]);
+    for id in [911, 912] {
+        birth(
+            &node.pool,
+            &sk,
+            id,
+            "Synthetic subject",
+            WindowStart::Known(t(0)),
+            WindowEnd::KnownOpen,
+            t(0),
+        )
+        .await;
+    }
+    let claim = synthetic_moment(&sk, 911, [1; 32], 1);
+    assert_eq!(
+        node.post("/v1/events", Some(TEST_KEY), &signed_request(&claim, &sk))
+            .await
+            .0,
+        201
+    );
+    let mut rewrite = claim.clone();
+    rewrite.body = EventBody::Moment(MomentBody {
+        subject: 911,
+        body_hash: [2; 32],
+    });
+    for supersedes in [None, Some(cc_core::event_id(&claim))] {
+        rewrite.supersedes = supersedes;
+        let (status, body, _) = node
+            .post("/v1/events", Some(TEST_KEY), &signed_request(&rewrite, &sk))
+            .await;
+        assert_eq!(status, 409);
+        assert_eq!(body["error"], "subject_identity_reused");
+    }
+    // Changing the subject through supersession must not migrate its reading.
+    rewrite.body = EventBody::Moment(MomentBody {
+        subject: 912,
+        body_hash: [1; 32],
+    });
+    let (status, body, _) = node
+        .post("/v1/events", Some(TEST_KEY), &signed_request(&rewrite, &sk))
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "subject_identity_reused");
+    let mut rebirth = claim.clone();
+    rebirth.body = EventBody::EntityCreate(EntityBirth {
+        entity_id: 911,
+        resolution_key: "a different identity".into(),
+        canonical_name: "Synthetic retrospective".into(),
+        window: ExistenceWindow {
+            start: WindowStart::Known(t(0)),
+            end: WindowEnd::KnownOpen,
+        },
+    });
+    let (status, body, _) = node
+        .post("/v1/events", Some(TEST_KEY), &signed_request(&rebirth, &sk))
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "subject_identity_reused");
+    let mut relationship = claim.clone();
+    relationship.body = EventBody::Edge(EdgeBody {
+        src: 911,
+        dst: 912,
+        relation: EdgeRelation::Influence,
+        evidence_class: EvidenceClass::SecondarySource,
+    });
+    let (status, body, _) = node
+        .post(
+            "/v1/events",
+            Some(TEST_KEY),
+            &signed_request(&relationship, &sk),
+        )
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "edge_target_mismatch");
+    // Existing unresolved legacy edges cannot acquire an implied body binding.
+    edge(&node.pool, &sk, 911, 912, t(2)).await;
+    let first_body = synthetic_moment(&sk, 912, [3; 32], 3);
+    let (status, body, _) = node
+        .post(
+            "/v1/events",
+            Some(TEST_KEY),
+            &signed_request(&first_body, &sk),
+        )
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "subject_binding_unavailable");
+    // A valid same-body continuation is still possible, as is exact replay.
+    let mut continuation = synthetic_moment(&sk, 911, [1; 32], 3);
+    continuation.supersedes = Some(cc_core::event_id(&claim));
+    assert_eq!(
+        node.post(
+            "/v1/events",
+            Some(TEST_KEY),
+            &signed_request(&continuation, &sk)
+        )
+        .await
+        .0,
+        201
+    );
+    let (_, replay, _) = node
+        .post("/v1/events", Some(TEST_KEY), &signed_request(&claim, &sk))
+        .await;
+    assert_eq!(replay["appended"], "unioned");
+    node.done().await;
+}
+
+#[tokio::test]
+async fn node_does_not_activate_an_unreviewable_supersession() {
+    let node = Node::boot(Posture::Live).await;
+    let sk = SecretKey::from_seed([64; 32]);
+    birth(
+        &node.pool,
+        &sk,
+        921,
+        "Synthetic subject",
+        WindowStart::Known(t(0)),
+        WindowEnd::KnownOpen,
+        t(0),
+    )
+    .await;
+    let parent = synthetic_moment(&sk, 921, [1; 32], 1);
+    let mut child = synthetic_moment(&sk, 921, [2; 32], 2);
+    child.supersedes = Some(cc_core::event_id(&parent));
+    let (status, body, _) = node
+        .post("/v1/events", Some(TEST_KEY), &signed_request(&child, &sk))
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "subject_binding_unavailable");
+    // Simulate a held historical event loaded through ledger replication.
+    cc_ledger::commit(&node.pool, &Signed::sign(&sk, child))
+        .await
+        .unwrap();
+    let before = cc_ledger::view_root(&node.pool).await.unwrap();
+    let (status, body, _) = node
+        .post("/v1/events", Some(TEST_KEY), &signed_request(&parent, &sk))
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "subject_binding_unavailable");
+    assert_eq!(cc_ledger::view_root(&node.pool).await.unwrap(), before);
+    node.done().await;
+}
+
+#[tokio::test]
+async fn competing_http_bodies_cannot_both_claim_one_subject() {
+    let node = Node::boot(Posture::Live).await;
+    let sk = SecretKey::from_seed([65; 32]);
+    birth(
+        &node.pool,
+        &sk,
+        931,
+        "Synthetic race",
+        WindowStart::Known(t(0)),
+        WindowEnd::KnownOpen,
+        t(0),
+    )
+    .await;
+    let a = signed_request(&synthetic_moment(&sk, 931, [1; 32], 1), &sk);
+    let b = signed_request(&synthetic_moment(&sk, 931, [2; 32], 1), &sk);
+    let (a, b) = tokio::join!(
+        node.post("/v1/events", Some(TEST_KEY), &a),
+        node.post("/v1/events", Some(TEST_KEY), &b)
+    );
+    let mut statuses = [a.0, b.0];
+    statuses.sort();
+    assert_eq!(statuses, [201, 409]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM moments WHERE subject=931")
+            .fetch_one(&node.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    node.done().await;
 }

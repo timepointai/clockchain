@@ -111,19 +111,18 @@ pub async fn submit(
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaState {
-    NoGenerationRecorded,
     DeliberatelyUnillustrated,
     Generated,
     ConflictingMediaRecords,
 }
 
 /// State is per exact entity/body reading, independent of record order/count.
-pub fn media_state(has_images: bool, has_absences: bool) -> MediaState {
+pub fn media_state(has_images: bool, has_absences: bool) -> Option<MediaState> {
     match (has_images, has_absences) {
-        (false, false) => MediaState::NoGenerationRecorded,
-        (false, true) => MediaState::DeliberatelyUnillustrated,
-        (true, false) => MediaState::Generated,
-        (true, true) => MediaState::ConflictingMediaRecords,
+        (false, false) => None,
+        (false, true) => Some(MediaState::DeliberatelyUnillustrated),
+        (true, false) => Some(MediaState::Generated),
+        (true, true) => Some(MediaState::ConflictingMediaRecords),
     }
 }
 
@@ -148,10 +147,13 @@ pub async fn list(
                 .map_err(unavailable)?,
         )
         .map_err(unavailable)?;
+        let Some(media_state) = media_state(!images.is_empty(), !absences.is_empty()) else {
+            continue;
+        };
         readings.push(json!({
             "source_body_hash":row.try_get::<String,_>("source_body_hash").map_err(unavailable)?,
             "source_binding":if row.try_get::<bool,_>("current").map_err(unavailable)? {"currently_projected"} else {"stale_source"},
-            "state":media_state(!images.is_empty(), !absences.is_empty()),
+            "state":media_state,
             "images":images, "absence_decisions":absences,
         }));
     }
@@ -180,8 +182,8 @@ mod tests {
 
     #[test]
     fn every_presence_pair_has_a_distinct_state() {
+        assert_eq!(media_state(false, false), None);
         for (images, absences, expected) in [
-            (false, false, "no_generation_recorded"),
             (false, true, "deliberately_unillustrated"),
             (true, false, "generated"),
             (true, true, "conflicting_media_records"),

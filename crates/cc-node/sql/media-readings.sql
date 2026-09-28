@@ -4,8 +4,7 @@ WITH images AS (
 ), absences AS (
     SELECT * FROM media_absence_decisions WHERE entity_id=$1 AND admitted_coord <= $2
 ), hashes AS (
-    SELECT body_hash FROM moments WHERE subject=$1 AND coord <= $2
-    UNION SELECT source_body_hash FROM images
+    SELECT source_body_hash AS body_hash FROM images
     UNION SELECT source_body_hash FROM absences
 )
 SELECT encode(h.body_hash, 'hex') AS source_body_hash,

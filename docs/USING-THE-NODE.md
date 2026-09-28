@@ -77,7 +77,17 @@ TT label, or a hop bound above the governed maximum is a `400`.
 `/v1/recents?as_of=…&limit=…` accepts up to 50 records per request. It may be dominated
 by operational seals; a recent seal does not establish new historical coverage.
 Entity responses expose their stored readings and a computed relation. Matching
-entity identity does not by itself mean matching content hashes.
+entity identity does not by itself mean matching content hashes. Each item in
+`readings.all` includes the exact stored `body` string and `body_status: retained`,
+or `body: null` and `body_status: unavailable`, alongside `body_hash`. Readers must
+not reconstruct missing prose from a local candidate. An unknown entity is still
+`404 not_recorded`; it is not a retained reading with unavailable prose.
+
+New `POST /v1/events` writes also pass the transactional
+[subject admission guard](ADMISSION-REVIEW.md). A conflicting identity/body returns
+a typed `409` without appending. Signature validity does not override this check.
+Claims with no admitted media return `readings: []` from `/v2/media`; this does not
+assert deliberate non-illustration.
 
 `ops/verify-triple.py` checks served signatures with stock Ed25519. That verifies
 the signature on an event id, not the JSON-to-canonical-content mapping or historical
