@@ -10,7 +10,7 @@ It requires full/read credentials. Each exact entity/body reading reports:
 
 | Images | Absence decisions | State |
 |---|---|---|
-| None | None | `no_generation_recorded` |
+| None | None | No reading (`readings: []` when all bodies have no media) |
 | None | Present | `deliberately_unillustrated` |
 | Present | None | `generated` |
 | Present | Present | `conflicting_media_records` |
@@ -21,9 +21,10 @@ media does not imply a queued job, failed attempt or a deliberate choice.
 Multiple readings and different entities sharing a body remain distinct.
 `/v1/images` keeps its existing `no_image`/`generated` contract unchanged.
 
-The reading set includes current moment bodies whose event coordinate is at or
-before `as_of`, plus bodies named by media records admitted by `as_of`. Before
-all applicable records, the array is empty. `projection_basis: current` and each
+The reading set includes only bodies named by media records admitted by `as_of`.
+Bare claim bodies do not create media readings. Before all applicable records,
+the array is empty. Older nodes may emit `no_generation_recorded`; it is not a
+signed absence and is no longer emitted by this node. `projection_basis: current` and each
 reading's `source_binding` explicitly describe the current projection, not a
 reconstruction of the projection at `as_of`. Stale records stay visible; they
 do not transfer to a corrected or re-minted body. All media is outside historical

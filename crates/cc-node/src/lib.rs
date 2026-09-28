@@ -38,6 +38,7 @@
 
 #![forbid(unsafe_code)]
 
+mod admission;
 pub mod api;
 pub mod auth;
 pub mod config;

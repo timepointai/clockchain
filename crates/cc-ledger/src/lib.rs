@@ -492,23 +492,20 @@ const MAX_CHAIN: usize = 1024;
 /// landed — both walks terminate immediately, no event is re-read, and the row
 /// written is byte-identical to what M1 wrote.
 ///
-/// **One policy question inside this fold is OPEN, not decided.** `subject` is
-/// taken from the head like every other column, so a correction naming a
-/// different entity moves the row to that entity. That is either the right
-/// answer — mis-attribution is a real error class and supersession is how a
-/// correction is expressed — or a silent data movement no consumer could
-/// predict from what the API publishes. The permissive behaviour is what ships,
-/// pinned by `a_correction_may_move_its_subject_and_that_is_undecided`, because
-/// the alternatives both cost something real: refusing the fold re-introduces
-/// two live readings, and enforcing sameness in both walks would need the
-/// subject at every step, which lives inside `payload` and would put
-/// `ops/held-moments.py`'s SQL walk permanently out of step with this one.
+/// **DECIDED: subject- and coordinate-moving corrections are permitted with a
+/// recorded decision at mint time.** The ruling is retained in
+/// `a_correction_may_move_its_subject_by_recorded_decision` in
+/// `tests/supersession.rs`: bind the writer, not the projector. The decision
+/// names the old/new subject (or coordinate), evidence and resolver. Every
+/// projected column continues to follow the surviving head; retaining the old
+/// subject with a new body's head would produce a chimera row.
 ///
-/// It affects **no stored data** — nothing on the chain carries `supersedes`,
-/// and we are the only writer — so it is cheap to leave open and cheap to
-/// change. Routed to timepoint-telemetry; tracked in `PLAN.md`. Do not treat
-/// the test as an endorsement: it records what the code does so a change is
-/// visible, which is not the same as agreeing with it.
+/// The artifact is a writer obligation, not a field this fold validates. The
+/// node HTTP guard separately blocks subject/body-changing corrections under
+/// the owner decision of 2026-09-28, superseding this ruling for HTTP ingress
+/// only. See `docs/ADMISSION-REVIEW.md` for that decision and the unresolved
+/// first-publication gates. Do not infer current corpus
+/// contents or writer count from historical observations in test comments.
 async fn project_moment(
     tx: &mut Transaction<'_, Postgres>,
     c: &EventContent,

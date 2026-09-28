@@ -51,6 +51,7 @@ png = "0.17"
 fs2 = "0.4"
 
 [dev-dependencies]
+cc-authoring.workspace = true
 # Real Postgres, no mocks: every test in `tests/` provisions an ephemeral
 # database and runs the migrations against it.
 cc-testkit.workspace = true

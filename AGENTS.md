@@ -1,5 +1,7 @@
 # Clockchain core — working instructions
 
+Read [HOLD.md](HOLD.md) for the standing owner constraints.
+
 Public Rust/Postgres core. Read README.md and the relevant current contract.
 For session continuity on the owner's workstation, read
 `~/clockchain-private/HANDOFF.md` and `~/clockchain-private/MEMORY.md` before local
