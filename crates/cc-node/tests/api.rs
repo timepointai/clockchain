@@ -2685,3 +2685,122 @@ async fn competing_http_bodies_cannot_both_claim_one_subject() {
     );
     node.done().await;
 }
+
+/// Characterize the existing correction affordance; add no new write path.
+#[tokio::test]
+async fn erratum_cannot_replace_a_body_but_can_be_a_separate_supersession_assertion() {
+    let node = Node::boot(Posture::Live).await;
+    let sk = SecretKey::from_seed([82; 32]);
+    for id in [950, 951, 952] {
+        birth(
+            &node.pool,
+            &sk,
+            id,
+            "Synthetic correction test",
+            WindowStart::Known(t(0)),
+            WindowEnd::KnownOpen,
+            t(0),
+        )
+        .await;
+    }
+    let original = synthetic_moment(&sk, 951, [1; 32], 1);
+    let source = synthetic_moment(&sk, 950, [9; 32], 1);
+    for claim in [&original, &source] {
+        assert_eq!(
+            node.post("/v1/events", Some(TEST_KEY), &signed_request(claim, &sk))
+                .await
+                .0,
+            201
+        );
+    }
+    let influence = EventContent {
+        event_time: t(2),
+        record_time: t(2),
+        author: sk.author(),
+        supersedes: None,
+        body: EventBody::Edge(EdgeBody {
+            src: 950,
+            dst: 951,
+            relation: EdgeRelation::Influence,
+            evidence_class: EvidenceClass::SecondarySource,
+        }),
+    };
+    assert_eq!(
+        node.post(
+            "/v1/events",
+            Some(TEST_KEY),
+            &signed_request(&influence, &sk)
+        )
+        .await
+        .0,
+        201
+    );
+    // Even a syntactically valid correction lineage cannot change the body.
+    let mut erratum = synthetic_moment(&sk, 951, [2; 32], 3);
+    erratum.supersedes = Some(cc_core::event_id(&original));
+    let (status, response, _) = node
+        .post("/v1/events", Some(TEST_KEY), &signed_request(&erratum, &sk))
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(response["error"], "destination_subject_changed");
+    // A separate entity plus the existing raw Supersession edge is expressible.
+    // It is an assertion only: no erratum workflow, retirement, or edge transfer.
+    erratum.supersedes = None;
+    erratum.body = EventBody::Moment(MomentBody {
+        subject: 952,
+        body_hash: [2; 32],
+    });
+    assert_eq!(
+        node.post("/v1/events", Some(TEST_KEY), &signed_request(&erratum, &sk))
+            .await
+            .0,
+        201
+    );
+    let correction_link = EventContent {
+        event_time: t(4),
+        record_time: t(4),
+        author: sk.author(),
+        supersedes: None,
+        body: EventBody::Edge(EdgeBody {
+            src: 952,
+            dst: 951,
+            relation: EdgeRelation::Supersession,
+            evidence_class: EvidenceClass::Assertion,
+        }),
+    };
+    assert_eq!(
+        node.post(
+            "/v1/events",
+            Some(TEST_KEY),
+            &signed_request(&correction_link, &sk)
+        )
+        .await
+        .0,
+        201
+    );
+    for (id, hash) in [(951, [1; 32]), (952, [2; 32])] {
+        let (status, response, _) = node
+            .get(&format!("/v1/entities/{id}?as_of=100"), Some(READ_KEY))
+            .await;
+        assert_eq!(status, 200);
+        assert_eq!(response["readings"]["count"], 1);
+        assert_eq!(
+            response["readings"]["all"][0]["body_hash"],
+            hex::encode(hash)
+        );
+    }
+    let edges: Vec<(i64, i64, i16, i16, bool)> = sqlx::query_as(
+        "SELECT src_entity,dst_entity,relation,status,in_g FROM edges ORDER BY src_entity",
+    )
+    .fetch_all(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        edges,
+        vec![
+            (950, 951, EdgeRelation::Influence as i16, 0, true),
+            (952, 951, EdgeRelation::Supersession as i16, 0, true)
+        ]
+    );
+    node.done().await;
+}
