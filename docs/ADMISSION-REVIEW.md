@@ -3,7 +3,7 @@
 This describes source behavior, not a deployment receipt. Standing owner
 constraints are in [HOLD.md](../HOLD.md).
 
-## Policy status: proposed interim override, not a settled rule
+## Owner decision — 2026-09-28: immutable HTTP body bindings
 
 The repository records a **DECIDED** timepoint-telemetry ruling in
 [`a_correction_may_move_its_subject_by_recorded_decision`](../crates/cc-ledger/tests/supersession.rs):
@@ -13,14 +13,22 @@ subject or coordinate, evidence, and resolver. The doctrine is **bind the writer
 not the projector**. The fold follows the head in every column. That decision
 artifact is currently a writer obligation, not a field the fold validates.
 
-**This PR overrides that policy at HTTP admission.** It rejects body- and
-subject-changing corrections even though the decided ledger policy permits them.
-It is proposed as an interim conservative restriction because raw HTTP moments
-carry opaque hashes and no reviewable decision artifact. That limitation explains
-the proposal; it does **not** authorize the override. No governance decision
-approving the exception is recorded here. Accepting it temporarily, changing it,
-or withdrawing it requires an explicit ruling under the same decision process
-before merge. Do not describe it as mere implementation of existing policy.
+**Owner decision (Sean McDonald, 2026-09-28): keep the HTTP override.**
+Bound entity bodies are immutable over HTTP; a body correction means a new
+entity. This decision supersedes the prior correction policy **for HTTP ingress
+only**. Rationale: strict admission can be relaxed later without invalidating
+accepted events; loose admission cannot be tightened without orphaning history.
+The owner supplied the independent policy decision and authorized merging #5
+following green CI. No further policy approval is pending for this override.
+
+The ledger fold and direct import remain unchanged. The owner decision does not
+approve their unresolved correction behavior. The
+[Pre-first-publish gates issue](https://github.com/timepointai/clockchain/issues/6)
+tracks fold rebinding, versioning, authority, sibling conflict, recorded decisions,
+cross-author backdating (priority), and corrections through unguarded import.
+None blocks this merge; all block the first production entry. Characterization
+and `known_gap` test annotations identify current behavior that a later governed
+fix may intentionally change.
 
 The correction-path gap below is consequently **partly introduced by this PR**:
 pre-PR raw HTTP submission reached the permissive ledger correction fold. The
@@ -201,8 +209,8 @@ The HTTP test
    is retired, no edge is transferred, and no erratum status is computed.
 
 There is **no in-place claim-prose erratum path through this PR's HTTP guard**;
-that restriction is introduced by #5 and conflicts with the decided correction
-policy. Separately, there is no owner-publisher erratum workflow. The publisher's `relation`
+that restriction is introduced by #5 and is authorized by the 2026-09-28 owner
+decision for HTTP ingress, superseding the earlier correction policy there. Separately, there is no owner-publisher erratum workflow. The publisher's `relation`
 function still accepts only influence, causation, participation and co-occurrence;
 it cannot express the raw Supersession relation through a candidate. Its moments
 also use `supersedes: None`. Manually composing separate signed entities/edges is

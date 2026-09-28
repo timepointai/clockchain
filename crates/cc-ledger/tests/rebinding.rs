@@ -202,6 +202,8 @@ async fn projected_head(pool: &sqlx::PgPool) -> (Vec<u8>, i64, Vec<u8>, Vec<u8>,
 
 /// This characterizes the absence of signer authorization in the fold. The
 /// second key is a valid signer, not an actor authenticated as a subject owner.
+/// known_gap characterization: current behavior, not a policy requirement.
+/// A fix under issue #6 may intentionally change this expectation.
 #[tokio::test]
 async fn backdated_cross_author_sibling_wins_and_hides_the_other_in_all_720_orders() {
     let a = SecretKey::from_seed([83; 32]);
@@ -284,6 +286,8 @@ async fn backdated_cross_author_sibling_wins_and_hides_the_other_in_all_720_orde
     }
 }
 
+/// known_gap characterization: current behavior, not a policy requirement.
+/// A fix under issue #6 may intentionally change this expectation.
 #[tokio::test]
 async fn subject_moving_correction_leaves_incident_edge_on_old_entity_in_all_720_orders() {
     let key = SecretKey::from_seed([85; 32]);
@@ -363,6 +367,8 @@ async fn subject_moving_correction_leaves_incident_edge_on_old_entity_in_all_720
     }
 }
 
+/// known_gap characterization: current behavior, not a policy requirement.
+/// A fix under issue #6 may intentionally change this expectation.
 #[tokio::test]
 async fn original_writer_attestation_does_not_select_a_losing_correction() {
     let (pool, cleanup) = cc_testkit::ephemeral_db().await;

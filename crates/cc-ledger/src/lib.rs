@@ -501,10 +501,10 @@ const MAX_CHAIN: usize = 1024;
 /// subject with a new body's head would produce a chimera row.
 ///
 /// The artifact is a writer obligation, not a field this fold validates. The
-/// proposed node HTTP guard separately blocks subject/body-changing corrections;
-/// that is an interim policy override requiring explicit review, not this
-/// ruling's implementation. See `docs/ADMISSION-REVIEW.md` for its scope and the
-/// unresolved decision/versioning requirements. Do not infer current corpus
+/// node HTTP guard separately blocks subject/body-changing corrections under
+/// the owner decision of 2026-09-28, superseding this ruling for HTTP ingress
+/// only. See `docs/ADMISSION-REVIEW.md` for that decision and the unresolved
+/// first-publication gates. Do not infer current corpus
 /// contents or writer count from historical observations in test comments.
 async fn project_moment(
     tx: &mut Transaction<'_, Postgres>,

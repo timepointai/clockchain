@@ -5,10 +5,10 @@
 //! means the same subject. Require a new entity instead of carrying its edges.
 //! Existing events still union; the ledger's canonical encoding/fold is unchanged.
 //!
-//! POLICY EXCEPTION: this proposed HTTP guard blocks body/subject corrections
-//! allowed by the recorded-decision ruling in cc-ledger/tests/supersession.rs.
-//! The opaque hash explains the limitation, not authorization to override that
-//! ruling. See docs/ADMISSION-REVIEW.md; explicit governance review is pending.
+//! OWNER DECISION (2026-09-28): bound bodies are immutable over HTTP; a body
+//! correction requires a new entity. This supersedes the recorded-decision
+//! correction policy for HTTP ingress only; import/fold behavior is unchanged.
+//! Rationale and first-publication gates: docs/ADMISSION-REVIEW.md.
 use cc_core::EventBody;
 use cc_ledger::{Appended, Signed};
 use sqlx::{PgPool, Postgres, Transaction};

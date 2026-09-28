@@ -2806,6 +2806,8 @@ async fn erratum_cannot_replace_a_body_but_can_be_a_separate_supersession_assert
 }
 
 /// A bearer credential permits submission, not ownership of a moment's author.
+/// known_gap characterization: current behavior, not a policy requirement.
+/// A fix under issue #6 may intentionally change this expectation.
 #[tokio::test]
 async fn http_same_body_correction_can_backdate_and_change_author_but_not_target_a_stale_head() {
     let node = Node::boot(Posture::Live).await;
@@ -2869,6 +2871,8 @@ async fn http_same_body_correction_can_backdate_and_change_author_but_not_target
 
 /// Fault injection in a disposable projection demonstrates a protocol-identity
 /// blind spot. This does not implement a conflict fold or change its version.
+/// known_gap characterization: current behavior, not a policy requirement.
+/// A fix under issue #6 may intentionally change this expectation.
 #[tokio::test]
 async fn projection_only_divergence_can_change_verdict_without_protocol_or_corpus_identity_change()
 {
