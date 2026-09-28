@@ -8,8 +8,8 @@ constraints remain active until the owner explicitly changes them.
 - The private inaugural fixture is frozen: preserve its files, receipts, bindings,
   image bytes and hashes. Do not replace its sources or publish any subset.
 - Excluded private images do not imply a signed absence decision.
-- PR #5 requires independent review. The implementing agent must not approve or
-  merge it. Passing tests do not authorize release or publication.
+- Changes subject to independent review must not be approved or merged by the
+  implementing agent. Passing tests do not authorize release or publication.
 
 Local synthetic tests, scoped software changes and review evidence are permitted
 when requested. They must not use the inaugural fixture as test content. A request

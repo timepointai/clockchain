@@ -12,7 +12,13 @@ and its tests were not included in the node PR. This does **not** mean that #5
 has the new browser behavior or its coverage. The node behavior is exercised
 separately by its Rust HTTP tests.
 
-Reproduce the inventory (discovery only; no tests/model calls run):
+The 100-test side is an owner-local, uncommitted working tree, not a public Git
+revision. A public reader cannot reproduce that side from #5 alone; the named
+snapshot is a reported local inventory, not independently reproducible evidence
+of an unavailable tree. The 77-test PR side and its unchanged test files can be
+verified against public base `1968db9`. No private source tree is bundled here.
+
+With access to both checkouts, reproduce the comparison (discovery only):
 
 ```sh
 python3 ops/compare_tests.py --left /path/to/full-working-tree \

@@ -3,6 +3,31 @@
 This describes source behavior, not a deployment receipt. Standing owner
 constraints are in [HOLD.md](../HOLD.md).
 
+## Policy status: proposed interim override, not a settled rule
+
+The repository records a **DECIDED** timepoint-telemetry ruling in
+[`a_correction_may_move_its_subject_by_recorded_decision`](../crates/cc-ledger/tests/supersession.rs):
+supersession is the ledger's correction mechanism; subject- and coordinate-moving
+corrections are permitted with a recorded decision at mint time naming the old/new
+subject or coordinate, evidence, and resolver. The doctrine is **bind the writer,
+not the projector**. The fold follows the head in every column. That decision
+artifact is currently a writer obligation, not a field the fold validates.
+
+**This PR overrides that policy at HTTP admission.** It rejects body- and
+subject-changing corrections even though the decided ledger policy permits them.
+It is proposed as an interim conservative restriction because raw HTTP moments
+carry opaque hashes and no reviewable decision artifact. That limitation explains
+the proposal; it does **not** authorize the override. No governance decision
+approving the exception is recorded here. Accepting it temporarily, changing it,
+or withdrawing it requires an explicit ruling under the same decision process
+before merge. Do not describe it as mere implementation of existing policy.
+
+The correction-path gap below is consequently **partly introduced by this PR**:
+pre-PR raw HTTP submission reached the permissive ledger correction fold. The
+owner-publisher's missing erratum workflow predates this PR. These are separate
+facts. The raw `Supersession` edge is not a substitute for the decided moment
+supersession mechanism.
+
 ## Signed HTTP events
 
 `POST /v1/events` verifies the canonical event signature, then checks subject
@@ -68,15 +93,98 @@ rebinding-conflict state.** Deterministic convergence does not make the retained
 edge historically valid for H2. Thus #5's HTTP refusal must not be described as
 fold-level binding immutability or as protection against direct import.
 
-**Recommendation — B:** Keep the fold deterministic over valid signed event sets
-and represent rebinding and its affected edges as explicit `conflict`, rather
-than silently treating the surviving body as the edge's original subject. This
-preserves contradictory evidence and leaves room to distinguish an erratum from
-a subject replacement. Rejecting whichever binding arrives second would break
-order independence; option A would need a precisely defined, order-independent
-validity rule before it could replace the existing fold. B still needs a separate
-reviewed design for conflict propagation and resolution. Neither A nor B is
-implemented by this PR.
+### Broader characterization
+
+The same test file adds:
+
+- `backdated_cross_author_sibling_wins_and_hides_the_other_in_all_720_orders`:
+  two different signers supersede H1. The backdated correction wins in all 720
+  permutations of the six events. Its coordinate, body and author become the
+  projected head; the original writer's sibling remains stored but unprojected.
+  The incident edge remains proposed and in the graph. Rebuild and union agree.
+- `subject_moving_correction_leaves_incident_edge_on_old_entity_in_all_720_orders`:
+  H2 moves the moment from E to a third entity in all 720 permutations. E then has
+  no projected moment, but the incident edge still targets E with `in_g = true`.
+  No recorded-decision artifact is supplied; the fold does not enforce one.
+- `original_writer_attestation_does_not_select_a_losing_correction`: a signed
+  attestation by the original writer targeting the losing sibling is stored,
+  but does not change which correction projects, including after rebuild.
+
+The two earlier 120-order tests plus the two 720-order tests cover **1,680 import
+orderings**. These establish behavior of the tested small event sets, not totality
+for arbitrary input: the ledger's existing `MAX_CHAIN` refusal remains a bound
+with documented arrival-order consequences.
+
+The HTTP test
+`http_same_body_correction_can_backdate_and_change_author_but_not_target_a_stale_head`
+shows the complementary admission limit. A different signing key submitted with
+the full bearer credential can supersede the current head with the same subject
+and body but an earlier coordinate; it receives `201`, and the head's coordinate
+and author change. A sibling targeting an already-stale head receives `409
+subject_binding_unavailable`. Thus the node prevents that particular stale-head
+sibling submission, but does **not** enforce subject-owner authority or the
+recorded-decision obligation for coordinate movement. Bearer authorization is not
+correction authority. This is a characterization, not approval of that behavior.
+
+## B is a design candidate, not a ready recommendation
+
+The previous recommendation of B is withdrawn pending the following decisions.
+Keeping contradictory events stored is not the same as making the losing
+corrections visible: the present canonical-child rule hides siblings. A design
+limited to rebinding with incident edges would miss that ordinary conflict case.
+No A/B implementation or correction-authorization policy is added here.
+
+### Protocol identity and replay compatibility
+
+`protocol.rs` promises that different `filter_version` values identify governance
+differences and different `corpus_digest` values identify different event sets.
+Today the corpus digest commits to events; the filter version does not include
+a ledger-fold implementation digest. `view_root` hashes projection contents
+without a fold-version domain tag. A different build string helps identify an
+artifact, but is not a governed rule identity.
+
+The HTTP test
+`projection_only_divergence_can_change_verdict_without_protocol_or_corpus_identity_change`
+injects projection divergence in an isolated database. Merely marking an edge
+challenged and out of `in_g` leaves the verdict Supported: neighbor queries ignore
+both fields. Removing that projected edge changes the verdict to Unsupported
+while the event IDs, `corpus_digest`, `filter_version`, and `/health` remain
+identical; `view_root` changes. This is fault injection demonstrating the identity
+gap, **not** an implementation of B or evidence of two released fold versions.
+
+Before a conflict rule can exclude edges from the filter's graph, its governed
+identity must cover the fold-to-graph interpretation. Either incorporate those
+rules into `filter_version` (including any needed view/neighbor logic), or add an
+explicit fold version to the protocol identity, verdicts, peer comparison and
+cache keys. A standalone label or build SHA is insufficient. The decision must
+also specify versioned projection commitments, old-event replay, old-root
+verification, and mixed-version refusal/diagnostics without rewriting existing
+identity or applied migrations. Same events under different decision-relevant
+folds must be distinguishable before consumers compare verdicts. No versioning
+choice or hash change is made in this PR.
+
+### Decisions, conflicting siblings and signing authority
+
+Any candidate design must cover siblings (including losing descendants), body
+rebinding, subject moves and coordinate moves, with or without incident edges.
+It must define who can authorize a correction, whether and how that authority
+changes, and how backdated cross-author claims are held or contested. A signer
+choosing an earlier `event_time` must not acquire authority merely by winning the
+canonical-child comparison. Visibility must distinguish stored, projected,
+contested and resolved readings rather than calling storage alone preservation
+of the reviewable evidence.
+
+A single recorded-decision mechanism could connect the earlier ruling to conflict
+resolution, but it needs a signed, replay-visible binding to the exact correction,
+old/new subjects and bodies/coordinates, evidence, resolver and decision rule.
+It must specify competing decisions, revocation, authority changes and arrival
+before/after the corrected event. The existing `AttestationBody` contains only a
+target; its envelope identifies a signer and time. It has no owner role, approval
+verdict, rationale or old/new bindings, and `project_attestation` only stores it
+and updates counts. The attestation test confirms that it does not resolve a
+sibling. Treating it as an owner approval would require new governed semantics,
+not an inference from its signature. These remain design questions for the ruling
+process; the present PR does not create that mechanism.
 
 ## Correction path under #5
 
@@ -92,15 +200,17 @@ The HTTP test
    remain present, and the original influence edge still targets E. No reading
    is retired, no edge is transferred, and no erratum status is computed.
 
-There is **no supported in-place claim-prose erratum path** through #5's HTTP
-admission, nor an owner-publisher erratum workflow. The publisher's `relation`
+There is **no in-place claim-prose erratum path through this PR's HTTP guard**;
+that restriction is introduced by #5 and conflicts with the decided correction
+policy. Separately, there is no owner-publisher erratum workflow. The publisher's `relation`
 function still accepts only influence, causation, participation and co-occurrence;
 it cannot express the raw Supersession relation through a candidate. Its moments
 also use `supersedes: None`. Manually composing separate signed entities/edges is
 a low-level assertion mechanism, not a completed correction workflow. Direct
 ledger import can supersede H1, as the fold tests show, but it bypasses this
-admission policy and is not an approved erratum path. No correction path is built
-in this PR.
+admission policy. The existing ruling permits writer-operated correction with a
+recorded decision; direct import alone does not establish that the writer met
+that obligation. No new correction path is built in this PR.
 
 ## Stored prose and media reads
 

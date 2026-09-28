@@ -2804,3 +2804,119 @@ async fn erratum_cannot_replace_a_body_but_can_be_a_separate_supersession_assert
     );
     node.done().await;
 }
+
+/// A bearer credential permits submission, not ownership of a moment's author.
+#[tokio::test]
+async fn http_same_body_correction_can_backdate_and_change_author_but_not_target_a_stale_head() {
+    let node = Node::boot(Posture::Live).await;
+    let a = SecretKey::from_seed([88; 32]);
+    let b = SecretKey::from_seed([89; 32]);
+    birth(
+        &node.pool,
+        &a,
+        961,
+        "Synthetic author test",
+        WindowStart::Known(t(0)),
+        WindowEnd::KnownOpen,
+        t(0),
+    )
+    .await;
+    let root = synthetic_moment(&a, 961, [1; 32], 10);
+    assert_eq!(
+        node.post("/v1/events", Some(TEST_KEY), &signed_request(&root, &a))
+            .await
+            .0,
+        201
+    );
+    let mut current = synthetic_moment(&a, 961, [1; 32], 30);
+    current.supersedes = Some(cc_core::event_id(&root));
+    assert_eq!(
+        node.post("/v1/events", Some(TEST_KEY), &signed_request(&current, &a))
+            .await
+            .0,
+        201
+    );
+    let mut foreign = synthetic_moment(&b, 961, [1; 32], -5);
+    foreign.record_time = t(40);
+    foreign.supersedes = Some(cc_core::event_id(&root));
+    let (status, body, _) = node
+        .post("/v1/events", Some(TEST_KEY), &signed_request(&foreign, &b))
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "subject_binding_unavailable");
+    foreign.supersedes = Some(cc_core::event_id(&current));
+    assert_eq!(
+        node.post("/v1/events", Some(TEST_KEY), &signed_request(&foreign, &b))
+            .await
+            .0,
+        201
+    );
+    let projected: (Vec<u8>, Vec<u8>, Vec<u8>) =
+        sqlx::query_as("SELECT head_event_id,coord,author_key FROM moments WHERE subject=961")
+            .fetch_one(&node.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        projected,
+        (
+            cc_core::event_id(&foreign).as_bytes().to_vec(),
+            t(-5).to_canon_bytes().to_vec(),
+            b.author().to_bytes().to_vec()
+        )
+    );
+    node.done().await;
+}
+
+/// Fault injection in a disposable projection demonstrates a protocol-identity
+/// blind spot. This does not implement a conflict fold or change its version.
+#[tokio::test]
+async fn projection_only_divergence_can_change_verdict_without_protocol_or_corpus_identity_change()
+{
+    let node = Node::boot(Posture::Live).await;
+    seed(&node.pool).await;
+    declare(
+        &node.pool,
+        &SecretKey::from_seed([31; 32]),
+        7,
+        "tax:co-located",
+        band(0, WindowEnd::KnownOpen),
+        t(1),
+    )
+    .await;
+    let query = r#"{"subjects":[1,2],"as_of":"100","claim":7}"#;
+    let (_, before, _) = node.post("/v1/feasibility", Some(READ_KEY), query).await;
+    assert_eq!(before["result"], "Supported");
+    let (_, health, _) = node.get("/health", None).await;
+    let events: Vec<Vec<u8>> = sqlx::query_scalar("SELECT event_id FROM events ORDER BY event_id")
+        .fetch_all(&node.pool)
+        .await
+        .unwrap();
+    let old_view = cc_ledger::view_root(&node.pool).await.unwrap();
+    // Existing status=2 is challenged, not a new conflict state. Neighbor reads
+    // currently ignore BOTH status and in_g, so annotation alone does not fix it.
+    sqlx::query("UPDATE edges SET status=2,in_g=false")
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    let (_, label_only, _) = node.post("/v1/feasibility", Some(READ_KEY), query).await;
+    assert_eq!(label_only["result"], "Supported");
+    // Model the effect of withholding an edge from the filter's projection.
+    sqlx::query("DELETE FROM edges")
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    let (_, after, _) = node.post("/v1/feasibility", Some(READ_KEY), query).await;
+    assert_eq!(after["result"], "Unsupported");
+    assert_eq!(before["corpus_digest"], after["corpus_digest"]);
+    assert_eq!(before["filter_version"], after["filter_version"]);
+    assert_eq!(node.get("/health", None).await.1, health);
+    assert_eq!(
+        sqlx::query_scalar::<_, Vec<u8>>("SELECT event_id FROM events ORDER BY event_id")
+            .fetch_all(&node.pool)
+            .await
+            .unwrap(),
+        events
+    );
+    assert_ne!(cc_ledger::view_root(&node.pool).await.unwrap(), old_view);
+    node.done().await;
+}
