@@ -1,0 +1,614 @@
+{
+  "keys": 3,
+  "max_events": 5,
+  "minimality": "breadth-first candidate grammar; no symmetry reduction",
+  "source_sha256": {
+    "model.py": "33d3975b24a12f7c21e885b2b95c2cb7e9a2342dfee6e9bde5ab9099e3eb4b9e",
+    "check.py": "7432c4344bfa1fdd22ffc1034b6192b873952190c01ac02436cc741199e82298",
+    "mutants.py": "050c47c84100eaaa6e43b0758dd55e14a07d53089d640a60c98ceb7d271e6109",
+    "requirements.txt": "e77cb6458efed07af017e62ed770aaf9f1864f0cc7eea0ead2c07156d5f808e0"
+  },
+  "mutants": [
+    {
+      "mutant": "monotone_tombstones",
+      "killed": true,
+      "examined_extensions": 471,
+      "mutated_source_sha256": "9b28b6b0f352d100ca6ee348f0f547a9fa28081af8d59bc47f0283e6cb02c5f6",
+      "counterexample_size": 4,
+      "assertion": "revoked issuer kills survivor",
+      "events": [
+        {
+          "id": 0,
+          "kind": "G",
+          "key": 0,
+          "grant": 0,
+          "parents": [],
+          "target": -1
+        },
+        {
+          "id": 1,
+          "kind": "D",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 1
+        },
+        {
+          "id": 2,
+          "kind": "R",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 0
+        },
+        {
+          "id": 3,
+          "kind": "R",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            1
+          ],
+          "target": 1
+        }
+      ],
+      "reference": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ],
+          [
+            3,
+            "branch",
+            "revoked_concurrent"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": [
+          1
+        ]
+      },
+      "mutant_view": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ],
+          [
+            3,
+            "branch",
+            "revoked_concurrent"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0,
+          1
+        ],
+        "effective_revokes": [
+          2,
+          3
+        ],
+        "canceled": [
+          1
+        ]
+      }
+    },
+    {
+      "mutant": "unscoped_revocation",
+      "killed": true,
+      "examined_extensions": 38,
+      "mutated_source_sha256": "d0f699e0945226f7ff1a5565630813b8e695bb2a2a4ac8b80e0e7ea768cca8e9",
+      "counterexample_size": 3,
+      "assertion": "scope",
+      "events": [
+        {
+          "id": 0,
+          "kind": "G",
+          "key": 0,
+          "grant": 0,
+          "parents": [],
+          "target": -1
+        },
+        {
+          "id": 1,
+          "kind": "D",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 1
+        },
+        {
+          "id": 2,
+          "kind": "R",
+          "key": 1,
+          "grant": 1,
+          "parents": [
+            1
+          ],
+          "target": 0
+        }
+      ],
+      "reference": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "head",
+            ""
+          ],
+          [
+            2,
+            "invalid",
+            "revocation_scope"
+          ]
+        ],
+        "frontier": [
+          1
+        ],
+        "active": [
+          0,
+          1
+        ],
+        "tombstones": [],
+        "effective_revokes": [],
+        "canceled": []
+      },
+      "mutant_view": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "superseded",
+            ""
+          ],
+          [
+            2,
+            "head",
+            ""
+          ]
+        ],
+        "frontier": [
+          2
+        ],
+        "active": [
+          1
+        ],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": []
+      }
+    },
+    {
+      "mutant": "strict_cut_ancestry",
+      "killed": true,
+      "examined_extensions": 5,
+      "mutated_source_sha256": "91261aa0dffe72ce585dfa0109eca99e7787f40b874aada059cd59bd626454db",
+      "counterexample_size": 2,
+      "assertion": "reflexive cut",
+      "events": [
+        {
+          "id": 0,
+          "kind": "G",
+          "key": 0,
+          "grant": 0,
+          "parents": [],
+          "target": -1
+        },
+        {
+          "id": 1,
+          "kind": "R",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 0
+        }
+      ],
+      "reference": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "superseded",
+            "root_relinquished"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          1
+        ],
+        "canceled": []
+      },
+      "mutant_view": {
+        "rows": [
+          [
+            0,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            1,
+            "superseded",
+            "root_relinquished"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          1
+        ],
+        "canceled": []
+      }
+    },
+    {
+      "mutant": "fork_point_resolve",
+      "killed": true,
+      "examined_extensions": 181,
+      "mutated_source_sha256": "a1159de4ede48bd7dfa6afb1377afe876f0571c83b904441c7a92dd9637ed39a",
+      "counterexample_size": 4,
+      "assertion": "I2 admitted parent",
+      "events": [
+        {
+          "id": 0,
+          "kind": "G",
+          "key": 0,
+          "grant": 0,
+          "parents": [],
+          "target": -1
+        },
+        {
+          "id": 1,
+          "kind": "C",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": -1
+        },
+        {
+          "id": 2,
+          "kind": "R",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 0
+        },
+        {
+          "id": 3,
+          "kind": "S",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            1,
+            2
+          ],
+          "target": -1
+        }
+      ],
+      "reference": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ],
+          [
+            3,
+            "invalid",
+            "parent_authority"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": []
+      },
+      "mutant_view": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ],
+          [
+            3,
+            "branch",
+            "revoked_concurrent"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": []
+      }
+    },
+    {
+      "mutant": "revoked_frontier",
+      "killed": true,
+      "examined_extensions": 10,
+      "mutated_source_sha256": "baea5eb79c7640c251ed130cd30a2e09745a3a32b0737084f0e88db5f548abd3",
+      "counterexample_size": 3,
+      "assertion": "revoked sole/frontier",
+      "events": [
+        {
+          "id": 0,
+          "kind": "G",
+          "key": 0,
+          "grant": 0,
+          "parents": [],
+          "target": -1
+        },
+        {
+          "id": 1,
+          "kind": "C",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": -1
+        },
+        {
+          "id": 2,
+          "kind": "R",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 0
+        }
+      ],
+      "reference": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": []
+      },
+      "mutant_view": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ]
+        ],
+        "frontier": [
+          1
+        ],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": []
+      }
+    },
+    {
+      "mutant": "lowest_id_wins",
+      "killed": true,
+      "examined_extensions": 6,
+      "mutated_source_sha256": "f544b8374939eafbd2ac578e90498055653c36f5ee46e36fb6c1f438617d3cae",
+      "counterexample_size": 3,
+      "assertion": "I3 eligible leaf lost",
+      "events": [
+        {
+          "id": 0,
+          "kind": "G",
+          "key": 0,
+          "grant": 0,
+          "parents": [],
+          "target": -1
+        },
+        {
+          "id": 1,
+          "kind": "C",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": -1
+        },
+        {
+          "id": 2,
+          "kind": "C",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": -1
+        }
+      ],
+      "reference": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "contested"
+          ],
+          [
+            2,
+            "branch",
+            "contested"
+          ]
+        ],
+        "frontier": [
+          1,
+          2
+        ],
+        "active": [
+          0
+        ],
+        "tombstones": [],
+        "effective_revokes": [],
+        "canceled": []
+      },
+      "mutant_view": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "head",
+            ""
+          ],
+          [
+            2,
+            "superseded",
+            ""
+          ]
+        ],
+        "frontier": [
+          1
+        ],
+        "active": [
+          0
+        ],
+        "tombstones": [],
+        "effective_revokes": [],
+        "canceled": []
+      }
+    }
+  ],
+  "seconds": 2.361,
+  "result": "pass"
+}

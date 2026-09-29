@@ -1,0 +1,46 @@
+{
+  "model": "stage0-issuer-stratified-grant-revocation-v1",
+  "keys": 3,
+  "exhaustive_max_events": 5,
+  "symmetry": "event-ID alpha renaming and exchange of keys 1/2",
+  "trace_max_events": 7,
+  "named_cases": [
+    "i2_retroactive_revoke_from_old_parent_cannot_freeze",
+    "literal_monotone_tombstone_counterexample",
+    "i2_revoke_parent_equal_delegate_preserves_grant",
+    "i2_concurrent_delegate_descendants_do_not_contend",
+    "i2_multiple_revokes_intersect_acknowledged_pasts",
+    "i2_revoked_branch_cannot_launder_through_resolution",
+    "i1_competing_resolutions_and_join",
+    "i2_root_only_relinquishment_and_prior_delegate",
+    "i2_depth_three_concurrent_revocations_alternate",
+    "i2_depth_three_acknowledged_revocation_blocks_counter_revoke"
+  ],
+  "trace_orderings": 25608,
+  "trace_bipartitions": 768,
+  "hypothesis_examples": 300,
+  "depth": {
+    "examples_executed": 1000,
+    "max_chain_depth_reached": 6,
+    "max_events_reached": 11,
+    "max_keys_reached": 7,
+    "acknowledged": 182,
+    "concurrent": 818,
+    "requested_examples": 1000,
+    "seed": 20260929,
+    "derandomize": true,
+    "seconds": 4.344
+  },
+  "valid_prefixes": 1287,
+  "candidate_extensions": 8839,
+  "invalid_extensions": 6311,
+  "author_mutations": 17678,
+  "symmetry_duplicates": 1242,
+  "source_sha256": {
+    "model.py": "33d3975b24a12f7c21e885b2b95c2cb7e9a2342dfee6e9bde5ab9099e3eb4b9e",
+    "check.py": "7432c4344bfa1fdd22ffc1034b6192b873952190c01ac02436cc741199e82298",
+    "requirements.txt": "e77cb6458efed07af017e62ed770aaf9f1864f0cc7eea0ead2c07156d5f808e0"
+  },
+  "seconds": 7.939,
+  "result": "pass"
+}

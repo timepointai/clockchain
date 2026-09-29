@@ -226,7 +226,7 @@ def _fold(events):
             rejected[e.id] = ("invalid", "parent_authority")
             return
         if e.kind == "D":
-            if e.target not in (0, 1, 2):
+            if type(e.target) is not int or e.target < 0:
                 rejected[e.id] = ("invalid", "key")
                 return
             if any((x.target if x.kind == "D" else x.key) == e.target

@@ -491,7 +491,9 @@ specification language. The model covers grant scope, parent authority,
 issuer-stratified tombstones, cancellation, visible suppression, frontier and
 Resolve; it abstracts signatures, bodies, edges, encoding, HTTP and persistence.
 The bounds, reproducible command and measured results are in
-[stage0/README.md](stage0/README.md). This is executable specification only.
+[stage0/README.md](stage0/README.md), including the six-mutant checker check,
+targeted depth coverage, fast CI bound and source-hashed full manual pre-release
+gate. This is executable specification only.
 
 | Stage | Deliverable and completion boundary | Estimated diff |
 | --- | --- | --- |

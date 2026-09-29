@@ -9,10 +9,11 @@ import argparse
 from dataclasses import asdict, replace
 from itertools import combinations, permutations
 import json
+import hashlib
 from pathlib import Path
 import time
 
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, seed, settings, strategies as st
 from model import Event, fold, ancestry, grant_tree, in_scope
 
 G = Event(0, "G")
@@ -28,6 +29,28 @@ def check_invariants(events):
     if not valid:
         return view
     grants, _, lineage = grant_tree(valid)
+    # Check admitted transitions as well as visible heads: a bad Resolve can be
+    # hidden by global suppression while still violating admission authority.
+    for e in valid:
+        if e.kind == "G":
+            continue
+        cones = [tuple(index[j] for j in anc[p] if j in index) for p in e.parents]
+        for cone in cones:
+            assert e.grant in fold(cone).active, ("I2 admitted parent", events, e)
+        joined = tuple(set().union(*(set(c) for c in cones)))
+        assert e.grant in fold(joined).active, ("I2 admitted join", events, e)
+    for i, status, reason in view.rows:
+        if reason == "revoked_concurrent":
+            e = index[i]
+            assert any(index[r].target == e.grant and i not in anc[index[r].parents[0]]
+                       for r in view.effective_revokes), ("reflexive cut", events, i)
+        # A valid unsuppressed leaf cannot disappear merely because a sibling
+        # sorts before it. This is a completeness check, not just head safety.
+        if i in valid_ids and reason not in (
+            "revoked_concurrent", "revoked_ancestor", "canceled_grant",
+            "canceled_authority", "root_relinquished"
+        ) and not any(i != j and i in anc[j] for j in valid_ids):
+            assert i in view.frontier, ("I3 eligible leaf lost", events, i)
     for i in view.frontier:
         e = index[i]
         if e.kind == "G":
@@ -249,6 +272,31 @@ def named_cases():
               Event(3, "C", 1, 1, (2,)))
     assert check_invariants(events).frontier == (3,)
     cases["i2_root_only_relinquishment_and_prior_delegate"] = events
+    # Depth three: all grant issuances acknowledged, concurrent issuer cuts.
+    chain = (G, Event(1, "D", 0, 0, (0,), 1),
+             Event(2, "D", 1, 1, (1,), 2), Event(3, "D", 2, 2, (2,), 3))
+    events = chain + (Event(4, "R", 0, 0, (3,), 1),
+                      Event(5, "R", 1, 1, (3,), 2),
+                      Event(6, "R", 2, 2, (3,), 3))
+    v = check_invariants(events)
+    assert v.effective_revokes == (4, 6) and v.active == (0, 2)
+    assert v.frontier == (4, 6) and v.tombstones == (1, 3)
+    assert (5, "branch", "revoked_concurrent") in v.rows
+    # K survives because A's concurrent revoke of K is suppressed.
+    assert fold(events + (Event(7, "S", 2, 2, (4, 6)),)).frontier == (7,)
+    cases["i2_depth_three_concurrent_revocations_alternate"] = events
+
+    # A's revoke of K is now acknowledged by G's revoke of A. Both are effective.
+    events = chain + (Event(4, "R", 1, 1, (3,), 2),
+                      Event(5, "R", 0, 0, (4,), 1),
+                      Event(6, "R", 2, 2, (3,), 3))
+    v = check_invariants(events)
+    assert v.effective_revokes == (4, 5) and v.active == (0, 3)
+    assert v.frontier == (5,) and v.tombstones == (1, 2)
+    for grant in (1, 2):
+        attempt = events + (Event(7, "S", grant, grant, (5, 6)),)
+        assert (7, "invalid", "parent_authority") in fold(attempt).rows
+    cases["i2_depth_three_acknowledged_revocation_blocks_counter_revoke"] = events
     return cases
 
 
@@ -300,12 +348,103 @@ def randomized(examples):
     property_check()
 
 
+
+@st.composite
+def depth_dags(draw):
+    depth = draw(st.integers(3, 6))
+    labels = (0,) + tuple(draw(st.permutations(tuple(range(1, depth + 1)))))
+    events = [G]
+    for i in range(1, depth + 1):
+        events.append(Event(i, "D", labels[i - 1], i - 1, (i - 1,), labels[i]))
+    upper = draw(st.integers(1, depth - 2))
+    lower = draw(st.integers(upper + 1, depth - 1))
+    target = draw(st.integers(lower + 1, depth))
+    inner_cut = draw(st.integers(lower, depth))
+    outer_cut = draw(st.integers(upper, depth))
+    counter_cut = draw(st.integers(target, depth))
+    acknowledged = draw(st.booleans())
+    inner, outer, counter = depth + 1, depth + 2, depth + 3
+    events.extend((Event(inner, "R", labels[upper], upper, (inner_cut,), lower),
+                   Event(outer, "R", 0, 0, (inner if acknowledged else outer_cut,), upper),
+                   Event(counter, "R", labels[lower], lower, (counter_cut,), target)))
+    return tuple(events), (depth, upper, lower, target, inner_cut, outer_cut, acknowledged)
+
+
+def targeted_depth(examples):
+    started = time.monotonic()
+    seen = {"examples_executed": 0, "max_chain_depth_reached": 0,
+            "max_events_reached": 0, "max_keys_reached": 0,
+            "acknowledged": 0, "concurrent": 0}
+
+    @seed(20260929)
+    @settings(max_examples=examples, derandomize=True, deadline=None, database=None)
+    @given(depth_dags(), st.data())
+    def property_check(case, data):
+        events, shape = case
+        depth, upper, lower, target, inner_cut, outer_cut, acknowledged = shape
+        view = check_invariants(events)
+        inner, outer, counter = depth + 1, depth + 2, depth + 3
+        # Independent predictions for these specific three-revoke traces.
+        if acknowledged:
+            expected_effective = {inner, outer}
+            expected_tombstones = {upper, lower}
+            assert (target in view.active) == (inner_cut > lower)
+        elif outer_cut == upper:
+            expected_effective, expected_tombstones = {outer}, {upper}
+            assert lower in view.canceled and target in view.canceled
+        else:
+            expected_effective, expected_tombstones = {outer, counter}, {upper, target}
+            assert lower in view.active
+        assert set(view.effective_revokes) == expected_effective, ("depth effects", events, view)
+        assert set(view.tombstones) == expected_tombstones, ("depth tombstones", events, view)
+        # Every revoked/canceled actor tries an old-parent correction and revoke.
+        old_parent = data.draw(st.integers(0, depth))
+        for grant in set(view.tombstones) | set(view.canceled):
+            holder = events[grant].target
+            for kind in ("C", "R"):
+                attack = Event(len(events), kind, holder, grant, (old_parent,), target)
+                after = check_invariants(events + (attack,))
+                assert (after.frontier, after.active, after.effective_revokes) == (
+                    view.frontier, view.active, view.effective_revokes
+                ), ("depth old-parent grief", events, attack, after)
+        order = data.draw(st.permutations(events))
+        assert fold(order) == view
+        cut = data.draw(st.integers(0, len(order)))
+        fold(order[:cut]); fold(order[cut:])
+        assert fold(order[:cut] + order[cut:] + order[:cut]) == view
+        seen["examples_executed"] += 1
+        seen["max_chain_depth_reached"] = max(seen["max_chain_depth_reached"], depth)
+        seen["max_events_reached"] = max(seen["max_events_reached"], len(events) + 1)
+        seen["max_keys_reached"] = max(seen["max_keys_reached"], depth + 1)
+        seen["acknowledged" if acknowledged else "concurrent"] += 1
+    property_check()
+    assert seen["max_chain_depth_reached"] >= 3
+    return {**seen, "requested_examples": examples, "seed": 20260929,
+            "derandomize": True, "seconds": round(time.monotonic() - started, 3)}
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-events", type=int, default=7, choices=range(2, 8))
     parser.add_argument("--examples", type=int, default=3000)
     parser.add_argument("--output")
+    parser.add_argument("--mutant", help="Test-only one-rule replacement from mutants.py")
+    parser.add_argument("--case", help="JSON event trace, for mutation subprocess checks")
+    parser.add_argument("--depth-examples", type=int, default=0)
     args = parser.parse_args()
+    if args.mutant:
+        from mutants import mutated_fold
+        global fold
+        fold = mutated_fold(args.mutant)
+    if args.case:
+        events = tuple(Event(**dict(e, parents=tuple(e["parents"])))
+                       for e in json.loads(Path(args.case).read_text()))
+        try:
+            check_invariants(events)
+        except AssertionError as error:
+            print(json.dumps({"result": "fail", "assertion": str(error)}))
+            raise SystemExit(1)
+        print(json.dumps({"result": "pass"}))
+        return
     start = time.monotonic()
     cases = named_cases()
     print("Named traces passed", flush=True)
@@ -317,12 +456,15 @@ def main():
     totals = exhaustive(args.max_events)
     print(totals, flush=True)
     randomized(args.examples)
+    depth_report = targeted_depth(args.depth_examples) if args.depth_examples else None
     report = {"model": "stage0-issuer-stratified-grant-revocation-v1",
               "keys": 3, "exhaustive_max_events": args.max_events,
               "symmetry": "event-ID alpha renaming and exchange of keys 1/2",
               "trace_max_events": 7, "named_cases": list(cases),
               "trace_orderings": orderings, "trace_bipartitions": partitions,
-              "hypothesis_examples": args.examples, **totals,
+              "hypothesis_examples": args.examples, "depth": depth_report, **totals,
+              "source_sha256": {n: hashlib.sha256((Path(__file__).parent / n).read_bytes()).hexdigest()
+                                for n in ("model.py", "check.py", "requirements.txt")},
               "seconds": round(time.monotonic() - start, 3), "result": "pass"}
     if args.output:
         Path(args.output).write_text(json.dumps(report, indent=2) + "\n")
