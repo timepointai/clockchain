@@ -1,8 +1,8 @@
 # Multi-signer admission and projection v1
 
-Design decision proposed for owner approval, 2026-09-28. **Design only: none of
-this is implemented by this PR.** Implementation requires subsequent owner
-approval. [HOLD.md](../../HOLD.md) remains the operating boundary.
+Design proposed for owner approval, revised 2026-09-28. **Not approved for
+production implementation.** Stage 0 is an executable reference specification,
+not production code. Stages (a)–(e) require subsequent owner approval. [HOLD.md](../../HOLD.md) remains the operating boundary.
 This specifies every gate in [#6](https://github.com/timepointai/clockchain/issues/6).
 Decided below means a concrete choice in this proposal, not a completed gate or
 authorization for the first production entry.
@@ -21,21 +21,19 @@ Decisions:
    parent and still active after combining their revocation evidence. Authority
    at the common ancestor alone is insufficient. Revocations cannot be discarded
    by selecting a different body.
-2. Revocation removes a key permanently for this subject. A delegation concurrent
-   with revocation of its issuer is canceled at their join, including grants
-   derived from that delegation. A delegation causally acknowledged before the
-   revocation survives: revoking a delegator is not retroactive revocation of
-   every previously independent delegate. Reusing a revoked key is prohibited;
-   rotation uses a fresh key.
-3. A resolution covers its explicitly signed causal frontier, not unseen events.
-   A late sibling reopens `contested`. No finality or eventual delivery is assumed.
-   A revoked key cannot unilaterally produce the sole head of a set containing its
-   revocation. Before that revocation is delivered, a replica can have a different
-   head; claiming otherwise would require coordination absent from this design.
-4. If no common authority survives, the subject stays contested/frozen. Curators
-   cannot bypass subject authority. A new subject and a disputes edge preserve an
-   alternative assertion. Availability against a malicious full authority is not
-   promised; unauthorized resolution is prohibited.
+2. Revocation is scoped to the exact grant: an authority can revoke only grants
+   issued through its own grant, directly or transitively. The root grant can be
+   revoked only by itself. A hot delegate cannot revoke its issuer or sibling.
+   Root compromise is total loss; operate a cold root with hot delegates. An
+   issuer can recover from compromise of its hot delegate without its consent.
+3. Compute effective revocations before contention, in issuer-before-delegate
+   strata. Out-of-cut acts under revoked authority remain visible as
+   `branch / revoked_concurrent` but cannot contend or create tombstones.
+   Concurrent delegations and their derivatives lose authority. Previously
+   acknowledged delegations survive; selecting a body cannot undo revocation.
+4. Late **unrevoked** branches can reopen a contest. Revoked old-parent spam
+   cannot. Authority can re-author suppressed content by Correction on a surviving
+   parent. Root relinquishment is an explicit control, not a new body head.
 5. `parent_head` is a causal reference, **not an arrival-time CAS against the
    database's current head**. Stale known parents are admitted as branches;
    missing parents are pending. A current-head-only CAS would violate I1.
@@ -73,7 +71,7 @@ binding; a subject aggregate is the explicitly mutable set of revision readings.
 Read APIs return both IDs and never present the aggregate as a mutable old entity.
 The creating event carries the body hash, so this formula has no self-reference.
 
-Each subject starts with one full authority grant to its creator. Any number of
+Each subject starts with one root authority grant to its creator. Any number of
 keys can become authorities by signed delegation. No sole-writer assumption,
 shared signing key, or per-instance bearer credential establishes this authority.
 All events name an instance ID to prevent cross-instance replay.
@@ -94,12 +92,23 @@ change must itself be a node-0 ledger moment, for this v1 trust-root field only.
 ## Canonical encoding: version 0 to version 1
 
 **Bump `CANON_VERSION` from 0 to 1.** The multi-signer design is v1, not a v0
-reinterpretation. Production has zero entries per the owner; there is no history
-migration or automatic re-signing. A future v1 installation uses an empty v1 event
-store. A nonempty v0 store is refused, not silently converted. Existing private
-fixtures and applied migration bytes remain unchanged; schema provisioning for
-v1 is new work, not edits to applied migrations. Coordinate constants remain at
-`CONSTANTS_VERSION = 0` because this decision does not change tick arithmetic.
+reinterpretation. Zero projected entries does not establish an empty event store.
+The latest retained ledger-count receipt located for this review is dated
+**2026-09-25T03:37:49.466380Z**: `/health/deep` reports `event_count = 0`, ledger
+null, and no folded events. That build counts `SELECT count(*) FROM events`,
+not entity projections. Thus EntityCreate, Moment (including node-0), Edge,
+Attestation and VocabularyDeclare were each zero at that observation; this is
+inferred from the total-zero receipt, not a separate GROUP BY query. **Current
+production v0 counts are unknown; no new live read was performed.**
+
+There is no history migration or automatic re-signing. If any v0 events exist,
+including governance/node-0 events with no historical entries, deployment needs a
+fresh v1 store and must refuse reuse of the nonempty v0 store. Verify the actual
+event table, not the projection count, at that later owner-operated boundary.
+The Engelbart fixture is v0 and cannot enter v1; preserve it as regression
+evidence only. Any later inaugural pair must be re-authored and reviewed as v1.
+Existing private fixture bytes and applied migration bytes remain unchanged.
+Coordinate constants remain `CONSTANTS_VERSION = 0`; tick arithmetic is unchanged.
 
 All v1 signing preimages use SHA-256 and existing Ed25519 keys, with this fixed
 field order:
@@ -151,8 +160,8 @@ content IDs, never row IDs. Supporting source hashes name exact stored artifacts
 | --- | --- | --- |
 | 1 | SubjectGenesis | Nonce, subject_key, initial body_hash, asserted_time/precision and evidence references. Creator obtains root grant `H("cc.root-grant.v1", event_id)`; creates first revision. |
 | 2 | Correction | One parent; same subject_key; new body_hash and assertion coordinate/precision; mandatory decision below. Creates a new immutable revision. |
-| 3 | Delegate | One parent; fresh grant event ID, grantee key and issuer_grant_ref. Full subject authority only in v1. Carries decision and evidence; copies parent's body selection. |
-| 4 | Revoke | One parent; target key active at that parent, decision and evidence. Permanently revokes that key for this subject; copies body selection. Self/last-key revocation is allowed and explicitly freezes further writes. |
+| 3 | Delegate | One parent; fresh grant event ID, grantee key and issuer_grant_ref. Body authority and scoped downstream delegation/revocation in v1. Carries decision and evidence; copies parent's body selection. |
+| 4 | Revoke | One parent; exact target_grant active there, decision and evidence. Only the target's direct/transitive issuer grant can revoke it; the root alone may revoke itself. Copies body selection; no key-wide ban on independent grants. |
 | 5 | Resolve | At least two incomparable parent heads in this subject; exact per-parent dispositions, selected revision or new merged body, mandatory decision. Joins causal history and revocations. |
 | 6 | EdgeAssert | Author, relation, both endpoint pins, evidence and decision. Edge identity is this event ID. Includes `disputes` as a new governed relation, not an alias for influence. |
 | 7 | EdgeReaffirm | Original edge ID, prior edge head(s), exact old pins and new pins, evidence and decision. Must be signed by original edge author; multiple parents explicitly resolve an edge fork. |
@@ -212,132 +221,140 @@ work or serialize rows has no branch selection significance.
 ## Fold and authority calculus
 
 The fold is a pure function `F(rule_identity, E)` of a finite candidate set.
-Dependencies are signed parent/grant/revision references. Missing references are
-pending; wrong-subject references, malformed causal structure, dependency cycles
-and invalid parents have typed, deterministic reasons. Error sets are sorted by
-reason code/reference, not discovery order. DAG evaluation is topological;
-multiple ready events are independent computations, not competing transactions.
+**Globally, ancestor and descendant are reflexive:** `x ≤ y` means x is y or is
+reachable through y's signed parents; strict ancestry is `x < y`. Grant-issuance
+ancestry is likewise reflexive; revocation scope requires a *strict* issuer
+ancestor, except root self-revocation. Missing dependencies remain pending;
+malformed references/cycles and invalid parents have deterministic reasons.
+Topological evaluation is dependency evaluation, never priority by event ID.
 
-Each valid subject event has a branch-local state:
-
-```
-(body_revision, grant_records, revoke_records, decision_history)
-```
-
-Genesis supplies the root grant. A normal transition is valid only if its named
-grant belongs to its signer and is active at its parent. There is no timestamp
-comparison. It adds its own operation to the causal history. Branch-local
-validity is not a claim that the branch is the subject's sole public head.
+Branch-local validation checks the signer's exact grant at each parent, using
+only that parent's causal cone. Resolve additionally requires the grant to
+survive the joined cone. Delegate/Revoke live on that same DAG. All signed acts
+remain available for audit even if a larger event set later suppresses their
+authority effect. A signature from an unauthorized issuer cannot contribute a
+revocation. Grant IDs, not a key-wide blacklist, define scope: a key using an
+independent surviving grant is not acting through revoked authority. This is
+necessary to prevent revoking a sibling/issuer through another grant to its key.
+A hot-key recovery must cover all its grants; the root can revoke every grant
+in its subject. A fresh key is required for delegation within the parent's cone;
+concurrent grants to the same key remain distinct capabilities.
 
 ### Grant survival at a join
 
-Grant records identify their creation event, grantee and the exact issuer grant.
-Root grants have no issuer. Revoke records identify target key and causal parent.
-At a join, combine records from **all** parents, including bodies not selected.
-Compute grants as follows:
-
-1. A revoked key has no active grant. Tombstones never disappear or allow that
-   same key to be delegated again within this subject.
-2. A non-root grant D issued by key K is canceled if a valid revocation R of K
-   exists in the joined history and D is **not an ancestor of R's parent**.
-   Thus a delegation acknowledged before R survives issuance; an incomparable
-   delegation loses its authority effect at the join. An event after R cannot
-   obtain authority from K at its parent in the first place.
-3. Cancellation of an issuance propagates through grants naming that canceled
-   grant as issuer. This is distinct from ordinary revocation of a holder:
-   revoking K does not cancel independent grants K issued before R's parent.
-4. Apply these rules to a fixed point over the finite grant DAG. A grantee with
-   an independent surviving grant can still act through that specific grant.
-   Authority is not inferred from a matching public key on a canceled grant.
-
-For Resolve with parent set P, the signer must name a grant in:
+The literal rule “monotone tombstones from all branch-valid Revokes” is unsound,
+even with issuer scope. Counterexample (five events, three keys):
 
 ```
-intersection(active_grant_ids(p) for p in P)
-    intersect active_grant_ids(joined_history(P))
+G(A) → D(A grants K) → D2(K grants C)
+                         ├─ R(A revokes K, parent=D2)
+                         └─ Q(K revokes C, parent=D2), signed later
 ```
 
-This establishes authority at **every** parent and surviving the join; a new
-branch-only delegate cannot resolve the fork that would establish its authority.
-No single “lowest common ancestor” is chosen by hash in crisscross DAGs. The
-resulting authority state includes all surviving grants from the joined history,
-not merely the intersection used to authorize the resolver. Independent concurrent
-delegations can therefore survive a resolution by a common existing authority.
-With no eligible grant, Resolve is invalid with `no_common_authority`.
+D2 is acknowledged by R; C must survive. Q is branch-valid and in K's issuance
+scope. Blindly unioning Q's tombstone kills C through a revoked issuer. Suppressing
+Q while retaining its tombstone has the same defect. The minimal replacement is
+**issuer-stratified effective revocations**. The candidate set is monotone; the
+effective tombstone set need not be. Learning R can remove Q's effect and restore
+C. That is explicit recomputation, not a timestamp or arrival-order decision.
 
-The revocation rules use only causally valid revoke records. A non-author's forged
-or unauthorized revocation has no effect. A grant canceled by a concurrent revoke
-was locally valid on its branch; its historical events remain visible, with
-`authority_effect_canceled` and the responsible revoke IDs. It does not turn those
-events into disappearing bytes or give their descendants authority after the join.
+1. Keep the grant provenance tree: each Delegate names its issuer grant; its
+   event ID is its grant ID. A Revoke must target an active grant strictly below
+   its signing grant. Root self-revocation is the only equal-grant exception.
+2. Evaluate branch-valid Revokes from root-issuer depth to leaf-issuer depth.
+   At a depth, apply all eligible events as a set. A Revoke signed through a
+   canceled grant, or outside any effective revocation cut of its signing grant,
+   contributes **no** tombstone. Lower authorities cannot revoke upward, so no
+   lower stratum can change an already evaluated higher stratum. Root
+   self-revocations are terminal controls evaluated first; simultaneous root
+   relinquishments do not cancel each other.
+3. Each effective Revoke R of grant g preserves only acts `e ≤ parent(R)` under
+   g. Any other act through g is `branch / revoked_concurrent`, excluded from
+   contention and authority effects. With multiple effective revocations of g,
+   preservation requires that inequality for **every** R: intersect their
+   acknowledged pasts. No timestamp or hash chooses a preferred cutoff.
+4. A grant D issued through g is canceled if `D ≰ parent(R)` for any effective
+   R of g, or if its issuer grant's issuance is canceled. Propagate cancellation
+   down the grant tree. **D = parent(R) survives**; revoking a holder does not
+   cancel previously acknowledged independent delegates. A canceled grant's
+   events cannot contend, even if their signing key was never directly revoked.
+5. Revoked/canceled grants are inactive. Visible descendants that depend on a
+   suppressed body branch are `branch / revoked_ancestor`, also outside
+   contention. They cannot launder it through Resolve. Re-author with a fresh
+   Correction on a surviving parent, with the suppressed content cited as
+   evidence. Effective authority controls retain their scoped tombstone effect
+   even if their inherited body path is suppressed; they do not publish that body.
+
+For Resolve, the signing grant must be active at every declared parent and after
+combining their causal histories under these rules. A branch-only delegate cannot
+resolve the fork that would establish its authority. Independent surviving grants
+are retained in the result; no ancestor is selected by hash in a crisscross DAG.
+A grant cannot be resurrected by selecting a body or by a new grant with its ID.
+A fresh independent grant is a separate authorization, not a revived tombstone.
 
 ### Frontiers and resolutions
 
-The subject frontier is the set of maximal valid events under parent ancestry.
-A normal transition has one parent; only Resolve can join incomparable parents.
-One frontier event gives a resolved head (possibly frozen if no authority remains).
-Two or more give `contested`: all heads, revisions, authority differences and
-unselected branches are returned. The filter obtains **no positive support** from
-any branch of that subject until a valid resolution covers the frontier.
+First validate causally, then derive effective revocations/cancellations, then
+exclude suppressed acts and their dependent body branches from contention.
+The frontier contains maximal remaining body transitions under `≤`. Effective
+Revokes consume their strict causal past even when the control itself offers no
+body head (notably root relinquishment). Root relinquishment is
+`superseded / root_relinquished`; a prior independent delegate may continue by a
+valid transition, but the relinquishing root cannot present a new head.
 
-A Resolve's declared parents must be pairwise incomparable and within the same
-subject. It may select any revision reachable from those parents, including their
-common prior reading, or author a new merged revision. Its decisions explain the
-selection. It cannot erase events, revoke records or grants by omission from the
-selected body. A partial join is valid but does not clear other frontier heads.
-This allows bounded joins even when the frontier exceeds the parent-list limit.
-A new sibling of an old ancestor always survives as an uncovered branch. Two
-competing resolutions themselves fork; neither wins by signature, timestamp,
-receipt order or event ID. A later eligible resolution must join them.
+One frontier event gives a resolved head; two or more give `contested`. Suppressed
+branches are still returned, with reasons and controlling revoke IDs, but never
+count toward that number or withdraw support. No frontier means no current body
+support; it is distinct from a contest. A current head may carry previously
+acknowledged content from a now-revoked writer; the excluded class is that writer's
+**out-of-cut acts**, not every historical signature by that key.
 
-Every retained event gets one primary projection status: `head`, `superseded`,
-`branch`, `pending`, or `invalid`. In a contest, maximal tips and divergent history
-are `branch`; common history is `superseded`. After a full resolution, its tip is
-`head` and covered history is `superseded`, with per-branch selection/disposition
-and resolving event ID retained. An Attestation/edge assertion has its own visible
-record/head; attachments cannot become a subject head. Missing and invalid
-records are queryable with reasons. Nothing is stored-but-invisible by design.
+Resolve requires incomparable parents (`p ≰ q` and `q ≰ p`), per-parent decisions,
+and either an eligible reachable revision or an explicitly authored merged
+revision. It cannot drop revocation evidence. Partial joins leave other eligible
+heads visible. Two valid resolutions themselves fork. Only late eligible branches
+reopen review; suppressed old-parent spam does not. IDs sort display/commitment
+bytes only. Every candidate projects as head, superseded, branch, pending or
+invalid-with-reason, including suppressed Revokes whose authority effect is zero.
 
 ### Revocation concurrency traces
 
-Let P carry independent active grants a to A and b to B. They can be constructed
-by an earlier, causally completed delegation; P is held fixed in these traces.
+Let A be the root, K its hot delegate and C a delegate issued by K.
 
-| Event set after P | Projection and permissible next action |
+| Event set | Projection and permissible next action |
 | --- | --- |
-| R = A revokes B at P; C = B corrects at P | R and C are locally valid; frontier `{R,C}` is contested. Joined authority excludes B. A can resolve; B cannot. C's bytes and decision remain a branch. |
-| D = B delegates C at P; R = A revokes B at P | D is locally valid, but its grant to C is canceled at join because D is not an ancestor of R's parent. Only surviving common authority such as A can resolve. |
-| D as above; C then delegates X/corrects on D; concurrent R | All descendant branches remain visible. The canceled grant cannot authorize a resolution with R; its derived grants are canceled too. Extending the losing branch never covers R. |
-| D is instead an ancestor of R's parent | C's prior delegation survives B's revocation; this is established authority, not a concurrent escape. C can act with its surviving grant at the resulting head. |
-| B resolves other siblings before R arrives | That resolution can be a head in the smaller set. Adding the concurrent R makes the union contested; B's resolution cannot cover R and B cannot sign the join. |
-| A revokes B and B revokes A, both at P | Both locally valid; both keys excluded at the join. No common authority survives. The contest remains visible and frozen. No curator override. |
+| A revokes K at P; K later signs Revoke(A) at P | K's revoke is invalid: upward scope, including the root, is forbidden. A's head survives; no retroactive freeze. |
+| A revokes K at P; K later corrects/resolves/delegates at old P | Out-of-cut acts are visible `revoked_concurrent`; derived grants/branches are canceled. They neither contend nor drop support. |
+| K delegated C before/equal A's revoke parent; K later revokes C at that old parent | C survives. K's later revoke is suppressed before its tombstone could take effect. This is the counterexample to the literal monotone union rule. |
+| Delegate(C) is the revoke's parent itself | Reflexivity preserves C's grant. C can continue independently. |
+| Delegate(C) is incomparable with A's revoke parent | Its issuance and descendants are canceled, without creating contention. |
+| Two issuer Revokes of K have different acknowledged pasts | Preserve K's acts only in the intersection. Excluded bodies and resolutions depending on them remain visible but cannot contend. |
+| K tries to revoke a sibling or issuer grant | `invalid / revocation_scope`, even if K was active at the chosen parent. |
+| Root revokes itself | Explicit relinquishment, no new root-authored body head. Previously established delegates may continue; no descendant can revive the root grant. |
 
-All rows are evaluated from the union, never receipt sequence. A resolution by A
-may knowingly select the content B proposed, with evidence and an explicit signed
-decision. That is A's authorized adoption, not B winning a fork or recovering a
-grant. “No revoked key can win” means no unilateral authoritative head covering
-its revocation; it does not mean revoked authors' assertions become unreadable.
-An adversarial authority can cause a freeze or withhold an event. Consensus here
-guarantees set-relative safety, not liveness, identity independence or omniscience.
-In particular, a revoked signer can keep revealing new events signed against an
-old parent where its grant was valid, reopening contests. V1 deliberately accepts
-this availability cost rather than inventing a receipt-order cutoff. Such events
-cannot resolve a frontier containing their revocation; no bounded recovery or
-finality claim is made.
+A root can revoke its delegates or destroy recovery; root compromise is total
+loss. Cold root plus hot delegates is the operating pattern, not an assumption
+that any two keys are independent people. Curators have no subject reset power.
 
 ### Why a revoked key cannot resolve the union
 
-Take a valid revocation R of key K and a proposed sole head H. If R is not an
-ancestor of H, some maximal descendant of R remains uncovered, so H is not the
-sole frontier. If R is an ancestor, K is absent from authority after R. The first
-join between R's history and a K-authored competing branch must check K against
-the state on the side containing R and the joined tombstones; K fails. Ordinary descendants
-cannot undo that tombstone. Thus K cannot unilaterally cover R and become the
-sole head. A concurrent delegation from K also fails common-grant eligibility
-and is canceled in the join; transitive delegation does not repair it. An
-independent, pre-existing grant is a different authorization, not a resurrected
-canceled grant. This argument assumes signature integrity and the same finite
-event set; it makes no claim about undisclosed events or key collusion.
+Grant scope makes the revoke-dependency graph strictly downward, with the root
+self-revocation exception handled first. Thus issuer-stratified evaluation has a
+unique result from the event set. Within each stratum, union eligible Revokes;
+intersect their reflexive acknowledged pasts; propagate cancellation downward.
+These are set operations, so delivery order, asserted time and import partitions
+cannot affect the result. Effective effects may retract on new evidence, but
+replaying the same union yields the same effects.
+
+Apart from explicit root relinquishment controls, an out-of-cut act through
+revoked authority cannot enter the frontier, contribute a revoke, or create an
+active delegation. Its dependent branches cannot restore
+it. Such acts therefore cannot be a sole head, revoke a surviving grant, or make
+a resolved subject contested. A malicious delegate cannot attack an ancestor's
+recovery grant because its Revoke is out of scope. Legitimate unrevoked-author
+forks still require resolution. A key with another independent surviving grant
+may act through that grant; this does not revive its revoked authority. The
+claim is set-relative: a replica missing the issuer's revocation cannot use it.
 
 ## Counterclaims, pinned edges and media
 
@@ -357,9 +374,9 @@ revision identity.
 For the current view an edge is `current` only when both pins match the unique
 resolved selected revisions and no revision-creating event has entered either
 head's causal history since its pinned basis. Compute that second condition from
-`ancestors(current_head) - ancestors(basis_head)`, including the heads themselves;
+`ancestors(current_head) - ancestors(basis_head)`, using the reflexive definition above;
 any Correction or merging Resolve in that difference makes the pin stale. The
-basis must be an ancestor of the current head, otherwise the pin is stale too.
+basis must satisfy `basis_head ≤ current_head`, otherwise the pin is stale too.
 A resolution selecting the old body does **not** silently restore an old edge.
 Only reaffirmation can advance its basis past a correction. A changed selected
 revision also yields `stale`, including identical bytes with a new revision ID.
@@ -434,17 +451,18 @@ frontier selection, sibling precedence or revocation effectiveness.
 
 ## Required invariants and named tests
 
-These are **future implementation acceptance tests**, not tests added or claimed
-passing by this docs PR. Properties compare canonical projections and all reason
+These are production acceptance requirements. Stage 0 exercises the authority/
+frontier subset as an abstract reference model; it does not prove the production
+encoding, HTTP, edges or versioned storage. Properties compare canonical projections and all reason
 codes, not just a selected body. The implementation must test each distinct set
 under every permutation for small cases and generated permutations/partitions for
 larger DAGs, including duplicate delivery and child-before-parent delivery.
 
 | Invariant | Required test and oracle |
 | --- | --- |
-| **I1** Same event set and rule identity, identical projection across orderings and import partitions. | `i1_union_permutation_partition_convergence`: enumerate revoke/correction, revoke/delegate/descendant, mutual revoke, competing resolution and crisscross cases; compare whole root/rows after union, rebuild and duplicate replay. Include partial resolution and late siblings. |
-| **I2** No event changes a head without authority valid at its parent(s). | `i2_parent_authority_and_surviving_join_grant`: unauthorized author, wrong grant, parent-missing, branch-only delegate and revoked resolver cannot yield an authoritative head. `i2_revoke_concurrent_correction_no_revoked_winner` and `i2_revoke_concurrent_delegate_cancels_descendants` enumerate all delivery orders; `i2_prior_delegate_survives_later_revoke` pins the causal distinction; `i2_mutual_revoke_freezes_without_curator_bypass` pins safe deadlock. |
-| **I3** Every retained event is head, superseded, branch, pending or invalid-with-reason. | `i3_total_auditable_classification`: projection IDs equal retained candidate IDs; statuses are exclusive and exhaustive, rejected branches retain decisions, incomplete parents wake deterministically, semantic rejects remain visible, malformed attempts get separate receipts. `i3_late_branch_reopens_resolved_frontier` prevents invisible siblings. |
+| **I1** Same event set and rule identity, identical projection across orderings and import partitions. | `i1_union_permutation_partition_convergence`: enumerate revoke/correction, revoke/delegate/descendant, retroactive out-of-scope revoke, competing resolution and crisscross cases; compare whole root/rows after union, rebuild and duplicate replay. Include partial resolution and late siblings. |
+| **I2** No event changes a head without authority valid at its parent(s). | `i2_parent_authority_and_surviving_join_grant`: unauthorized author, wrong grant, parent-missing, branch-only delegate and revoked resolver cannot yield an authoritative head. `i2_revoke_concurrent_correction_no_revoked_winner` and `i2_revoke_concurrent_delegate_cancels_descendants` enumerate all delivery orders; `i2_prior_delegate_survives_later_revoke` pins the causal distinction; `i2_retroactive_revoke_from_old_parent_cannot_freeze` pins issuer scope; `i2_revoke_parent_equal_delegate_preserves_grant` pins reflexivity. Suppressed Revokes have no tombstone effect; only eligible acts may contend. |
+| **I3** Every retained event is head, superseded, branch, pending or invalid-with-reason. | `i3_total_auditable_classification`: projection IDs equal retained candidate IDs; statuses are exclusive and exhaustive, rejected branches retain decisions, incomplete parents wake deterministically, semantic rejects remain visible, malformed attempts get separate receipts. `i3_late_eligible_branch_reopens_resolved_frontier` preserves legitimate siblings; revoked-concurrent branches remain visible without reopening. |
 | **I4** Subject-key change is never a correction. | `i4_subject_key_immutable_across_all_transitions`: mutate kind/namespace/value or subject_ref in Correction, Resolve and authority events; reject with `subject_key_changed`/`wrong_subject`. New genesis is separate authority; revision/body binding never changes. |
 | **I5** Edges stay pinned; correction makes stale, never retargets. | `i5_pins_survive_correction_resolution_and_reaffirmation`: both endpoints, same bytes/new revision, correction followed by selection of the old revision (still stale), authority-only change, contested endpoint and competing reaffirmations; inspect actual filter neighbors and media bindings, not only UI status. |
 | **I6** No ordering/authority depends on asserted time. | `i6_asserted_time_and_receipt_noninterference`: regenerate/re-sign isomorphic DAGs with reversed/extreme/equal claim times and different receipt metadata, updating IDs/references; compare authority/frontier decisions under the isomorphism. Roots need not match when signed content changes. Query-time filtering remains a separate test. |
@@ -462,22 +480,47 @@ under its explicit legacy version; it must not force preservation of that gap.
 
 Estimates are changed lines including meaningful tests and docs, excluding lock
 files/generated vectors. They are review sizing estimates, not completed work.
-All stages remain unreleased until I1–I8 pass together and the owner separately
-opens the first-publication gate. No intermediate stage writes production or
-permits a v0/v1 mixed graph.
+No intermediate stage writes production or permits a v0/v1 mixed graph. The
+owner chooses a ship sequence and separately opens any first-publication gate;
+no sequence is selected by this proposal.
+
+**Stage 0** is the pure [Python reference fold](stage0/model.py) and
+[exhaustive/Hypothesis checker](stage0/check.py). Python makes counterexample
+traces and a later Rust differential oracle directly reusable without a second
+specification language. The model covers grant scope, parent authority,
+issuer-stratified tombstones, cancellation, visible suppression, frontier and
+Resolve; it abstracts signatures, bodies, edges, encoding, HTTP and persistence.
+The bounds, reproducible command and measured results are in
+[stage0/README.md](stage0/README.md). This is executable specification only.
 
 | Stage | Deliverable and completion boundary | Estimated diff |
 | --- | --- | --- |
 | **(a) Encoding + single admit()** | v1 typed envelopes/DecisionV1, strict decoder and signer-bound IDs, canonical vectors, new empty-store schema provisioning, retained candidate/rejection interface, HTTP/import adapters to one semantic entry point. Remove public bypasses; restore uses admit. Stage remains non-serving until later semantics land. I4, I7 and encoding checks. | 1,200–1,800 lines across core/admission/schema/API tests. |
-| **(b) Authority chain** | Genesis grants, provenance-bearing Delegate/Revoke, branch-local authorization, permanent key tombstones and deterministic concurrent-delegation cancellation. Receipt separation. Single-path and concurrency authority tests, I2/I6. | 900–1,400 lines. |
+| **(b) Authority chain** | Genesis grants, provenance-bearing Delegate/Revoke, branch-local authorization, scoped, issuer-stratified tombstones and deterministic concurrent-delegation cancellation. Receipt separation. Single-path and concurrency authority tests, I2/I6. | 900–1,400 lines. |
 | **(c) Fork/resolution projection** | MV frontier, join eligibility, decision validation, all-event status/reason reads, safe freeze, late fork reopening, counterclaims. Replace timestamp/hash winner semantics; full I1/I3 property/permutation harness and node-prose reads. | 1,300–2,000 lines. |
 | **(d) Pinned edges** | Both endpoint pins, disputes, author-only reaffirmation/forks, neighbor filtering, revision-scoped media behavior, I5. No inferred absence or auto-retarget. | 700–1,100 lines. |
 | **(e) fold_version** | Final governed manifest, filter trust root, versioned roots/protocol/verdicts/cache/export/restore, refusal paths and native/Wasm checks; run I1–I8 end to end. Earlier stages reserve version fields; this stage pins and enables the complete rule identity. | 650–1,000 lines. |
 
+**Owner ship-order alternative, not selected:** `(a) → (c) → (d) → (e)`, with
+Delegate and Revoke tags rejected by the shared admit() on every ingress before
+candidate storage (rejection receipts only), permits a single-authority-key-per-
+subject first publish. Enabling (b) cannot resurrect rejected candidates from the
+ledger. `(b)` may follow only as a new
+`fold_version`. Encoding v1 reserves those tags; enabling them changes semantics,
+not merely configuration. I1 and I3–I8 still apply to the admitted event domain;
+I2 reduces to the genesis key authorizing every correction and resolution.
+Revocation/grant properties hold only vacuously because those operations reject,
+not because multi-signer safety shipped. Lost: delegation, hot-key recovery,
+rotation and cold-root/hot-delegate operation. The root must sign body changes;
+its compromise is unrecoverable within that subject. The full sequence including
+(b) retains all multi-signer obligations. Both require the owner to decide; this
+document does not choose the constrained first publish.
+
 Total estimate: 4,750–7,300 changed lines. Each implementation stage requires
 `make check`, Wasm and applicable Python checks against synthetic real Postgres.
-The design PR adds no implementation or tests; passing existing CI cannot prove
-these proposed invariants. Completion of code still does not authorize production
+Stage 0 is reference specification code only; existing production CI cannot
+prove the proposed invariants. Stages (b)/(c) are accepted only when the Rust fold
+agrees with the model on generated DAGs, including states/reasons and grant effects. Completion of code still does not authorize production
 content. #6 closes only with evidence that every implementation gate passes.
 
 ## Non-goals and enforced exclusions
@@ -497,12 +540,13 @@ content. #6 closes only with evidence that every implementation gate passes.
   reject altered derived tables instead of treating them as valid event history.
 - **Immediate irrevocable revocation across disconnected replicas:** excluded by
   the event-set contract. A missing event cannot affect a replica; newly learned
-  branches reopen review instead of receiving a fabricated total order.
+  eligible branches reopen review instead of receiving a fabricated total order.
+  Revoked-concurrent branches are excluded once the effective revoke is known.
 
 ## Parking lot (nonblocking for v1)
 
-1. Threshold/role-separated authority grants. V1 grants full authority to each
-   key and safely freezes when no common resolver survives.
+1. Threshold/role-separated authority grants. V1 grants body authority plus
+   scoped downstream authority; the root remains the recovery trust boundary.
 2. Delegated edge-author rotation. V1 fixes the original edge author; replacement
    assertions remain possible without rewriting an old edge.
 3. Projection indexing/checkpoint performance. Full deterministic replay is the

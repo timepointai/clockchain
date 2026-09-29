@@ -1,0 +1,32 @@
+{
+  "model": "stage0-issuer-stratified-grant-revocation-v1",
+  "keys": 3,
+  "exhaustive_max_events": 7,
+  "symmetry": "event-ID alpha renaming and exchange of keys 1/2",
+  "trace_max_events": 7,
+  "named_cases": [
+    "i2_retroactive_revoke_from_old_parent_cannot_freeze",
+    "literal_monotone_tombstone_counterexample",
+    "i2_revoke_parent_equal_delegate_preserves_grant",
+    "i2_concurrent_delegate_descendants_do_not_contend",
+    "i2_multiple_revokes_intersect_acknowledged_pasts",
+    "i2_revoked_branch_cannot_launder_through_resolution",
+    "i1_competing_resolutions_and_join",
+    "i2_root_only_relinquishment_and_prior_delegate"
+  ],
+  "trace_orderings": 15528,
+  "trace_bipartitions": 512,
+  "hypothesis_examples": 3000,
+  "valid_prefixes": 204522,
+  "candidate_extensions": 2307805,
+  "invalid_extensions": 1799288,
+  "author_mutations": 4615610,
+  "symmetry_duplicates": 303996,
+  "seconds": 5310.159,
+  "result": "pass",
+  "source_sha256": {
+    "model.py": "41cc912e09eb938bb99cc69ee5ea1883c0ebe52a2e3fb7c72441ccfeec93298c",
+    "check.py": "5139ce3c4cb4bb67fb3255ff9876d4022a9d9f1254f7553e30bb9c9a847ef64a",
+    "requirements.txt": "e77cb6458efed07af017e62ed770aaf9f1864f0cc7eea0ead2c07156d5f808e0"
+  }
+}
