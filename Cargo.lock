@@ -377,6 +377,7 @@ dependencies = [
 name = "cc-testkit"
 version = "0.0.0"
 dependencies = [
+ "cc-core",
  "cc-ledger",
  "sqlx",
  "tokio",

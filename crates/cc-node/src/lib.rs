@@ -50,6 +50,7 @@ pub mod media;
 pub mod media_absence;
 pub mod protocol;
 pub mod state;
+pub mod v1;
 pub mod view;
 
 /// The TT layer, derived at read time from stored fields. Nothing minted.
