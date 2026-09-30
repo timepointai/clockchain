@@ -16,9 +16,12 @@ use sha2::{Digest, Sha256};
 /// Number of `u64` limbs backing [`I256`] (256 / 64).
 const LIMBS: usize = 4;
 
-/// Canon encoding regime version, bound into every preimage so two encoding
-/// regimes can never collide.
-pub const CANON_VERSION: u16 = 0;
+/// Latest encoding regime. Explicit legacy paths retain version zero;
+/// each preimage binds its own regime so encoding identities never collide.
+pub const CANON_VERSION: u16 = 1;
+/// Existing v0 identities and signed bytes are never reinterpreted by v1.
+pub const LEGACY_CANON_VERSION: u16 = 0;
+pub mod v1;
 /// Governed-constants version, bound into every preimage so a coordinate integer
 /// is only ever hashed under a stated constants version.
 pub const CONSTANTS_VERSION: u16 = 0;
@@ -397,7 +400,7 @@ pub fn canon_event(c: &EventContent) -> Vec<u8> {
         EventBody::VocabularyDeclare(_) => DST_VOCAB,
     };
     framed(&mut out, dst);
-    out.extend_from_slice(&CANON_VERSION.to_be_bytes());
+    out.extend_from_slice(&LEGACY_CANON_VERSION.to_be_bytes());
     out.extend_from_slice(&CONSTANTS_VERSION.to_be_bytes());
 
     match &c.body {

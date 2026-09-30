@@ -8,6 +8,7 @@
 //! migrations, and hands back a live pool plus a best-effort [`Cleanup`].
 
 use sqlx::{Connection, PgConnection, PgPool};
+pub mod v1;
 
 /// A best-effort teardown handle for an ephemeral database.
 pub struct Cleanup {
@@ -44,6 +45,15 @@ impl Cleanup {
 /// Panics if no `TEST_DATABASE_URL`/`DATABASE_URL` is set or the server is
 /// unreachable — a test that cannot reach a real Postgres has failed by design.
 pub async fn ephemeral_db() -> (PgPool, Cleanup) {
+    provision(false).await
+}
+
+/// Fresh database without v0 migrations, for the explicitly separate v1 store.
+pub async fn ephemeral_empty_db() -> (PgPool, Cleanup) {
+    provision(true).await
+}
+
+async fn provision(empty: bool) -> (PgPool, Cleanup) {
     let base = std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .expect("TEST_DATABASE_URL or DATABASE_URL must be set");
@@ -105,7 +115,11 @@ pub async fn ephemeral_db() -> (PgPool, Cleanup) {
     let pool = cc_ledger::connect(&url)
         .await
         .expect("connect to ephemeral database");
-    let migrated = cc_ledger::run_migrations(&pool).await;
+    let migrated = if empty {
+        Ok(())
+    } else {
+        cc_ledger::run_migrations(&pool).await
+    };
 
     // Release before asserting, so one failed migration does not wedge every
     // other test behind a lock that is never given back.

@@ -25,6 +25,8 @@ use cc_core::{
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
+pub mod v1;
+
 /// Connect to Postgres.
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
     PgPool::connect(database_url).await
