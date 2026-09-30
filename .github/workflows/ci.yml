@@ -74,3 +74,30 @@ jobs:
 
       - name: Offline evaluation contract
         run: python3 -m unittest discover -s ops -p 'test_*.py'
+
+  stage0:
+    name: Stage 0 · model and mutants
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install reference-model dependency
+        run: python -m pip install -r docs/design/stage0/requirements.txt
+      - name: Fast bound and depth checks
+        run: >-
+          python docs/design/stage0/check.py --max-events 5 --examples 300
+          --depth-examples 1000 --output "$RUNNER_TEMP/stage0-fast.json"
+      - name: Kill all six one-rule mutants
+        run: >-
+          python docs/design/stage0/mutants.py
+          --output "$RUNNER_TEMP/stage0-mutants.json"
+      - name: Retain reference-model receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage0-receipts
+          path: ${{ runner.temp }}/stage0-*.json
+          if-no-files-found: error
