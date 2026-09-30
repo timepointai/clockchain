@@ -23,3 +23,12 @@ CREATE TRIGGER immutable_candidates BEFORE UPDATE OR DELETE OR TRUNCATE ON cc_v1
 FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();
 CREATE TRIGGER immutable_rejections BEFORE UPDATE OR DELETE OR TRUNCATE ON cc_v1.rejections
 FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();
+
+-- Stage (b) observations are separate from the semantic candidate set.
+CREATE TABLE cc_v1.receipts (
+    receipt_digest bytea PRIMARY KEY CHECK(octet_length(receipt_digest)=32),
+    event_id bytea NOT NULL REFERENCES cc_v1.candidates(event_id),
+    envelope bytea NOT NULL CHECK(octet_length(envelope)<=1048576)
+);
+CREATE TRIGGER immutable_receipts BEFORE UPDATE OR DELETE OR TRUNCATE ON cc_v1.receipts
+FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();

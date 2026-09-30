@@ -1,9 +1,11 @@
-//! Stage (a) candidate admission. No v1 projection, filter support, or serving readiness.
+//! Stage (b) candidate admission and authority. No frontier, support or readiness.
 //! HTTP, import and restore must all use `Store::admit`; SQL insertion is private.
 use cc_core::v1::{hash, root_grant, Hash, Kind, Payload, Signed, Value};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::{BTreeMap, BTreeSet};
+mod authority;
+pub use authority::{Authority, Effect, Grant};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,26 +48,16 @@ pub struct Outcome {
     pub event: Option<Hash>,
     pub input_digest: Hash,
     pub status: Status,
+    pub authority: Option<Effect>,
 }
 
 /// Branch-local admission only. Valid does not mean head, support, or publishable.
 /// Unsupported later-stage semantics remain explicit pending candidates.
 pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
-    fn evaluate(
-        id: Hash,
-        all: &BTreeMap<Hash, Signed>,
-        out: &mut BTreeMap<Hash, Status>,
-        visiting: &mut BTreeSet<Hash>,
-    ) -> Status {
-        if let Some(s) = out.get(&id) {
-            return s.clone();
-        }
-        if !visiting.insert(id) {
-            return Status::invalid("cycle");
-        }
+    fn evaluate(id: Hash, all: &BTreeMap<Hash, Signed>, out: &BTreeMap<Hash, Status>) -> Status {
         let e = all[&id].envelope();
         let kind = e.payload.kind();
-        let result = (|| {
+        (|| {
             if e.asserted_time
                 .as_ref()
                 .is_some_and(|t| t.precision.is_empty())
@@ -115,12 +107,7 @@ pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
             if !missing.is_empty() {
                 return Status::pending("parent_missing", missing);
             }
-            let parent_states: Vec<_> = e
-                .parents
-                .0
-                .iter()
-                .map(|p| evaluate(*p, all, out, visiting))
-                .collect();
+            let parent_states: Vec<_> = e.parents.0.iter().map(|p| out[p].clone()).collect();
             if parent_states.iter().any(|s| s.state == State::Invalid) {
                 return Status::invalid("ancestor");
             }
@@ -161,37 +148,119 @@ pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
             if matches!(kind, Kind::Delegate | Kind::Revoke) && e.asserted_time.is_some() {
                 return Status::invalid("authority_time_edit");
             }
+            if kind == Kind::Resolve {
+                return Status::pending("stage_c_not_implemented", vec![]);
+            }
+            let parent = e.parents.0[0];
+            let past = authority::cone(all, parent);
+            let view = authority::derive(&past);
+            let grant = e.grant.unwrap();
+            if !view.active.contains(&grant) || view.grants[&grant].holder != e.author {
+                return Status::invalid("parent_authority");
+            }
             match &e.payload {
                 Payload::Correction { body, decision } => {
-                    if e.grant != Some(root_grant(subject)) || e.author != genesis.envelope().author
+                    if decision.old != Value::Body(authority::body(all, parent))
+                        || decision.new != Value::Body(*body)
                     {
-                        return Status::invalid("parent_authority");
-                    }
-                    let old = match &all[&e.parents.0[0]].envelope().payload {
-                        Payload::Genesis { body, .. } | Payload::Correction { body, .. } => *body,
-                        _ => return Status::pending("stage_b_c_not_implemented", vec![]),
-                    };
-                    if decision.old != Value::Body(old) || decision.new != Value::Body(*body) {
                         return Status::invalid("decision_mismatch");
                     }
-                    Status::valid()
                 }
-                Payload::Delegate { .. } | Payload::Revoke { .. } => {
-                    Status::pending("stage_b_not_implemented", vec![])
+                Payload::Delegate {
+                    grantee,
+                    issuer,
+                    decision,
+                } => {
+                    if *issuer != grant {
+                        return Status::invalid("issuer_grant_mismatch");
+                    }
+                    if cc_core::AuthorKey::from_bytes(grantee).is_err() {
+                        return Status::invalid("key");
+                    }
+                    if view.grants.values().any(|g| g.holder == *grantee) {
+                        return Status::invalid("key_not_fresh");
+                    }
+                    if decision.old != Value::None
+                        || decision.new
+                            != (Value::Grant {
+                                issuer: *issuer,
+                                grantee: *grantee,
+                            })
+                    {
+                        return Status::invalid("decision_mismatch");
+                    }
                 }
-                Payload::Resolve { .. } => Status::pending("stage_c_not_implemented", vec![]),
+                Payload::Revoke {
+                    target,
+                    cascade,
+                    decision,
+                } => {
+                    if !view.active.contains(target) || !authority::in_scope(&view, grant, *target)
+                    {
+                        return Status::invalid("revocation_scope");
+                    }
+                    if decision.old != Value::ActiveGrant(*target)
+                        || decision.new
+                            != (Value::RevokedGrant {
+                                grant: *target,
+                                cascade: *cascade,
+                            })
+                    {
+                        return Status::invalid("decision_mismatch");
+                    }
+                }
                 _ => unreachable!(),
             }
-        })();
-        visiting.remove(&id);
-        out.insert(id, result.clone());
-        result
+            Status::valid()
+        })()
     }
     let mut out = BTreeMap::new();
-    for id in candidates.keys() {
-        evaluate(*id, candidates, &mut out, &mut BTreeSet::new());
+    // Iterative dependency evaluation: no chain-depth policy or recursive stack
+    // ceiling. An unavailable parent stays pending; display order is irrelevant.
+    while out.len() < candidates.len() {
+        let before = out.len();
+        for (&id, event) in candidates {
+            if out.contains_key(&id) {
+                continue;
+            }
+            let e = event.envelope();
+            let no_parent_semantics = matches!(
+                e.payload.kind(),
+                Kind::Genesis | Kind::EdgeAssert | Kind::EdgeReaffirm | Kind::Attestation
+            );
+            if no_parent_semantics
+                || e.parents.0.iter().any(|p| !candidates.contains_key(p))
+                || e.parents.0.iter().all(|p| out.contains_key(p))
+            {
+                out.insert(id, evaluate(id, candidates, &out));
+            }
+        }
+        if out.len() == before {
+            for &id in candidates.keys() {
+                out.entry(id).or_insert_with(|| Status::invalid("cycle"));
+            }
+        }
     }
     out
+}
+
+/// Branch validity and authority effects are separate; neither selects a body head.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Analysis {
+    pub admission: BTreeMap<Hash, Status>,
+    pub authority: Authority,
+}
+pub fn analyze(candidates: &BTreeMap<Hash, Signed>) -> Analysis {
+    let admission = classify(candidates);
+    let valid = candidates
+        .iter()
+        .filter(|(id, _)| admission[*id].state == State::Valid)
+        .map(|(id, e)| (*id, e.clone()))
+        .collect();
+    Analysis {
+        admission,
+        authority: authority::derive(&valid),
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -204,8 +273,10 @@ pub enum Error {
     Identity,
     #[error("stored_candidate_corrupt")]
     Corrupt,
-    #[error("stage_a_non_serving")]
+    #[error("stage_b_non_serving")]
     NonServing,
+    #[error("invalid_node_receipt")]
+    Receipt,
 }
 #[derive(Clone)]
 pub struct Store {
@@ -274,6 +345,7 @@ impl Store {
                     event: None,
                     input_digest: digest,
                     status: Status::invalid(reason),
+                    authority: None,
                 });
             }
         };
@@ -292,7 +364,9 @@ impl Store {
             candidates.insert(s.id(), s);
         }
         candidates.insert(id, signed);
-        let status = classify(&candidates).remove(&id).ok_or(Error::Corrupt)?;
+        let mut analysis = analyze(&candidates);
+        let status = analysis.admission.remove(&id).ok_or(Error::Corrupt)?;
+        let authority = analysis.authority.effects.remove(&id);
         sqlx::query(
             "INSERT INTO cc_v1.candidates(event_id,envelope) VALUES($1,$2) ON CONFLICT DO NOTHING",
         )
@@ -305,7 +379,30 @@ impl Store {
             event: Some(id),
             input_digest: digest,
             status,
+            authority,
         })
+    }
+    /// Retain a verified node observation separately. No grant, event, or
+    /// admission boolean is installed from it. This does not endorse its node
+    /// key or fold identity; serving version policy remains stage (e).
+    pub async fn retain_receipt(&self, bytes: &[u8]) -> Result<(), Error> {
+        let signed =
+            cc_core::v1::receipt::SignedReceipt::decode(bytes).map_err(|_| Error::Receipt)?;
+        let r = signed.receipt();
+        if r.instance != self.instance {
+            return Err(Error::Receipt);
+        }
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cc_v1.candidates WHERE event_id=$1)")
+                .bind(r.event.to_vec())
+                .fetch_one(&self.pool)
+                .await?;
+        if !exists {
+            return Err(Error::Receipt);
+        }
+        sqlx::query("INSERT INTO cc_v1.receipts(receipt_digest,event_id,envelope) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
+            .bind(hash(bytes).to_vec()).bind(r.event.to_vec()).bind(bytes).execute(&self.pool).await?;
+        Ok(())
     }
     pub async fn import(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
         let mut out = Vec::new();
@@ -318,7 +415,7 @@ impl Store {
         self.import(envelopes).await
     }
     /// Recompute classifications from verified retained bytes, never a cached verdict.
-    pub async fn review(&self) -> Result<BTreeMap<Hash, Status>, Error> {
+    async fn verified_candidates(&self) -> Result<BTreeMap<Hash, Signed>, Error> {
         let rows = sqlx::query("SELECT event_id,envelope FROM cc_v1.candidates ORDER BY event_id")
             .fetch_all(&self.pool)
             .await?;
@@ -332,6 +429,12 @@ impl Store {
             }
             candidates.insert(s.id(), s);
         }
-        Ok(classify(&candidates))
+        Ok(candidates)
+    }
+    pub async fn review(&self) -> Result<BTreeMap<Hash, Status>, Error> {
+        Ok(classify(&self.verified_candidates().await?))
+    }
+    pub async fn review_authority(&self) -> Result<Analysis, Error> {
+        Ok(analyze(&self.verified_candidates().await?))
     }
 }

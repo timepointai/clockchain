@@ -1,5 +1,8 @@
 # Stage (a): v1 encoding and candidate admission
 
+This records PR #8's boundary. Subsequent authority implementation is described
+in [Stage (b)](STAGE-B.md); the normal node remains non-serving for canonical v1.
+
 This implements the encoding and candidate-store foundation of
 [MULTI-SIGNER.md](MULTI-SIGNER.md). It is **non-serving**. The node binary and its
 legacy router do not enable v1; `Store::readiness()` and the review router's
