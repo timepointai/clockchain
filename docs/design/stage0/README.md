@@ -20,6 +20,10 @@ revoked by itself. A root relinquishment is an explicit control, not a body head
 root compromise remains total loss. Historical acts acknowledged by every
 effective revoke are not prohibited merely because their writer is now revoked.
 The safety claims exclude out-of-cut acts through revoked/canceled authority.
+Owner-selected `Revoke.cascade=true` retires the complete target grant subtree,
+including acknowledged descendants and grants learned later. Past acts still use
+the reflexive cutoff. A suppressed cascade has no effect; false preserves the
+non-cascading departure behavior. The signed flag is explicit, not inferred.
 
 Use Python 3.13 (used for the recorded runs):
 
@@ -37,7 +41,8 @@ The exhaustive domain is one genesis and three keys: five total events in CI,
 seven in the full manual gate.
 Every earlier parent is considered, including old parents after revocation;
 Resolve considers every incomparable parent subset. It tries every available
-grant reference, delegation target, revocation target and signer mutation.
+grant reference, delegation target, revocation target, both cascade flags and
+signer mutation. Symmetry keys include the flag; the two choices never coalesce.
 Invalid extensions are checked but not extended: they cannot supply authority
 or a valid parent. Duplicate structural corrections represent distinct body/
 decision commitments, not duplicate delivery. Actual duplicate delivery is checked
@@ -67,7 +72,7 @@ partition/replay combinations through seven events.
 
 The retained five-event counterexample `literal_monotone_tombstone_counterexample`
 shows why unioning all branch-valid Revoke targets is wrong: it kills C through
-revoked issuer K. The reference result preserves C and makes K's Revoke a visible,
+revoked issuer K. With `cascade=false`, the reference result preserves C and makes K's Revoke a visible,
 non-effective branch. Effective tombstones may retract after a higher issuer's
 revocation arrives; the candidate event set remains monotone.
 
@@ -75,10 +80,12 @@ revocation arrives; the candidate event set remains monotone.
 
 The `stage0` job, **Stage 0 · model and mutants**, runs the commands above on every
 PR/main push, with a five-minute job timeout. It uploads both JSON receipts even
-on failure. Local measured time: 7.939 seconds for the fast/depth check and 2.361
-seconds for mutations. [Fast receipt](fast-results.json): 1,287 distinct graphs,
-8,839 candidate extensions, 17,678 signer mutations; ten named traces across
-25,608 permutations and 768 bipartitions; 300 general Hypothesis examples.
+on failure. Local measured time: 18.427 seconds for the fast/depth check and
+5.117 seconds for mutations. [Fast receipt](fast-results.json):
+2,341 distinct graphs, 17,797 candidate extensions,
+35,594 signer mutations; thirteen named traces across
+26,568 permutations and 896 bipartitions;
+300 general Hypothesis examples.
 These counts are different categories, not a count of independent proofs.
 
 [mutants.py](mutants.py) replaces one rule in an isolated copy of `model.py`.
@@ -98,6 +105,7 @@ load errors/crashes do not count as kills. A survivor makes the suite fail.
 | Fork-point-only Resolve authority | yes | 4 |
 | Revoked acts enter frontier | yes | 3 |
 | Lowest event ID wins siblings | yes | 3 |
+| Ignore signed cascade flag | yes | 3 |
 
 [Mutation receipt](mutant-results.json) contains each complete trace, assertion,
 reference/mutant views and mutated-source hash. Some minima exercise root
@@ -109,9 +117,9 @@ The new admission assertion catches it rather than weakening the mutant.
 Depth coverage uses **targeted Hypothesis, not four-key exhaustive enumeration**.
 With pinned seed `20260929`, `derandomize=True` and Hypothesis version pinned, all
 1,000 examples executed; maximum depth actually reached was six, with seven keys
-and eleven events including an appended attack. Of those examples, 182 acknowledged
-an inner revoke and 818 made the issuer/descendant revokes concurrent. Depth phase:
-4.344 seconds. Parent cutoffs, grant/key labels, old-parent corrections/counter-
+and eleven events including an appended attack. Of those examples, 245 acknowledged
+an inner revoke and 755 made the issuer/descendant revokes concurrent. Depth phase:
+7.222 seconds; 258 cases used a cascading outer revoke. Parent cutoffs, grant/key labels, old-parent corrections/counter-
 revokes, delivery permutations and partition/duplicate replay vary. These are
 bounded sampled traces, not exhaustive depth coverage. Any shrunk failure must be
 retained as a named regression before this gate can pass.
@@ -121,7 +129,10 @@ bipartition: (1) concurrent G-revokes-A / A-revokes-K / K-revokes-C suppresses A
 revoke, so K survives and can resolve; (2) G acknowledges A's revoke of K before
 revoking A, so both revokes remain effective, neither A nor K can resolve, and an
 acknowledged C grant survives K's old-parent counter-revoke. Hypothesis also checks
-the unacknowledged-delegation cutoff, where C is canceled instead.
+the unacknowledged-delegation cutoff, where C is canceled instead. Three additional
+named traces pin compromise with visible attacker-issued grants (cascade true),
+honest delegator departure (false), and a suppressed cascade with no descendant
+effect. They run all delivery permutations and bipartitions too.
 
 ## Full manual pre-release gate
 
@@ -136,15 +147,23 @@ HYPOTHESIS_STORAGE_DIRECTORY=/tmp/clockchain-stage0-hypothesis \
   --output /tmp/stage0-mutants.json
 ```
 
-The [last full-bound receipt](results.json) belongs to
-[revision f0c94df](https://github.com/timepointai/clockchain/tree/f0c94dfd98880943cda54b595681d4d1813fb4ac/docs/design/stage0),
-before this checker revision: 204,522 distinct graphs modulo the stated symmetries,
-2,307,805 candidate extensions, 1,799,288 invalid extensions, 4,615,610 signer
-mutations, eight traces/15,528 permutations/512 bipartitions and 3,000 general
-Hypothesis examples; 5,310.159 seconds. It contains no targeted depth run. Preserve
-that receipt as dated evidence, not a pass for changed checker/model bytes.
-This round ran the fast bound, depth checks and mutations; the revised full manual
-gate has **not** been run. CI does not replace it or authorize release.
+The [full-bound receipt](results.json), recorded 2026-09-30, passes on the final
+cascade model/checker bytes: **489,782 distinct graphs** modulo the stated
+symmetries, **6,421,108 candidate extensions**, 5,136,273 invalid extensions and
+12,842,216 signer mutations. Thirteen named traces cover 26,568 permutations and
+896 bipartitions. The run also passed 3,000 general Hypothesis examples and
+3,000 targeted-depth examples, reaching depth six / seven keys / eleven events:
+761 acknowledged, 2,239 concurrent, and 815 cascading cases. Total time:
+**2,849.100 seconds**; targeted depth: 9.345 seconds.
+
+The receipt pins model SHA-256
+`9774ef0fa0fa8fe4248939f092d1419909a65d42ba0ae6aa6ee0adad85dd0551`
+and checker SHA-256
+`3701ee61bedeee933c15554daa92582ce880bc3574f7e7de1bcfd2f8bee70b8f`.
+It replaces the older non-cascade receipt, which remains available in
+[revision f0c94df](https://github.com/timepointai/clockchain/tree/f0c94dfd98880943cda54b595681d4d1813fb4ac/docs/design/stage0).
+This bounded pass is not an unbounded proof. CI does not replace the full manual
+gate or authorize release.
 
 Stage (b) and stage (c) acceptance
 requires differential agreement between Rust and this fold on generated DAGs,

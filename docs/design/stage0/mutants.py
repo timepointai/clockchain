@@ -21,7 +21,7 @@ import check
 
 NAMES = (
     "monotone_tombstones", "unscoped_revocation", "strict_cut_ancestry",
-    "fork_point_resolve", "revoked_frontier", "lowest_id_wins",
+    "fork_point_resolve", "revoked_frontier", "lowest_id_wins", "ignore_cascade",
 )
 
 
@@ -58,6 +58,9 @@ def mutated_source(name):
                             '''    eligible = (set(index) - set(reasons) - relinquishments) | {
         i for i, reason in reasons.items() if reason == "revoked_concurrent"
     }''')
+    if name == "ignore_cascade":
+        return replace_once(source, "r.target == grant or (r.cascade and r.target in lineage[grant])",
+                            "r.target == grant")
     if name == "lowest_id_wins":
         return replace_once(source, '    frontier = eligible - consumed',
                             '''    frontier = eligible - consumed

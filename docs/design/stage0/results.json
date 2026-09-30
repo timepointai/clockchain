@@ -1,5 +1,5 @@
 {
-  "model": "stage0-issuer-stratified-grant-revocation-v1",
+  "model": "stage0-issuer-stratified-cascade-revocation-v1",
   "keys": 3,
   "exhaustive_max_events": 7,
   "symmetry": "event-ID alpha renaming and exchange of keys 1/2",
@@ -12,21 +12,39 @@
     "i2_multiple_revokes_intersect_acknowledged_pasts",
     "i2_revoked_branch_cannot_launder_through_resolution",
     "i1_competing_resolutions_and_join",
-    "i2_root_only_relinquishment_and_prior_delegate"
+    "i2_root_only_relinquishment_and_prior_delegate",
+    "i2_depth_three_concurrent_revocations_alternate",
+    "i2_depth_three_acknowledged_revocation_blocks_counter_revoke",
+    "i2_cascade_compromise_visible_attacker_delegates",
+    "i2_non_cascade_honest_delegator_departure",
+    "i2_suppressed_cascade_has_no_descendant_effect"
   ],
-  "trace_orderings": 15528,
-  "trace_bipartitions": 512,
+  "trace_orderings": 26568,
+  "trace_bipartitions": 896,
   "hypothesis_examples": 3000,
-  "valid_prefixes": 204522,
-  "candidate_extensions": 2307805,
-  "invalid_extensions": 1799288,
-  "author_mutations": 4615610,
-  "symmetry_duplicates": 303996,
-  "seconds": 5310.159,
-  "result": "pass",
+  "depth": {
+    "examples_executed": 3000,
+    "max_chain_depth_reached": 6,
+    "max_events_reached": 11,
+    "max_keys_reached": 7,
+    "acknowledged": 761,
+    "concurrent": 2239,
+    "cascade": 815,
+    "requested_examples": 3000,
+    "seed": 20260929,
+    "derandomize": true,
+    "seconds": 9.345
+  },
+  "valid_prefixes": 489782,
+  "candidate_extensions": 6421108,
+  "invalid_extensions": 5136273,
+  "author_mutations": 12842216,
+  "symmetry_duplicates": 795054,
   "source_sha256": {
-    "model.py": "41cc912e09eb938bb99cc69ee5ea1883c0ebe52a2e3fb7c72441ccfeec93298c",
-    "check.py": "5139ce3c4cb4bb67fb3255ff9876d4022a9d9f1254f7553e30bb9c9a847ef64a",
+    "model.py": "9774ef0fa0fa8fe4248939f092d1419909a65d42ba0ae6aa6ee0adad85dd0551",
+    "check.py": "3701ee61bedeee933c15554daa92582ce880bc3574f7e7de1bcfd2f8bee70b8f",
     "requirements.txt": "e77cb6458efed07af017e62ed770aaf9f1864f0cc7eea0ead2c07156d5f808e0"
-  }
+  },
+  "seconds": 2849.1,
+  "result": "pass"
 }

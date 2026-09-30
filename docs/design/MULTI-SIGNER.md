@@ -1,8 +1,9 @@
 # Multi-signer admission and projection v1
 
-Design proposed for owner approval, revised 2026-09-28. **Not approved for
-production implementation.** Stage 0 is an executable reference specification,
-not production code. Stages (a)–(e) require subsequent owner approval. [HOLD.md](../../HOLD.md) remains the operating boundary.
+Owner decision, 2026-09-30: merge this design only after the final full-bound
+receipt and green CI. Stage 0 is an executable reference specification, not
+production code. Stage (a) is authorized after that merge, on a separate branch
+for review. Later stages require subsequent owner approval; ship order is undecided. [HOLD.md](../../HOLD.md) remains the operating boundary.
 This specifies every gate in [#6](https://github.com/timepointai/clockchain/issues/6).
 Decided below means a concrete choice in this proposal, not a completed gate or
 authorization for the first production entry.
@@ -30,7 +31,8 @@ Decisions:
    strata. Out-of-cut acts under revoked authority remain visible as
    `branch / revoked_concurrent` but cannot contend or create tombstones.
    Concurrent delegations and their derivatives lose authority. Previously
-   acknowledged delegations survive; selecting a body cannot undo revocation.
+   acknowledged delegations survive a non-cascading revoke; `cascade=true`
+   retires the whole target grant subtree. Selecting a body cannot undo revocation.
 4. Late **unrevoked** branches can reopen a contest. Revoked old-parent spam
    cannot. Authority can re-author suppressed content by Correction on a surviving
    parent. Root relinquishment is an explicit control, not a new body head.
@@ -161,7 +163,7 @@ content IDs, never row IDs. Supporting source hashes name exact stored artifacts
 | 1 | SubjectGenesis | Nonce, subject_key, initial body_hash, asserted_time/precision and evidence references. Creator obtains root grant `H("cc.root-grant.v1", event_id)`; creates first revision. |
 | 2 | Correction | One parent; same subject_key; new body_hash and assertion coordinate/precision; mandatory decision below. Creates a new immutable revision. |
 | 3 | Delegate | One parent; fresh grant event ID, grantee key and issuer_grant_ref. Body authority and scoped downstream delegation/revocation in v1. Carries decision and evidence; copies parent's body selection. |
-| 4 | Revoke | One parent; exact target_grant active there, decision and evidence. Only the target's direct/transitive issuer grant can revoke it; the root alone may revoke itself. Copies body selection; no key-wide ban on independent grants. |
+| 4 | Revoke | One parent; exact target_grant active there, required signed `cascade: bool`, decision and evidence. Only the target's direct/transitive issuer grant can revoke it; the root alone may revoke itself. Copies body selection; no key-wide ban on independent grants outside the target subtree. |
 | 5 | Resolve | At least two incomparable parent heads in this subject; exact per-parent dispositions, selected revision or new merged body, mandatory decision. Joins causal history and revocations. |
 | 6 | EdgeAssert | Author, relation, both endpoint pins, evidence and decision. Edge identity is this event ID. Includes `disputes` as a new governed relation, not an alias for influence. |
 | 7 | EdgeReaffirm | Original edge ID, prior edge head(s), exact old pins and new pins, evidence and decision. Must be signed by original edge author; multiple parents explicitly resolve an edge fork. |
@@ -251,7 +253,7 @@ G(A) → D(A grants K) → D2(K grants C)
                          └─ Q(K revokes C, parent=D2), signed later
 ```
 
-D2 is acknowledged by R; C must survive. Q is branch-valid and in K's issuance
+Here R has `cascade=false`. D2 is acknowledged by R; C must survive. Q is branch-valid and in K's issuance
 scope. Blindly unioning Q's tombstone kills C through a revoked issuer. Suppressing
 Q while retaining its tombstone has the same defect. The minimal replacement is
 **issuer-stratified effective revocations**. The candidate set is monotone; the
@@ -268,15 +270,25 @@ C. That is explicit recomputation, not a timestamp or arrival-order decision.
    lower stratum can change an already evaluated higher stratum. Root
    self-revocations are terminal controls evaluated first; simultaneous root
    relinquishments do not cancel each other.
-3. Each effective Revoke R of grant g preserves only acts `e ≤ parent(R)` under
+3. Owner decision, 2026-09-30: **B, signed cascading revocation**. Revoke encodes
+   `cascade` as one required byte, 0 or 1 (other values/missing bytes reject).
+   False covers only the target; true covers the target and every grant with that
+   target in its reflexive issuance ancestry, including acknowledged descendants
+   and descendants learned later. Coverage is computed from the retained grant
+   provenance, not an arrival-time list supplied by the writer. No new grant ID
+   can escape through a descendant of the retired grant. An independent grant
+   outside that subtree is unaffected. A suppressed Revoke contributes no effects,
+   including no descendant tombstones. Eligibility is still issuer-stratified.
+   For **each covered grant g**, effective Revoke R preserves only acts `e ≤ parent(R)` under
    g. Any other act through g is `branch / revoked_concurrent`, excluded from
    contention and authority effects. With multiple effective revocations of g,
    preservation requires that inequality for **every** R: intersect their
    acknowledged pasts. No timestamp or hash chooses a preferred cutoff.
 4. A grant D issued through g is canceled if `D ≰ parent(R)` for any effective
    R of g, or if its issuer grant's issuance is canceled. Propagate cancellation
-   down the grant tree. **D = parent(R) survives**; revoking a holder does not
-   cancel previously acknowledged independent delegates. A canceled grant's
+   down the grant tree. **D = parent(R) survives issuance cancellation**;
+   with `cascade=true` it is nevertheless tombstoned and inactive. With false,
+   previously acknowledged independent delegates remain active. A canceled grant's
    events cannot contend, even if their signing key was never directly revoked.
 5. Revoked/canceled grants are inactive. Visible descendants that depend on a
    suppressed body branch are `branch / revoked_ancestor`, also outside
@@ -300,7 +312,8 @@ The frontier contains maximal remaining body transitions under `≤`. Effective
 Revokes consume their strict causal past even when the control itself offers no
 body head (notably root relinquishment). Root relinquishment is
 `superseded / root_relinquished`; a prior independent delegate may continue by a
-valid transition, but the relinquishing root cannot present a new head.
+valid transition when `cascade=false`; true retires the whole grant tree.
+The relinquishing root cannot present a new head in either case.
 
 One frontier event gives a resolved head; two or more give `contested`. Suppressed
 branches are still returned, with reasons and controlling revoke IDs, but never
@@ -319,13 +332,16 @@ invalid-with-reason, including suppressed Revokes whose authority effect is zero
 
 ### Revocation concurrency traces
 
-Let A be the root, K its hot delegate and C a delegate issued by K.
+Let A be the root, K its hot delegate and C a delegate issued by K. Traces
+use `cascade=false` unless explicitly marked true.
 
 | Event set | Projection and permissible next action |
 | --- | --- |
 | A revokes K at P; K later signs Revoke(A) at P | K's revoke is invalid: upward scope, including the root, is forbidden. A's head survives; no retroactive freeze. |
 | A revokes K at P; K later corrects/resolves/delegates at old P | Out-of-cut acts are visible `revoked_concurrent`; derived grants/branches are canceled. They neither contend nor drop support. |
 | K delegated C before/equal A's revoke parent; K later revokes C at that old parent | C survives. K's later revoke is suppressed before its tombstone could take effect. This is the counterexample to the literal monotone union rule. |
+| A sees an attacker Delegate(C) issued by compromised K and revokes K with `cascade=true` | Both K and C are inactive even though C was acknowledged; their out-of-cut acts cannot contend. |
+| Honest K departs; A revokes K with `cascade=false` after acknowledging C | C remains active and can continue. True would retire C too; the signed choice distinguishes departure from subtree recovery. |
 | Delegate(C) is the revoke's parent itself | Reflexivity preserves C's grant. C can continue independently. |
 | Delegate(C) is incomparable with A's revoke parent | Its issuance and descendants are canceled, without creating contention. |
 | Two issuer Revokes of K have different acknowledged pasts | Preserve K's acts only in the intersection. Excluded bodies and resolutions depending on them remain visible but cannot contend. |
@@ -342,7 +358,10 @@ Grant scope makes the revoke-dependency graph strictly downward, with the root
 self-revocation exception handled first. Thus issuer-stratified evaluation has a
 unique result from the event set. Within each stratum, union eligible Revokes;
 intersect their reflexive acknowledged pasts; propagate cancellation downward.
-These are set operations, so delivery order, asserted time and import partitions
+Cascade coverage is an issuance-ancestry set; it cannot reach the signing
+grant or an issuer above it (except explicit root relinquishment). Suppression
+therefore retains the same acyclic issuer ordering. These are set operations, so
+delivery order, asserted time and import partitions
 cannot affect the result. Effective effects may retract on new evidence, but
 replaying the same union yields the same effects.
 
@@ -461,7 +480,7 @@ larger DAGs, including duplicate delivery and child-before-parent delivery.
 | Invariant | Required test and oracle |
 | --- | --- |
 | **I1** Same event set and rule identity, identical projection across orderings and import partitions. | `i1_union_permutation_partition_convergence`: enumerate revoke/correction, revoke/delegate/descendant, retroactive out-of-scope revoke, competing resolution and crisscross cases; compare whole root/rows after union, rebuild and duplicate replay. Include partial resolution and late siblings. |
-| **I2** No event changes a head without authority valid at its parent(s). | `i2_parent_authority_and_surviving_join_grant`: unauthorized author, wrong grant, parent-missing, branch-only delegate and revoked resolver cannot yield an authoritative head. `i2_revoke_concurrent_correction_no_revoked_winner` and `i2_revoke_concurrent_delegate_cancels_descendants` enumerate all delivery orders; `i2_prior_delegate_survives_later_revoke` pins the causal distinction; `i2_retroactive_revoke_from_old_parent_cannot_freeze` pins issuer scope; `i2_revoke_parent_equal_delegate_preserves_grant` pins reflexivity. Suppressed Revokes have no tombstone effect; only eligible acts may contend. |
+| **I2** No event changes a head without authority valid at its parent(s). | `i2_parent_authority_and_surviving_join_grant`: unauthorized author, wrong grant, parent-missing, branch-only delegate and revoked resolver cannot yield an authoritative head. `i2_revoke_concurrent_correction_no_revoked_winner` and `i2_revoke_concurrent_delegate_cancels_descendants` enumerate all delivery orders; `i2_prior_delegate_survives_later_revoke` pins the causal distinction; `i2_retroactive_revoke_from_old_parent_cannot_freeze` pins issuer scope; `i2_revoke_parent_equal_delegate_preserves_grant` pins reflexivity. `i2_cascade_compromise_visible_attacker_delegates`, `i2_non_cascade_honest_delegator_departure` and `i2_suppressed_cascade_has_no_descendant_effect` pin the signed choice; `ignore_cascade` must be killed. Suppressed Revokes have no tombstone effect; only eligible acts may contend. |
 | **I3** Every retained event is head, superseded, branch, pending or invalid-with-reason. | `i3_total_auditable_classification`: projection IDs equal retained candidate IDs; statuses are exclusive and exhaustive, rejected branches retain decisions, incomplete parents wake deterministically, semantic rejects remain visible, malformed attempts get separate receipts. `i3_late_eligible_branch_reopens_resolved_frontier` preserves legitimate siblings; revoked-concurrent branches remain visible without reopening. |
 | **I4** Subject-key change is never a correction. | `i4_subject_key_immutable_across_all_transitions`: mutate kind/namespace/value or subject_ref in Correction, Resolve and authority events; reject with `subject_key_changed`/`wrong_subject`. New genesis is separate authority; revision/body binding never changes. |
 | **I5** Edges stay pinned; correction makes stale, never retargets. | `i5_pins_survive_correction_resolution_and_reaffirmation`: both endpoints, same bytes/new revision, correction followed by selection of the old revision (still stale), authority-only change, contested endpoint and competing reaffirmations; inspect actual filter neighbors and media bindings, not only UI status. |
@@ -491,7 +510,7 @@ specification language. The model covers grant scope, parent authority,
 issuer-stratified tombstones, cancellation, visible suppression, frontier and
 Resolve; it abstracts signatures, bodies, edges, encoding, HTTP and persistence.
 The bounds, reproducible command and measured results are in
-[stage0/README.md](stage0/README.md), including the six-mutant checker check,
+[stage0/README.md](stage0/README.md), including the seven-mutant checker check,
 targeted depth coverage, fast CI bound and source-hashed full manual pre-release
 gate. This is executable specification only.
 

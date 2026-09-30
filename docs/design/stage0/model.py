@@ -15,6 +15,7 @@ class Event:
     grant: int = 0
     parents: tuple[int, ...] = ()
     target: int = -1  # Delegate: key; Revoke: grant.
+    cascade: bool = False  # Revoke only; signed, explicit in wire v1.
 
 
 @dataclass(frozen=True)
@@ -87,9 +88,12 @@ def project(valid):
         return View((), (), (), (), (), ())
     index = {e.id: e for e in valid}
     anc = ancestry(valid)
-    grants, depth, _ = grant_tree(valid)
+    grants, depth, lineage = grant_tree(valid)
     revokes = [e for e in valid if e.kind == "R"]
     effective = []
+
+    def covers(r, grant):
+        return r.target == grant or (r.cascade and r.target in lineage[grant])
 
     def outside_cut(e, r):
         return e.id not in anc[r.parents[0]]
@@ -100,7 +104,7 @@ def project(valid):
             e = grants[g]
             if e.kind == "D" and (
                 e.grant in canceled or any(
-                    r.target == e.grant and outside_cut(e, r) for r in effective
+                    covers(r, e.grant) and outside_cut(e, r) for r in effective
                 )
             ):
                 canceled.add(g)
@@ -117,19 +121,19 @@ def project(valid):
                 continue
             if r.grant in canceled:
                 continue
-            if any(q.target == r.grant and outside_cut(r, q) for q in effective):
+            if any(covers(q, r.grant) and outside_cut(r, q) for q in effective):
                 continue
             batch.append(r)
         effective.extend(batch)
     canceled = cancellations()
-    tombstones = {r.target for r in effective}
+    tombstones = {g for g in grants if any(covers(r, g) for r in effective)}
     active = set(grants) - canceled - tombstones
     reasons = {}
     relinquishments = {r.id for r in effective if r.target == r.grant == 0}
     for e in valid:
         if e.id in relinquishments:
             continue  # consumes its parent, but never offers a body head
-        if any(r.target == e.grant and outside_cut(e, r) for r in effective):
+        if any(covers(r, e.grant) and outside_cut(e, r) for r in effective):
             reasons[e.id] = "revoked_concurrent"
         elif e.kind == "D" and e.id in canceled:
             reasons[e.id] = "canceled_grant"
@@ -182,6 +186,9 @@ def _fold(events):
 
     def evaluate(e):
         if e.id in valid or e.id in rejected:
+            return
+        if type(e.cascade) is not bool or (e.cascade and e.kind != "R"):
+            rejected[e.id] = ("invalid", "cascade_kind")
             return
         if e.kind == "G":
             if e != Event(0, "G"):

@@ -3,17 +3,17 @@
   "max_events": 5,
   "minimality": "breadth-first candidate grammar; no symmetry reduction",
   "source_sha256": {
-    "model.py": "33d3975b24a12f7c21e885b2b95c2cb7e9a2342dfee6e9bde5ab9099e3eb4b9e",
-    "check.py": "7432c4344bfa1fdd22ffc1034b6192b873952190c01ac02436cc741199e82298",
-    "mutants.py": "050c47c84100eaaa6e43b0758dd55e14a07d53089d640a60c98ceb7d271e6109",
+    "model.py": "9774ef0fa0fa8fe4248939f092d1419909a65d42ba0ae6aa6ee0adad85dd0551",
+    "check.py": "3701ee61bedeee933c15554daa92582ce880bc3574f7e7de1bcfd2f8bee70b8f",
+    "mutants.py": "714f36d9f10bcea600445badb70d0b075aaed706feb8586891e33ea21017aeb6",
     "requirements.txt": "e77cb6458efed07af017e62ed770aaf9f1864f0cc7eea0ead2c07156d5f808e0"
   },
   "mutants": [
     {
       "mutant": "monotone_tombstones",
       "killed": true,
-      "examined_extensions": 471,
-      "mutated_source_sha256": "9b28b6b0f352d100ca6ee348f0f547a9fa28081af8d59bc47f0283e6cb02c5f6",
+      "examined_extensions": 672,
+      "mutated_source_sha256": "4ee3df522f3b9db3caaa6d0982f9d9b16bea3e6e89e66dee570df09d3c319727",
       "counterexample_size": 4,
       "assertion": "revoked issuer kills survivor",
       "events": [
@@ -23,7 +23,8 @@
           "key": 0,
           "grant": 0,
           "parents": [],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 1,
@@ -33,7 +34,8 @@
           "parents": [
             0
           ],
-          "target": 1
+          "target": 1,
+          "cascade": false
         },
         {
           "id": 2,
@@ -43,7 +45,8 @@
           "parents": [
             0
           ],
-          "target": 0
+          "target": 0,
+          "cascade": false
         },
         {
           "id": 3,
@@ -53,7 +56,8 @@
           "parents": [
             1
           ],
-          "target": 1
+          "target": 1,
+          "cascade": false
         }
       ],
       "reference": {
@@ -132,8 +136,8 @@
     {
       "mutant": "unscoped_revocation",
       "killed": true,
-      "examined_extensions": 38,
-      "mutated_source_sha256": "d0f699e0945226f7ff1a5565630813b8e695bb2a2a4ac8b80e0e7ea768cca8e9",
+      "examined_extensions": 47,
+      "mutated_source_sha256": "7e3083428a802410e3e0540139fdfb996475b0b25a1ab5f146db72786748bc04",
       "counterexample_size": 3,
       "assertion": "scope",
       "events": [
@@ -143,7 +147,8 @@
           "key": 0,
           "grant": 0,
           "parents": [],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 1,
@@ -153,7 +158,8 @@
           "parents": [
             0
           ],
-          "target": 1
+          "target": 1,
+          "cascade": false
         },
         {
           "id": 2,
@@ -163,7 +169,8 @@
           "parents": [
             1
           ],
-          "target": 0
+          "target": 0,
+          "cascade": false
         }
       ],
       "reference": {
@@ -232,7 +239,7 @@
       "mutant": "strict_cut_ancestry",
       "killed": true,
       "examined_extensions": 5,
-      "mutated_source_sha256": "91261aa0dffe72ce585dfa0109eca99e7787f40b874aada059cd59bd626454db",
+      "mutated_source_sha256": "7757e134498f4e05701681683f0f92669ae7bc05242dbe278317bc631ef4476b",
       "counterexample_size": 2,
       "assertion": "reflexive cut",
       "events": [
@@ -242,7 +249,8 @@
           "key": 0,
           "grant": 0,
           "parents": [],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 1,
@@ -252,7 +260,8 @@
           "parents": [
             0
           ],
-          "target": 0
+          "target": 0,
+          "cascade": false
         }
       ],
       "reference": {
@@ -305,8 +314,8 @@
     {
       "mutant": "fork_point_resolve",
       "killed": true,
-      "examined_extensions": 181,
-      "mutated_source_sha256": "a1159de4ede48bd7dfa6afb1377afe876f0571c83b904441c7a92dd9637ed39a",
+      "examined_extensions": 244,
+      "mutated_source_sha256": "08afe21c971c738b9f719f7e2d8b4fa0229d0e96a45a424ef15a4f5b8c8d0f93",
       "counterexample_size": 4,
       "assertion": "I2 admitted parent",
       "events": [
@@ -316,7 +325,8 @@
           "key": 0,
           "grant": 0,
           "parents": [],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 1,
@@ -326,7 +336,8 @@
           "parents": [
             0
           ],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 2,
@@ -336,7 +347,8 @@
           "parents": [
             0
           ],
-          "target": 0
+          "target": 0,
+          "cascade": false
         },
         {
           "id": 3,
@@ -347,7 +359,8 @@
             1,
             2
           ],
-          "target": -1
+          "target": -1,
+          "cascade": false
         }
       ],
       "reference": {
@@ -420,8 +433,8 @@
     {
       "mutant": "revoked_frontier",
       "killed": true,
-      "examined_extensions": 10,
-      "mutated_source_sha256": "baea5eb79c7640c251ed130cd30a2e09745a3a32b0737084f0e88db5f548abd3",
+      "examined_extensions": 11,
+      "mutated_source_sha256": "a12bfe8aa7c5a542fb6c52705b1b0eddf9bf54708fa78aa37e679ee5005ee820",
       "counterexample_size": 3,
       "assertion": "revoked sole/frontier",
       "events": [
@@ -431,7 +444,8 @@
           "key": 0,
           "grant": 0,
           "parents": [],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 1,
@@ -441,7 +455,8 @@
           "parents": [
             0
           ],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 2,
@@ -451,7 +466,8 @@
           "parents": [
             0
           ],
-          "target": 0
+          "target": 0,
+          "cascade": false
         }
       ],
       "reference": {
@@ -516,8 +532,8 @@
     {
       "mutant": "lowest_id_wins",
       "killed": true,
-      "examined_extensions": 6,
-      "mutated_source_sha256": "f544b8374939eafbd2ac578e90498055653c36f5ee46e36fb6c1f438617d3cae",
+      "examined_extensions": 7,
+      "mutated_source_sha256": "55a749258e461eedefb6dbb1a72faa6d0aec8f00a0589af7df98e517b00a689f",
       "counterexample_size": 3,
       "assertion": "I3 eligible leaf lost",
       "events": [
@@ -527,7 +543,8 @@
           "key": 0,
           "grant": 0,
           "parents": [],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 1,
@@ -537,7 +554,8 @@
           "parents": [
             0
           ],
-          "target": -1
+          "target": -1,
+          "cascade": false
         },
         {
           "id": 2,
@@ -547,7 +565,8 @@
           "parents": [
             0
           ],
-          "target": -1
+          "target": -1,
+          "cascade": false
         }
       ],
       "reference": {
@@ -607,8 +626,110 @@
         "effective_revokes": [],
         "canceled": []
       }
+    },
+    {
+      "mutant": "ignore_cascade",
+      "killed": true,
+      "examined_extensions": 24,
+      "mutated_source_sha256": "903b6fed8a71f4657acba182aa7c2d2a594be8a33ad44acd6e0ded512a305af1",
+      "counterexample_size": 3,
+      "assertion": "cascade coverage",
+      "events": [
+        {
+          "id": 0,
+          "kind": "G",
+          "key": 0,
+          "grant": 0,
+          "parents": [],
+          "target": -1,
+          "cascade": false
+        },
+        {
+          "id": 1,
+          "kind": "D",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 1,
+          "cascade": false
+        },
+        {
+          "id": 2,
+          "kind": "R",
+          "key": 0,
+          "grant": 0,
+          "parents": [
+            0
+          ],
+          "target": 0,
+          "cascade": true
+        }
+      ],
+      "reference": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0,
+          1
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": [
+          1
+        ]
+      },
+      "mutant_view": {
+        "rows": [
+          [
+            0,
+            "superseded",
+            ""
+          ],
+          [
+            1,
+            "branch",
+            "revoked_concurrent"
+          ],
+          [
+            2,
+            "superseded",
+            "root_relinquished"
+          ]
+        ],
+        "frontier": [],
+        "active": [],
+        "tombstones": [
+          0
+        ],
+        "effective_revokes": [
+          2
+        ],
+        "canceled": [
+          1
+        ]
+      }
     }
   ],
-  "seconds": 2.361,
+  "seconds": 5.117,
   "result": "pass"
 }

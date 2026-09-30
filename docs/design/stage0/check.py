@@ -29,6 +29,12 @@ def check_invariants(events):
     if not valid:
         return view
     grants, _, lineage = grant_tree(valid)
+    def covered(r, grant):
+        return r.target == grant or (r.cascade and r.target in lineage[grant])
+    expected_tombstones = {g for g in grants if any(
+        covered(index[r], g) for r in view.effective_revokes
+    )}
+    assert set(view.tombstones) == expected_tombstones, ("cascade coverage", events, view)
     # Check admitted transitions as well as visible heads: a bad Resolve can be
     # hidden by global suppression while still violating admission authority.
     for e in valid:
@@ -42,7 +48,7 @@ def check_invariants(events):
     for i, status, reason in view.rows:
         if reason == "revoked_concurrent":
             e = index[i]
-            assert any(index[r].target == e.grant and i not in anc[index[r].parents[0]]
+            assert any(covered(index[r], e.grant) and i not in anc[index[r].parents[0]]
                        for r in view.effective_revokes), ("reflexive cut", events, i)
         # A valid unsuppressed leaf cannot disappear merely because a sibling
         # sorts before it. This is a completeness check, not just head safety.
@@ -63,7 +69,7 @@ def check_invariants(events):
             assert e.grant in parent.active, ("I2 parent", events, view)
         for rid in view.effective_revokes:
             r = index[rid]
-            if r.target == e.grant:
+            if covered(r, e.grant):
                 # Historical acknowledged acts survive, never late revoked acts.
                 assert e.id in anc[r.parents[0]], ("revoked sole/frontier", events, view)
     for rid in view.effective_revokes:
@@ -71,7 +77,7 @@ def check_invariants(events):
         assert in_scope(grants, lineage, r.grant, r.target), ("scope", events, view)
         for other_id in view.effective_revokes:
             other = index[other_id]
-            if other.target == r.grant and rid != other_id:
+            if covered(other, r.grant) and rid != other_id:
                 assert rid in anc[other.parents[0]] or r.grant == r.target == 0, (
                     "revoked issuer kills survivor", events, view)
     return view
@@ -90,7 +96,8 @@ def candidates(prefix):
             for key in range(3):
                 yield Event(i, "D", holder, g, (p.id,), key)
             for target in grants:
-                yield Event(i, "R", holder, g, (p.id,), target)
+                for cascade in (False, True):
+                    yield Event(i, "R", holder, g, (p.id,), target, cascade)
     for n in range(2, len(prefix) + 1):
         for parents in combinations(range(len(prefix)), n):
             if any(p != q and p in anc[q] for p in parents for q in parents):
@@ -135,7 +142,7 @@ def canonical_key(events):
                     continue
                 target = key(e.target) if e.kind == "D" else ids.get(e.target, -1)
                 sig = (e.kind, key(e.key), ids.get(e.grant, -1),
-                       tuple(sorted(ids[p] for p in e.parents)), target)
+                       tuple(sorted(ids[p] for p in e.parents)), target, e.cascade)
                 ready.append((sig, e.id))
             best = min(sig for sig, _ in ready)
             answers = []
@@ -297,6 +304,25 @@ def named_cases():
         attempt = events + (Event(7, "S", grant, grant, (5, 6)),)
         assert (7, "invalid", "parent_authority") in fold(attempt).rows
     cases["i2_depth_three_acknowledged_revocation_blocks_counter_revoke"] = events
+    compromised = (G, k, c, Event(3, "R", 0, 0, (2,), 1, True),
+                   Event(4, "C", 2, 2, (2,)))
+    v = check_invariants(compromised)
+    assert v.tombstones == (1, 2) and v.active == (0,) and v.frontier == (3,)
+    assert (4, "branch", "revoked_concurrent") in v.rows
+    cases["i2_cascade_compromise_visible_attacker_delegates"] = compromised
+
+    departure = (G, k, c, Event(3, "R", 0, 0, (2,), 1, False),
+                 Event(4, "C", 2, 2, (3,)))
+    v = check_invariants(departure)
+    assert v.tombstones == (1,) and v.active == (0, 2) and v.frontier == (4,)
+    cases["i2_non_cascade_honest_delegator_departure"] = departure
+
+    # A suppressed cascade never kills the acknowledged descendant subtree.
+    events = chain + (Event(4, "R", 0, 0, (3,), 1, False),
+                      Event(5, "R", 1, 1, (3,), 2, True))
+    v = check_invariants(events)
+    assert v.effective_revokes == (4,) and v.active == (0, 2, 3)
+    cases["i2_suppressed_cascade_has_no_descendant_effect"] = events
     return cases
 
 
@@ -329,7 +355,8 @@ def dags(draw):
             parents = parents[:1]
         events.append(Event(i, kind, draw(st.integers(0, 2)),
                             draw(st.integers(0, i - 1)), parents,
-                            draw(st.integers(0, max(2, i - 1)))))
+                            draw(st.integers(0, max(2, i - 1))),
+                            draw(st.booleans()) if kind == "R" else False))
     return tuple(events)
 
 
@@ -363,29 +390,34 @@ def depth_dags(draw):
     outer_cut = draw(st.integers(upper, depth))
     counter_cut = draw(st.integers(target, depth))
     acknowledged = draw(st.booleans())
+    cascade = draw(st.booleans())
     inner, outer, counter = depth + 1, depth + 2, depth + 3
     events.extend((Event(inner, "R", labels[upper], upper, (inner_cut,), lower),
-                   Event(outer, "R", 0, 0, (inner if acknowledged else outer_cut,), upper),
+                   Event(outer, "R", 0, 0, (inner if acknowledged else outer_cut,), upper, cascade),
                    Event(counter, "R", labels[lower], lower, (counter_cut,), target)))
-    return tuple(events), (depth, upper, lower, target, inner_cut, outer_cut, acknowledged)
+    return tuple(events), (depth, upper, lower, target, inner_cut, outer_cut, acknowledged, cascade)
 
 
 def targeted_depth(examples):
     started = time.monotonic()
     seen = {"examples_executed": 0, "max_chain_depth_reached": 0,
             "max_events_reached": 0, "max_keys_reached": 0,
-            "acknowledged": 0, "concurrent": 0}
+            "acknowledged": 0, "concurrent": 0, "cascade": 0}
 
     @seed(20260929)
     @settings(max_examples=examples, derandomize=True, deadline=None, database=None)
     @given(depth_dags(), st.data())
     def property_check(case, data):
         events, shape = case
-        depth, upper, lower, target, inner_cut, outer_cut, acknowledged = shape
+        depth, upper, lower, target, inner_cut, outer_cut, acknowledged, cascade = shape
         view = check_invariants(events)
         inner, outer, counter = depth + 1, depth + 2, depth + 3
         # Independent predictions for these specific three-revoke traces.
-        if acknowledged:
+        if cascade:
+            expected_effective = {inner, outer} if acknowledged else {outer}
+            expected_tombstones = set(range(upper, depth + 1))
+            assert target not in view.active
+        elif acknowledged:
             expected_effective = {inner, outer}
             expected_tombstones = {upper, lower}
             assert (target in view.active) == (inner_cut > lower)
@@ -412,6 +444,7 @@ def targeted_depth(examples):
         cut = data.draw(st.integers(0, len(order)))
         fold(order[:cut]); fold(order[cut:])
         assert fold(order[:cut] + order[cut:] + order[:cut]) == view
+        seen["cascade"] += int(cascade)
         seen["examples_executed"] += 1
         seen["max_chain_depth_reached"] = max(seen["max_chain_depth_reached"], depth)
         seen["max_events_reached"] = max(seen["max_events_reached"], len(events) + 1)
@@ -457,7 +490,7 @@ def main():
     print(totals, flush=True)
     randomized(args.examples)
     depth_report = targeted_depth(args.depth_examples) if args.depth_examples else None
-    report = {"model": "stage0-issuer-stratified-grant-revocation-v1",
+    report = {"model": "stage0-issuer-stratified-cascade-revocation-v1",
               "keys": 3, "exhaustive_max_events": args.max_events,
               "symmetry": "event-ID alpha renaming and exchange of keys 1/2",
               "trace_max_events": 7, "named_cases": list(cases),

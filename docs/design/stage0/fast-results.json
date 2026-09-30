@@ -1,5 +1,5 @@
 {
-  "model": "stage0-issuer-stratified-grant-revocation-v1",
+  "model": "stage0-issuer-stratified-cascade-revocation-v1",
   "keys": 3,
   "exhaustive_max_events": 5,
   "symmetry": "event-ID alpha renaming and exchange of keys 1/2",
@@ -14,33 +14,37 @@
     "i1_competing_resolutions_and_join",
     "i2_root_only_relinquishment_and_prior_delegate",
     "i2_depth_three_concurrent_revocations_alternate",
-    "i2_depth_three_acknowledged_revocation_blocks_counter_revoke"
+    "i2_depth_three_acknowledged_revocation_blocks_counter_revoke",
+    "i2_cascade_compromise_visible_attacker_delegates",
+    "i2_non_cascade_honest_delegator_departure",
+    "i2_suppressed_cascade_has_no_descendant_effect"
   ],
-  "trace_orderings": 25608,
-  "trace_bipartitions": 768,
+  "trace_orderings": 26568,
+  "trace_bipartitions": 896,
   "hypothesis_examples": 300,
   "depth": {
     "examples_executed": 1000,
     "max_chain_depth_reached": 6,
     "max_events_reached": 11,
     "max_keys_reached": 7,
-    "acknowledged": 182,
-    "concurrent": 818,
+    "acknowledged": 245,
+    "concurrent": 755,
+    "cascade": 258,
     "requested_examples": 1000,
     "seed": 20260929,
     "derandomize": true,
-    "seconds": 4.344
+    "seconds": 7.222
   },
-  "valid_prefixes": 1287,
-  "candidate_extensions": 8839,
-  "invalid_extensions": 6311,
-  "author_mutations": 17678,
-  "symmetry_duplicates": 1242,
+  "valid_prefixes": 2341,
+  "candidate_extensions": 17797,
+  "invalid_extensions": 13034,
+  "author_mutations": 35594,
+  "symmetry_duplicates": 2423,
   "source_sha256": {
-    "model.py": "33d3975b24a12f7c21e885b2b95c2cb7e9a2342dfee6e9bde5ab9099e3eb4b9e",
-    "check.py": "7432c4344bfa1fdd22ffc1034b6192b873952190c01ac02436cc741199e82298",
+    "model.py": "9774ef0fa0fa8fe4248939f092d1419909a65d42ba0ae6aa6ee0adad85dd0551",
+    "check.py": "3701ee61bedeee933c15554daa92582ce880bc3574f7e7de1bcfd2f8bee70b8f",
     "requirements.txt": "e77cb6458efed07af017e62ed770aaf9f1864f0cc7eea0ead2c07156d5f808e0"
   },
-  "seconds": 7.939,
+  "seconds": 18.427,
   "result": "pass"
 }
