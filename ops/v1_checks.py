@@ -25,7 +25,8 @@ EMPTY_SHA256 = hashlib.sha256(b'').hexdigest()
 # with or without credentials, so the probe can never retain anything.
 DENIAL_BODY = b'cc-v1-denial-probe'
 ANONYMOUS = 401
-READ_KEY_ON_WRITE = (401, 403)
+# The node's write guard answers a recognized read key with 403 (W1 contract).
+READ_KEY_ON_WRITE = 403
 
 
 def http(base, method, path, key=None, body=None):

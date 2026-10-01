@@ -33,6 +33,8 @@ from v1_identity import TABLES, Expected, hexbytes
 
 PREFIX = 'cc-accept-v1-'
 MIGRATE_REFUSED = 78
+# `provision-v1` exit status for a stored identity that differs from the configuration.
+IDENTITY_MISMATCH = 65
 PG_IMAGE = 'postgres:18'
 SYNTHETIC_BODY = (b'Synthetic acceptance subject. It names no historical claim and '
                   b'never leaves the temporary acceptance network.\n')
@@ -122,8 +124,9 @@ def provision(image, network, env, *, expect_ok=True):
         if result.returncode:
             raise RuntimeError('provision-v1 failed on the synthetic database')
         return json.loads(result.stdout)
-    if result.returncode == 0:
-        raise AssertionError('provision-v1 accepted a mismatched identity')
+    if result.returncode != IDENTITY_MISMATCH:
+        raise AssertionError(f'provision-v1 must refuse a mismatched identity with {IDENTITY_MISMATCH}, '
+                             f'not {result.returncode}')
     return result.returncode
 
 

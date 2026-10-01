@@ -201,6 +201,9 @@ class ZeroTests(unittest.TestCase):
             ('export anonymous denied: HTTP 200', force('GET', '/v1/export', None, 200)),
             ('read key cannot export: HTTP 200', force('GET', '/v1/export', READ, 200)),
             ('read key cannot write: HTTP 201', force('PUT', '/v1/bodies/' + EMPTY_SHA256, READ, 201)),
+            # A 401 would mean the read key is not recognized at all: a misconfiguration.
+            ('read key cannot write: HTTP 401', force('PUT', '/v1/bodies/' + EMPTY_SHA256, READ, 401)),
+            ('read key cannot export: HTTP 401', force('GET', '/v1/export', READ, 401)),
             ('empty commitment differs', view(commitment=OTHER.empty_commitment)),
             ('corpus is not empty', view(corpus_digest=corpus_digest([bytes(32)]).hex())),
             ('empty snapshot has rows', view(rows=[row])),

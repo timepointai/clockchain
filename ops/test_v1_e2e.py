@@ -21,7 +21,8 @@ import unittest
 from urllib.parse import urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from v1_acceptance import MIGRATE_REFUSED, SYNTHETIC_BODY, SYNTHETIC_KIND, check_provision
+from v1_acceptance import (IDENTITY_MISMATCH, MIGRATE_REFUSED, SYNTHETIC_BODY, SYNTHETIC_KIND,
+                           check_provision)
 from v1_backup import RELATIONS
 from v1_checks import check_v1_populated, check_v1_zero, http, load_entry
 from v1_identity import Expected
@@ -164,8 +165,8 @@ class V1EndToEnd(unittest.TestCase):
                         '--dbname', restored, str(dump)], check=True)
         self.assertEqual(json.loads(self.node('provision-v1', env=self.node_env(restored)).stdout),
                          identity)
-        self.assertNotEqual(self.node('provision-v1', env=self.node_env(
-            restored, CC_V1_INSTANCE=secrets.token_hex(32))).returncode, 0)
+        self.assertEqual(self.node('provision-v1', env=self.node_env(
+            restored, CC_V1_INSTANCE=secrets.token_hex(32))).returncode, IDENTITY_MISMATCH)
         restored_base = self.serve(restored)
         again = check_v1_populated(restored_base, revision, self.key, self.read_key, expected, entry)
         self.assertEqual(again['commitment'], populated['commitment'])

@@ -249,10 +249,10 @@ class FakeDocker:
         pg = self.containers.get(url.hostname)
         database = self.databases.get(url.path.lstrip('/'))
         identity = (env['CC_V1_INSTANCE'], env['CC_V1_CURATORS'], env['CC_V1_MAX_HOPS'])
-        rc, out = 1, ''
+        rc, out = 65, ''  # provision-v1's identity-mismatch status
         if not pg or pg['network'] != network or url.password != pg['env']['POSTGRES_PASSWORD'] \
                 or database is None:
-            pass
+            rc = 69
         elif database['identity'] is None:
             database['identity'] = identity
             database['counts'].update(identity=1, rule_identity=1)
@@ -533,10 +533,10 @@ class V1AcceptanceTests(unittest.TestCase):
         self.assertLess(at('provision restored.env'), at('serve restored'))
         self.assertLess(at('serve restored'), populated[1])
         self.assertEqual({n: rc for n, rc, _ in fake.provisions},
-                         {'node.env': 0, 'restored.env': 0, 'wrong-instance.env': 1,
-                          'wrong-curators.env': 1})
+                         {'node.env': 0, 'restored.env': 0, 'wrong-instance.env': 65,
+                          'wrong-curators.env': 65})
         refusals = json.loads((self.evidence / 'v1-restore.json').read_text())['mismatch_refusals']
-        self.assertEqual(refusals, {'wrong_instance': 1, 'wrong_curators': 1})
+        self.assertEqual(refusals, {'wrong_instance': 65, 'wrong_curators': 65})
         node = self.env_file(fake, 'node.env')
         wrong_instance = self.env_file(fake, 'wrong-instance.env')
         wrong_curators = self.env_file(fake, 'wrong-curators.env')
@@ -544,6 +544,16 @@ class V1AcceptanceTests(unittest.TestCase):
         self.assertEqual(wrong_curators['CC_V1_INSTANCE'], node['CC_V1_INSTANCE'])
         self.assertIn(node['CC_V1_CURATORS'], wrong_curators['CC_V1_CURATORS'].split(','))
         self.assertEqual(len(wrong_curators['CC_V1_CURATORS'].split(',')), 2)
+
+    def test_mismatch_refused_with_the_wrong_status_fails(self):
+        fake = FakeDocker()
+        original = fake.provision
+        def wrong_status(network, env, env_name):
+            rc, out, err = original(network, env, env_name)
+            return (1 if rc == 65 else rc), out, err
+        fake.provision = wrong_status
+        with self.assertRaisesRegex(AssertionError, 'must refuse a mismatched identity with 65, not 1'):
+            self.accept(fake)
 
     def test_provision_accepting_a_mismatched_identity_fails(self):
         for env_name in ('wrong-instance.env', 'wrong-curators.env'):
