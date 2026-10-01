@@ -72,12 +72,14 @@ correction does not restore it. Only reaffirmation advances the basis.
 
 `support_graph(projection, curators)` takes an explicit curator key set. Only
 current, non-dispute edges whose author and both endpoint creators are curators
-enter `neighbors`. Every other edge, including pending and invalid assertions,
-is listed in `excluded` with all its reasons. `query(from, to, max_hops)` is
-two-valued: `Supported { path }` or `Unsupported { reasons }`. A contested
-subject yields `subject_contested`; there is no `Contradicted` variant, so
-conflicting readings and missing support cannot become a falsity claim.
-Unsupported answers name the excluded edges touching either subject.
+enter `neighbors`. Every other edge, and every pending or invalid assertion or
+reaffirmation, is listed in `excluded` with all its reasons. `query(from, to,
+max_hops)` is two-valued: `Supported { path, excluded }` or
+`Unsupported { reasons }`. A contested subject yields `subject_contested`; there
+is no `Contradicted` variant, so conflicting readings and missing support cannot
+become a falsity claim. Both answers name the excluded edges and disputes
+touching either subject. The search stops once no unvisited subject remains, so
+a large hop bound cannot spin.
 
 ## Revision-scoped media
 
@@ -104,20 +106,37 @@ same bytes in a new revision, correction then selection of the old revision,
 authority-only changes on both subjects, a contested endpoint, author-only and
 endpoint-preserving reaffirmation, competing reaffirmations and their
 multi-parent resolution. It checks actual neighbors, support queries and media
-bindings, not only labels. A second test covers exact pin, relation, dispute,
+bindings, not only labels. Focused tests cover each remaining rule:
+`basis_outside_current_head_history_is_stale` (a suppressed sibling basis that
+selects the head's revision; deleting the `basis_not_ancestor` check locally
+makes it fail), a cascading Revoke that keeps an edge current, a selecting
+Resolve after an authority-only fork that restores `current`, the exact reason
+codes `pin_pending`, `pin_invalid`, `wrong_edge`, `target_invalid`,
+`target_pending`, `same_subject` and `wrong_subject` for a subject event with an
+edge parent, termination with an unbounded hop limit, and exclusions that remain
+visible in a supported answer. Another test covers exact pin, relation, dispute,
 trust-root and media admission.
 
-`i1_i3_edge_permutation_partition_convergence` runs six named cases of seven
-events through every delivery permutation (**30,240**, each with a duplicate
-redelivery and per-arrival classification), every subset (**768**) and every
-bipartition union with duplicate replay (**768**). Sixty seeded generated DAGs
-of up to 17 events (forks, merges, delegates, edges, disputes, reaffirmation
-forks and joins, non-author reaffirmations, media) add **480** two/three-way
-partitions and **240** shuffled incremental deliveries. Full rows, edge
-readings, media and the support graph must match after union, rebuild and
-replay; each subset checks one row per candidate, signed pins at heads, enforced
-neighbors and media that never moves. Generated full views reached every edge
-status.
+`i3_edge_subset_and_partition_invariants` reads **768** subsets (every subset of
+six named seven-event cases) and **1,202** parts of 480 seeded two- or
+three-way partitions of 60 generated DAGs of up to 17 events (forks, merges,
+delegates, edges, disputes, reaffirmation forks and joins, non-author
+reaffirmations, media) independently. Each check requires one row per
+candidate, the signed pins at every edge head, current edges only on resolved
+selected revisions, enforced neighbors, no pending or invalid edge in support,
+and media bound exactly as in the full set. Generated full views reached every
+edge status. The projection is a function of a set, so a union of parts is the
+full set itself; no union equality is claimed as evidence.
+
+`i1_edge_store_delivery_order_convergence` tests order through the real
+PostgreSQL store, where each delivery is a separate `Store::admit` transaction
+that rereads retained bytes. It runs **56** delivery orders (six per named case:
+listed, reversed child-before-parent and four seeded shuffles; two for each of
+ten generated DAGs), each on a fresh store and each ending with two duplicate
+redeliveries: **682** admissions in total. Every arrival result must equal the
+classification of the events delivered so far. The stored projection and
+support graph must equal the full set's, and a reversed restore replay must
+leave the classification unchanged.
 
 `i7_edge_http_import_restore_admission_parity` sends sixteen inputs, including
 child-before-parent edges, reaffirmations and media, a bad signature, wrong pin,
@@ -147,6 +166,19 @@ Each takes the most conservative reading; none changes a MULTI-SIGNER rule.
 7. Non-dispute self-edges are admitted, and a reaffirmation may pin an older
    basis (it is then stale); the design states neither rule.
 8. A same-subject support query is `Unsupported / same_subject`.
+
+## Owner notes (recorded, behavior unchanged)
+
+- Attestation `revision_missing` lists the revision hash, not an event ID, in
+  `missing`. It stays pending forever if the creating event is invalid, because
+  that revision can never become known.
+- An authority-only concurrent fork, such as two Delegates, makes the subject
+  contested. Its edges are then `endpoint_contested` with no support, although
+  the selected revision is unchanged; this follows the "unique resolved" wording.
+  A selecting Resolve restores `current`.
+- Resource bounds: reaffirmation classification is a fixed point that is
+  O(L^2) in chain length L, and the projection is O(edges x candidates).
+  Neither is qualified for serving-scale histories.
 
 ## Remaining boundary
 

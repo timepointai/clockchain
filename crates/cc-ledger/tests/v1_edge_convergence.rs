@@ -1,7 +1,9 @@
-//! Stage (d) I1/I3 over edges: every delivery permutation of small named cases,
-//! generated partitions of larger DAGs, union, duplicate replay and rebuild.
+//! Stage (d) I1/I3 over edges: set invariants for every subset and generated
+//! partition part; delivery-order convergence through the real PostgreSQL store.
 use cc_core::v1::*;
-use cc_ledger::v1::{classify, project, support_graph, Projection, ProjectionState, SupportGraph};
+use cc_ledger::v1::{
+    classify, project, support_graph, Projection, ProjectionState, Store, SupportGraph,
+};
 use cc_testkit::v1::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -74,74 +76,8 @@ fn check(s: &Set, v: &Projection, g: &SupportGraph, full: &Projection) {
     }
 }
 
-fn permutations(order: &mut [usize], at: usize, visit: &mut impl FnMut(&[usize])) {
-    if at == order.len() {
-        visit(order);
-        return;
-    }
-    for i in at..order.len() {
-        order.swap(at, i);
-        permutations(order, at + 1, visit);
-        order.swap(at, i);
-    }
-}
-
-#[derive(Default)]
-struct Counts {
-    cases: usize,
-    permutations: usize,
-    subsets: usize,
-    partitions: usize,
-    generated: usize,
-    generated_partitions: usize,
-    generated_orders: usize,
-    edges: usize,
-    statuses: BTreeMap<String, usize>,
-}
-
-/// Every delivery order, with an exact duplicate redelivered at the end.
-/// Admission results are taken at arrival; the final set must not depend on them.
-fn exhaust(events: &[&Signed], n: &mut Counts) {
-    let full_set = set(events);
-    let (full, full_graph) = read(&full_set);
-    n.cases += 1;
-    n.edges += full.edges.len();
-    for mask in 0..(1u32 << events.len()) {
-        let part: Vec<_> = (0..events.len())
-            .filter(|i| mask & (1 << i) != 0)
-            .map(|i| events[i])
-            .collect();
-        let s = set(&part);
-        let (v, g) = read(&s);
-        check(&s, &v, &g, &full);
-        n.subsets += 1;
-        // Bipartition with independent reads, then union and duplicate replay.
-        let rest: Vec<_> = (0..events.len())
-            .filter(|i| mask & (1 << i) == 0)
-            .map(|i| events[i])
-            .collect();
-        let mut union = set(&rest);
-        union.extend(s.clone());
-        union.extend(s);
-        assert_eq!(read(&union), (full.clone(), full_graph.clone()));
-        n.partitions += 1;
-    }
-    let mut order: Vec<_> = (0..events.len()).collect();
-    permutations(&mut order, 0, &mut |order| {
-        let mut retained = Set::new();
-        for &i in order.iter().chain(order.first()) {
-            retained.insert(events[i].id(), events[i].clone());
-            let arrival = classify(&retained);
-            assert_eq!(arrival.len(), retained.len());
-        }
-        assert_eq!(read(&retained), (full.clone(), full_graph.clone()));
-        n.permutations += 1;
-    });
-}
-
-#[test]
-fn i1_i3_edge_permutation_partition_convergence() {
-    let mut n = Counts::default();
+/// Six named seven-event cases.
+fn named_cases() -> Vec<Vec<Signed>> {
     let a = genesis();
     let root = root_grant(a.id());
     let b = subject(1, 50, 51);
@@ -151,6 +87,8 @@ fn i1_i3_edge_permutation_partition_convergence() {
     };
     let e = edge(0, "influence", pins.clone());
     let original = revision_id(a.id(), a.id());
+    let mut cases = vec![];
+    let mut case = |events: &[&Signed]| cases.push(events.iter().map(|e| (*e).clone()).collect());
 
     // 1. Same-bytes correction, reaffirmation and media that does not follow.
     let same = correction(&a, &a, 0, 3);
@@ -161,7 +99,7 @@ fn i1_i3_edge_permutation_partition_convergence() {
     let r = reaffirm(0, &e, &[&e], moved.clone());
     let image = attest(0, TargetKind::Revision, original, "image/png", 60);
     let png = attest(0, TargetKind::Event, same.id(), "image/png", 61);
-    exhaust(&[&a, &b, &e, &same, &r, &image, &png], &mut n);
+    case(&[&a, &b, &e, &same, &r, &image, &png]);
 
     // 2. Competing reaffirmations and their multi-parent resolution.
     let after = delegate(&a, &same, 0, root, 6);
@@ -170,10 +108,10 @@ fn i1_i3_edge_permutation_partition_convergence() {
         target: pins.target.clone(),
     };
     let competing = reaffirm(0, &e, &[&e], late);
-    exhaust(&[&a, &b, &e, &same, &after, &r, &competing], &mut n);
+    case(&[&a, &b, &e, &same, &after, &r, &competing]);
     let r2 = reaffirm(0, &e, &[&e], pins.clone());
     let join = reaffirm(0, &e, &[&r, &r2], moved.clone());
-    exhaust(&[&a, &b, &e, &same, &r, &r2, &join], &mut n);
+    case(&[&a, &b, &e, &same, &r, &r2, &join]);
 
     // 3. Contested endpoint, then selecting the old revision (still stale).
     let c7 = correction(&a, &a, 0, 7);
@@ -189,7 +127,7 @@ fn i1_i3_edge_permutation_partition_convergence() {
             target: pins.target.clone(),
         },
     );
-    exhaust(&[&a, &b, &e, &c7, &c8, &back, &again], &mut n);
+    case(&[&a, &b, &e, &c7, &c8, &back, &again]);
 
     // 4. Counterclaim dispute, authority-only target change and target media.
     let counter = subject(2, 70, 71);
@@ -209,7 +147,7 @@ fn i1_i3_edge_permutation_partition_convergence() {
         "signed_absence",
         62,
     );
-    exhaust(&[&a, &b, &e, &counter, &dispute, &bd, &absence], &mut n);
+    case(&[&a, &b, &e, &counter, &dispute, &bd, &absence]);
 
     // 5. Pending and invalid edge events: wrong body, foreign reaffirmation,
     //    child-before-parent and unknown revision media.
@@ -224,18 +162,128 @@ fn i1_i3_edge_permutation_partition_convergence() {
         "image/png",
         63,
     );
-    exhaust(&[&r, &e, &bad, &foreign, &early, &a, &b], &mut n);
+    case(&[&r, &e, &bad, &foreign, &early, &a, &b]);
+    cases
+}
 
-    assert_eq!(n.cases, 6);
-    assert_eq!(n.permutations, 6 * 5040);
-    assert_eq!(n.subsets, 6 * 128);
-    assert_eq!(n.partitions, 6 * 128);
-    generated(&mut n);
+/// Set-function invariants (I3 over edges): every subset of each named case and
+/// every part of seeded partitions of generated DAGs, read independently.
+/// Union of a partition is the same `BTreeMap` as the full set, so union
+/// equality is not claimed here; order dependence is tested through the store.
+#[test]
+fn i3_edge_subset_and_partition_invariants() {
+    let mut subsets = 0;
+    for events in named_cases() {
+        let full = read(&set(&events.iter().collect::<Vec<_>>())).0;
+        for mask in 0..(1u32 << events.len()) {
+            let part: Vec<_> = (0..events.len())
+                .filter(|i| mask & (1 << i) != 0)
+                .map(|i| &events[i])
+                .collect();
+            let s = set(&part);
+            let (v, g) = read(&s);
+            check(&s, &v, &g, &full);
+            subsets += 1;
+        }
+    }
+    assert_eq!(subsets, 6 * 128);
+    let mut rng = Rng(20261002);
+    let (mut parts_checked, mut edges) = (0, 0);
+    let mut statuses: BTreeMap<String, usize> = BTreeMap::new();
+    let dags = generated_dags();
+    for events in &dags {
+        let full_set = set(&events.iter().collect::<Vec<_>>());
+        let (full, full_graph) = read(&full_set);
+        check(&full_set, &full, &full_graph, &full);
+        edges += full.edges.len();
+        for e in &full.edges {
+            *statuses.entry(e.status.clone()).or_default() += 1;
+        }
+        for r in &full.rows {
+            if matches!(r.envelope.payload, Payload::EdgeReaffirm { .. }) {
+                let key = format!("reaffirm:{:?}:{}", r.state, r.reason);
+                *statuses.entry(key).or_default() += 1;
+            }
+        }
+        for _ in 0..8 {
+            let count = 2 + rng.below(2);
+            let mut split = vec![Set::new(); count];
+            for e in events {
+                split[rng.below(count)].insert(e.id(), e.clone());
+            }
+            for part in &split {
+                let (v, g) = read(part);
+                check(part, &v, &g, &full);
+                parts_checked += 1;
+            }
+        }
+    }
+    assert_eq!(dags.len(), 60);
+    assert!(edges > 60, "generator must exercise edges");
+    for status in ["current", "stale", "endpoint_contested", "edge_conflict"] {
+        assert!(statuses.contains_key(status), "generator missed {status}");
+    }
     eprintln!(
-        "Stage (d): {} named cases, {} permutations, {} subsets/bipartitions, {} edges; {} generated DAGs, {} partitions, {} orders",
-        n.cases, n.permutations, n.subsets, n.edges, n.generated, n.generated_partitions, n.generated_orders
+        "Stage (d) set invariants: {subsets} named subsets; {} DAGs, {parts_checked} partition parts; {edges} generated edges; {statuses:?}",
+        dags.len()
     );
-    eprintln!("Stage (d) generated edge readings: {:?}", n.statuses);
+}
+
+/// I1 over edges through a path that could depend on order: each delivery is a
+/// separate `Store::admit` transaction against real PostgreSQL that rereads
+/// retained bytes. Child-before-parent (reverse) and duplicate redelivery are
+/// included. Each arrival result must equal the set function of what has been
+/// delivered so far, and the stored projection must equal the full set's.
+#[tokio::test]
+async fn i1_edge_store_delivery_order_convergence() {
+    let mut rng = Rng(20261003);
+    let mut samples: Vec<(Vec<Signed>, usize)> =
+        named_cases().into_iter().map(|c| (c, 6)).collect();
+    samples.extend(generated_dags().into_iter().take(10).map(|c| (c, 2)));
+    let (mut orders, mut deliveries) = (0, 0);
+    for (events, count) in samples {
+        let full_set = set(&events.iter().collect::<Vec<_>>());
+        let full = read(&full_set);
+        for k in 0..count {
+            let mut order: Vec<usize> = (0..events.len()).collect();
+            match k {
+                0 => {}
+                1 => order.reverse(),
+                _ => {
+                    for i in (1..order.len()).rev() {
+                        order.swap(i, rng.below(i + 1));
+                    }
+                }
+            }
+            order.extend([order[0], order[order.len() / 2]]);
+            let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
+            let store = Store::provision(pool.clone(), INSTANCE).await.unwrap();
+            let mut delivered = Set::new();
+            for &i in &order {
+                let e = &events[i];
+                delivered.insert(e.id(), e.clone());
+                let outcome = store.admit(e.bytes()).await.unwrap();
+                assert_eq!(outcome.status, classify(&delivered)[&e.id()]);
+                deliveries += 1;
+            }
+            let stored = store.review_projection().await.unwrap();
+            let graph = support_graph(&stored, &curators());
+            assert_eq!((stored, graph), full);
+            // Restore of the same bytes in another order is idempotent.
+            let replay: Vec<_> = order
+                .iter()
+                .rev()
+                .map(|&i| events[i].bytes().to_vec())
+                .collect();
+            store.restore(&replay).await.unwrap();
+            assert_eq!(store.review().await.unwrap(), classify(&full_set));
+            pool.close().await;
+            cleanup.cleanup().await;
+            orders += 1;
+        }
+    }
+    assert_eq!(orders, 6 * 6 + 10 * 2);
+    eprintln!("Stage (d) store delivery: {orders} orders, {deliveries} admissions");
 }
 
 struct Rng(u64);
@@ -248,10 +296,10 @@ impl Rng {
     }
 }
 
-/// Seeded larger DAGs: forks, merges, authority-only steps, edges, reaffirmation
-/// forks/joins, disputes and media. Partitions into two or three independently
-/// read parts, unions, duplicate replay and shuffled incremental delivery.
-fn generated(n: &mut Counts) {
+/// Seeded larger DAGs: forks, merges, authority-only steps, edges, disputes,
+/// reaffirmation forks/joins, non-author reaffirmations and media.
+fn generated_dags() -> Vec<Vec<Signed>> {
+    let mut out = vec![];
     let mut rng = Rng(20261001);
     for case in 0..60u8 {
         let subjects = [
@@ -378,57 +426,9 @@ fn generated(n: &mut Counts) {
             };
             events.push(next);
         }
-        let refs: Vec<&Signed> = events.iter().collect();
-        let full_set = set(&refs);
-        let (full, full_graph) = read(&full_set);
-        check(&full_set, &full, &full_graph, &full);
-        n.generated += 1;
-        n.edges += full.edges.len();
-        for e in &full.edges {
-            *n.statuses.entry(e.status.clone()).or_default() += 1;
-        }
-        for r in &full.rows {
-            if matches!(r.envelope.payload, Payload::EdgeReaffirm { .. }) {
-                let key = format!("reaffirm:{:?}:{}", r.state, r.reason);
-                *n.statuses.entry(key).or_default() += 1;
-            }
-        }
-        for _ in 0..8 {
-            let parts = 2 + rng.below(2);
-            let mut split = vec![Set::new(); parts];
-            for e in &events {
-                split[rng.below(parts)].insert(e.id(), e.clone());
-            }
-            let mut union = Set::new();
-            for part in &split {
-                let (v, g) = read(part);
-                check(part, &v, &g, &full);
-                union.extend(part.clone());
-            }
-            union.extend(split[0].clone());
-            assert_eq!(read(&union), (full.clone(), full_graph.clone()));
-            n.generated_partitions += 1;
-        }
-        for _ in 0..4 {
-            let mut order: Vec<usize> = (0..events.len()).collect();
-            for i in (1..order.len()).rev() {
-                order.swap(i, rng.below(i + 1));
-            }
-            let mut retained = Set::new();
-            for &i in &order {
-                retained.insert(events[i].id(), events[i].clone());
-                assert_eq!(classify(&retained).len(), retained.len());
-            }
-            retained.insert(events[order[0]].id(), events[order[0]].clone());
-            assert_eq!(read(&retained), (full.clone(), full_graph.clone()));
-            n.generated_orders += 1;
-        }
+        out.push(events);
     }
-    assert_eq!(n.generated, 60);
-    assert!(n.edges > 60, "generator must exercise edges");
-    for status in ["current", "stale", "endpoint_contested", "edge_conflict"] {
-        assert!(n.statuses.contains_key(status), "generator missed {status}");
-    }
+    out
 }
 
 fn own_events<'a>(refs: &[&'a Signed], subject: Hash) -> Vec<&'a Signed> {

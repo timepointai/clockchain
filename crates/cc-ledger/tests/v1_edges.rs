@@ -59,7 +59,10 @@ fn i5_pins_survive_correction_resolution_and_reaffirmation() {
     assert_eq!(neighbors(&v, &b), vec![e.id()]);
     assert_eq!(
         support_graph(&v, &curators()).query(a.id(), b.id(), 1),
-        Support::Supported { path: vec![e.id()] }
+        Support::Supported {
+            path: vec![e.id()],
+            excluded: vec![]
+        }
     );
     assert_eq!(binding(&v, &image), (Some(original), Some([3; 32])));
 
@@ -345,4 +348,231 @@ fn edge_admission_pins_disputes_and_media_are_exact() {
         .media
         .iter()
         .any(|m| m.revision == Some(revision_id(a.id(), c.id()))));
+}
+
+fn supported(s: Support) -> (Vec<Hash>, Vec<String>) {
+    match s {
+        Support::Supported { path, excluded } => {
+            (path, excluded.into_iter().map(|r| r.code).collect())
+        }
+        Support::Unsupported { reasons } => panic!("unsupported: {reasons:?}"),
+    }
+}
+
+/// `basis <= current_head`: a basis on a suppressed sibling branch that selects
+/// the same revision as the current head is stale, never current.
+#[test]
+fn basis_outside_current_head_history_is_stale() {
+    let a = genesis();
+    let root = root_grant(a.id());
+    let b = subject(1, 50, 51);
+    let c = correction(&a, &a, 0, 7);
+    let d = delegate(&a, &c, 0, root, 1);
+    // K's delegation is concurrent with A's revocation of K: valid, suppressed.
+    let sibling = delegate(&a, &d, 1, d.id(), 2);
+    let r = revoke(&a, &d, 0, root, d.id(), false);
+    let all = [&a, &b, &c, &d, &sibling, &r];
+    let v = view(&all);
+    assert_eq!(row(&v, sibling.id()).reason, "revoked_concurrent");
+    assert_eq!(row(&v, r.id()).state, P::Head);
+    assert_eq!(row(&v, sibling.id()).revision, row(&v, r.id()).revision);
+    let e = edge(
+        0,
+        "influence",
+        Pins {
+            source: pin(&all, &sibling),
+            target: pin(&all, &b),
+        },
+    );
+    let v = view(&[&a, &b, &c, &d, &sibling, &r, &e]);
+    let reading = edge_of(&v, e.id());
+    assert_eq!(reading.status, "stale");
+    assert_eq!(reading.reasons, ["source:basis_not_ancestor"]);
+    assert!(neighbors(&v, &a).is_empty());
+}
+
+/// Revoke and a selecting Resolve after an authority-only fork are not
+/// revision-creating: the same selected revision stays or becomes current.
+#[test]
+fn authority_only_revoke_and_selecting_resolve_keep_edge_current() {
+    let a = genesis();
+    let root = root_grant(a.id());
+    let b = subject(1, 50, 51);
+    let pins = Pins {
+        source: pin(&[&a], &a),
+        target: pin(&[&b], &b),
+    };
+    let e = edge(0, "influence", pins);
+    let d = delegate(&a, &a, 0, root, 1);
+    let r = revoke(&a, &d, 0, root, d.id(), true);
+    let v = view(&[&a, &b, &e, &d, &r]);
+    assert_eq!(row(&v, r.id()).state, P::Head);
+    assert!(v.authority.tombstones.contains(&d.id()));
+    assert_eq!(edge_of(&v, e.id()).status, "current");
+    assert_eq!(neighbors(&v, &a), vec![e.id()]);
+
+    // Two concurrent Delegates contest the subject although the selected
+    // revision is unchanged (owner note); a selecting Resolve restores it.
+    let d1 = delegate(&a, &a, 0, root, 2);
+    let d2 = delegate(&a, &a, 0, root, 3);
+    let v = view(&[&a, &b, &e, &d1, &d2]);
+    assert_eq!(edge_of(&v, e.id()).status, "endpoint_contested");
+    assert!(neighbors(&v, &a).is_empty());
+    let s = resolve(
+        &a,
+        &[&d1, &d2],
+        0,
+        root,
+        Selection::Revision(revision_id(a.id(), a.id())),
+    );
+    let v = view(&[&a, &b, &e, &d1, &d2, &s]);
+    assert_eq!(row(&v, s.id()).state, P::Head);
+    assert_eq!(edge_of(&v, e.id()).status, "current");
+    assert_eq!(neighbors(&v, &a), vec![e.id()]);
+}
+
+#[test]
+fn edge_and_media_reason_codes_are_exact() {
+    let a = genesis();
+    let b = subject(1, 50, 51);
+    let c1 = correction(&a, &a, 0, 7);
+    let pending = correction(&a, &c1, 0, 8); // c1 withheld: parent_missing
+    let unauthorized = correction(&a, &a, 1, 9); // parent_authority
+    let reason = |events: &[&Signed], e: &Signed| {
+        let mut all = events.to_vec();
+        all.push(e);
+        classify(&all.iter().map(|e| (e.id(), (*e).clone())).collect())[&e.id()].clone()
+    };
+    let target = pin(&[&b], &b);
+    let at = |basis: &Signed| Pins {
+        source: Pin {
+            subject: a.id(),
+            basis: basis.id(),
+            revision: [1; 32],
+            body: [2; 32],
+        },
+        target: target.clone(),
+    };
+    let s = reason(&[&a, &b, &pending], &edge(0, "influence", at(&pending)));
+    assert_eq!(
+        (s.state, s.reason.as_str()),
+        (State::Pending, "pin_pending")
+    );
+    let s = reason(
+        &[&a, &b, &unauthorized],
+        &edge(0, "influence", at(&unauthorized)),
+    );
+    assert_eq!(
+        (s.state, s.reason.as_str()),
+        (State::Invalid, "pin_invalid")
+    );
+
+    // A reaffirmation parent from another edge, or an edge field naming a
+    // reaffirmation, is wrong_edge.
+    let good = Pins {
+        source: pin(&[&a], &a),
+        target: target.clone(),
+    };
+    let e = edge(0, "influence", good.clone());
+    let other = edge(0, "causation", good.clone());
+    let base = [&a, &b, &e, &other];
+    assert_eq!(
+        reason(&base, &reaffirm(0, &other, &[&e], good.clone())).reason,
+        "wrong_edge"
+    );
+    let r = reaffirm(0, &e, &[&e], good.clone());
+    assert_eq!(
+        reason(&[&a, &b, &e, &r], &reaffirm(0, &r, &[&r], good.clone())).reason,
+        "wrong_edge"
+    );
+
+    let s = reason(
+        &[&a, &unauthorized],
+        &attest(0, TargetKind::Event, unauthorized.id(), "image/png", 1),
+    );
+    assert_eq!(
+        (s.state, s.reason.as_str()),
+        (State::Invalid, "target_invalid")
+    );
+    let s = reason(
+        &[&a, &pending],
+        &attest(0, TargetKind::Event, pending.id(), "image/png", 2),
+    );
+    assert_eq!(
+        (s.state, s.reason.as_str()),
+        (State::Pending, "target_pending")
+    );
+
+    // A subject event can never take an edge as its parent.
+    let mut child = correction(&a, &a, 0, 10).envelope().clone();
+    child.parents = Set(vec![e.id()]);
+    if let Payload::Correction { decision, .. } = &mut child.payload {
+        decision.parents = child.parents.clone();
+    }
+    let child = Signed::sign(&key(0), child).unwrap();
+    assert_eq!(reason(&base, &child).reason, "wrong_subject");
+
+    let v = view(&[&a, &b, &e]);
+    let g = support_graph(&v, &curators());
+    assert_eq!(codes(g.query(a.id(), a.id(), 2)), ["same_subject"]);
+    // A large hop bound terminates once the reachable component is exhausted.
+    let lonely = subject(2, 70, 71);
+    let v = view(&[&a, &b, &e, &lonely]);
+    let g = support_graph(&v, &curators());
+    assert_eq!(
+        codes(g.query(a.id(), lonely.id(), usize::MAX)),
+        ["no_current_support_path"]
+    );
+}
+
+/// Excluded edges, disputes and invalid reaffirmations touching a queried
+/// subject stay visible even when another current edge supports the query.
+#[test]
+fn supported_answers_keep_exclusions_visible() {
+    let a = genesis();
+    let b = subject(1, 50, 51);
+    let counter = subject(2, 70, 71);
+    let pins = Pins {
+        source: pin(&[&a], &a),
+        target: pin(&[&b], &b),
+    };
+    let e = edge(0, "influence", pins.clone());
+    let foreign = reaffirm(1, &e, &[&e], pins.clone());
+    let early = reaffirm(
+        0,
+        &e,
+        &[&e],
+        Pins {
+            source: Pin {
+                basis: [77; 32],
+                ..pins.source.clone()
+            },
+            target: pins.target.clone(),
+        },
+    );
+    let dispute = edge(
+        2,
+        "disputes",
+        Pins {
+            source: pin(&[&counter], &counter),
+            target: pins.source.clone(),
+        },
+    );
+    let v = view(&[&a, &b, &counter, &e, &foreign, &early, &dispute]);
+    let g = support_graph(&v, &curators());
+    let reaffirms: Vec<_> = g.excluded.iter().filter(|x| x.event != x.edge).collect();
+    assert_eq!(reaffirms.len(), 2);
+    assert!(reaffirms.iter().all(|x| x.edge == e.id()));
+    let (path, excluded) = supported(g.query(a.id(), b.id(), 1));
+    assert_eq!(path, [e.id()]);
+    let mut excluded = excluded;
+    excluded.sort();
+    assert_eq!(
+        excluded,
+        [
+            "excluded_edge:disputes_not_support",
+            "excluded_edge:invalid:edge_author",
+            "excluded_edge:pending:pin_missing",
+        ]
+    );
 }

@@ -506,6 +506,8 @@ pub struct Neighbor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Exclusion {
     pub edge: Hash,
+    /// The excluded event: the assertion itself, or a pending/invalid reaffirmation.
+    pub event: Hash,
     pub source: Hash,
     pub target: Hash,
     pub reasons: Vec<String>,
@@ -517,11 +519,17 @@ pub struct Reason {
     pub edge: Option<Hash>,
 }
 /// Deliberately two-valued: conflicting readings or missing support never
-/// become a contradiction.
+/// become a contradiction. Excluded edges and disputes touching either queried
+/// subject stay visible in both answers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Support {
-    Supported { path: Vec<Hash> },
-    Unsupported { reasons: Vec<Reason> },
+    Supported {
+        path: Vec<Hash>,
+        excluded: Vec<Reason>,
+    },
+    Unsupported {
+        reasons: Vec<Reason>,
+    },
 }
 /// Only current, trusted, non-dispute edges enter `neighbors`. Not yet the
 /// governed Stage (e) filter identity, `as_of` query or verdict commitment.
@@ -584,6 +592,7 @@ pub fn support_graph(p: &Projection, curators: &BTreeSet<Hash>) -> SupportGraph 
         } else {
             graph.excluded.push(Exclusion {
                 edge: e.edge,
+                event: e.edge,
                 source: ends.0,
                 target: ends.1,
                 reasons,
@@ -591,23 +600,25 @@ pub fn support_graph(p: &Projection, curators: &BTreeSet<Hash>) -> SupportGraph 
         }
     }
     for r in &p.rows {
-        if let Payload::EdgeAssert { pins, .. } = &r.envelope.payload {
-            if matches!(r.state, ProjectionState::Pending | ProjectionState::Invalid) {
-                let state = if r.state == ProjectionState::Pending {
-                    "pending"
-                } else {
-                    "invalid"
-                };
-                graph.excluded.push(Exclusion {
-                    edge: r.event,
-                    source: pins.source.subject,
-                    target: pins.target.subject,
-                    reasons: vec![format!("{state}:{}", r.reason)],
-                });
-            }
-        }
+        let state = match r.state {
+            ProjectionState::Pending => "pending",
+            ProjectionState::Invalid => "invalid",
+            _ => continue,
+        };
+        let (edge, pins) = match &r.envelope.payload {
+            Payload::EdgeAssert { pins, .. } => (r.event, pins),
+            Payload::EdgeReaffirm { edge, new, .. } => (*edge, new),
+            _ => continue,
+        };
+        graph.excluded.push(Exclusion {
+            edge,
+            event: r.event,
+            source: pins.source.subject,
+            target: pins.target.subject,
+            reasons: vec![format!("{state}:{}", r.reason)],
+        });
     }
-    graph.excluded.sort_by_key(|x| x.edge);
+    graph.excluded.sort_by_key(|x| (x.edge, x.event));
     graph
 }
 impl SupportGraph {
@@ -643,10 +654,25 @@ impl SupportGraph {
                 edge: None,
             });
         }
+        let excluded: Vec<_> = self
+            .excluded
+            .iter()
+            .filter(|x| [from, to].iter().any(|s| *s == x.source || *s == x.target))
+            .flat_map(|x| {
+                x.reasons.iter().map(|r| Reason {
+                    code: format!("excluded_edge:{r}"),
+                    subject: None,
+                    edge: Some(x.event),
+                })
+            })
+            .collect();
         if reasons.is_empty() {
             let mut previous = BTreeMap::from([(from, None)]);
             let mut level = vec![from];
             for _ in 0..max_hops {
+                if level.is_empty() {
+                    break;
+                }
                 let mut next = vec![];
                 for s in level {
                     for n in self.neighbors(s) {
@@ -666,7 +692,7 @@ impl SupportGraph {
                         at = *prior;
                     }
                     path.reverse();
-                    return Support::Supported { path };
+                    return Support::Supported { path, excluded };
                 }
                 level = next;
             }
@@ -676,15 +702,7 @@ impl SupportGraph {
                 edge: None,
             });
         }
-        for x in &self.excluded {
-            if [from, to].iter().any(|s| *s == x.source || *s == x.target) {
-                reasons.extend(x.reasons.iter().map(|r| Reason {
-                    code: format!("excluded_edge:{r}"),
-                    subject: None,
-                    edge: Some(x.edge),
-                }));
-            }
-        }
+        reasons.extend(excluded);
         Support::Unsupported { reasons }
     }
 }
