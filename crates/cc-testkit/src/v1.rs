@@ -284,3 +284,27 @@ pub fn filter() -> cc_filter::v1::FilterIdentity {
     curators.sort();
     cc_filter::v1::FilterIdentity::governed(curators, 4).unwrap()
 }
+
+/// Fixed synthetic projection whose canonical rows are pinned as a vector:
+/// genesis, correction, a second subject, a pinned edge and an attestation.
+pub fn view_fixture() -> Vec<Signed> {
+    let g = genesis();
+    let c = correction(&g, &g, 0, 5);
+    let b = subject(1, 50, 51);
+    let e = edge(
+        0,
+        "influence",
+        Pins {
+            source: pin(&[&g, &c], &c),
+            target: pin(&[&b], &b),
+        },
+    );
+    let a = attest(
+        0,
+        TargetKind::Revision,
+        revision_id(g.id(), c.id()),
+        "image/png",
+        60,
+    );
+    vec![g, c, b, e, a]
+}

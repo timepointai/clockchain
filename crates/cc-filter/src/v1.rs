@@ -59,6 +59,14 @@ impl FilterIdentity {
             max_hops,
         })
     }
+    /// True only for an identity this build would construct with
+    /// [`FilterIdentity::governed`]: this fold, encoding, constants, ontology
+    /// and trust policy, with a valid sorted curator set and nonzero hop bound.
+    /// Fields stay public so verifiers can describe foreign identities; a store
+    /// binds only governed ones.
+    pub fn is_governed(&self) -> bool {
+        Self::governed(self.curators.clone(), self.max_hops).as_ref() == Ok(self)
+    }
     /// Domain-framed canonical bytes.
     pub fn canonical(&self) -> Vec<u8> {
         let domain = "cc.filter.v1";

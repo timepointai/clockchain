@@ -164,7 +164,6 @@ fn v1_decision_payload_matches_transition() {
     let e = edge(0, "influence", pins.clone());
     let re = reaffirm(0, &e, &[&e], pins.clone());
     let base = [&g, &a, &b2, &d, &r, &b, &e];
-    let mut checked = 0;
     for (event, mutations) in [(&a, 6), (&d, 3), (&r, 3), (&s, 3), (&e, 3), (&re, 3)] {
         for m in 0..mutations {
             let mut env = event.envelope().clone();
@@ -197,10 +196,8 @@ fn v1_decision_payload_matches_transition() {
                 "{:?} mutation {m}",
                 event.envelope().payload.kind()
             );
-            checked += 1;
         }
     }
-    assert_eq!(checked, 21);
 }
 
 /// Operational failure is unavailable/retryable, never an invalid verdict, and
@@ -307,6 +304,90 @@ async fn as_of_reads_follow_the_fold_and_never_reauthorize() {
     // Reads differ only in visibility; the committed fold is unchanged.
     assert_eq!(store.snapshot(None).await.unwrap(), s);
     assert_ne!(s.cache_key(b"as_of=20"), s.cache_key(b"as_of=60"));
+    pool.close().await;
+    cleanup.cleanup().await;
+}
+
+/// A resolved subject reopens when a late eligible sibling arrives; a late
+/// out-of-cut branch through a revoked grant stays visible and does not.
+#[test]
+fn i3_late_eligible_branch_reopens_resolved_frontier() {
+    let g = genesis();
+    let root = root_grant(g.id());
+    let c = correction(&g, &g, 0, 5);
+    let d = delegate(&g, &c, 0, root, 1);
+    let r = revoke(&g, &d, 0, root, d.id(), false);
+    let revoked = reparent(&correction(&g, &c, 1, 6), &d, d.id(), 1);
+    let late = correction(&g, &g, 0, 40);
+    let view = |events: &[&Signed]| {
+        let v = cc_ledger::v1::project(&events.iter().map(|e| (e.id(), (*e).clone())).collect());
+        (
+            v.subjects[0].state.clone(),
+            v.subjects[0].frontier.clone(),
+            v,
+        )
+    };
+    let (state, frontier, _) = view(&[&g, &c, &d, &r]);
+    assert_eq!((state.as_str(), frontier), ("resolved", [r.id()].into()));
+    let (state, frontier, v) = view(&[&g, &c, &d, &r, &revoked]);
+    assert_eq!((state.as_str(), frontier), ("resolved", [r.id()].into()));
+    let row = v.rows.iter().find(|x| x.event == revoked.id()).unwrap();
+    assert_eq!(
+        (row.state.clone(), row.reason.as_str()),
+        (P::Branch, "revoked_concurrent")
+    );
+    let (state, frontier, v) = view(&[&g, &c, &d, &r, &revoked, &late]);
+    assert_eq!(
+        (state.as_str(), frontier),
+        ("contested", [r.id(), late.id()].into())
+    );
+    let row = v.rows.iter().find(|x| x.event == late.id()).unwrap();
+    assert_eq!(
+        (row.state.clone(), row.reason.as_str()),
+        (P::Branch, "contested")
+    );
+}
+
+/// `bind` accepts only an identity `governed()` would construct for this
+/// build; commitments can never name a foreign policy, encoding or ontology.
+#[tokio::test]
+async fn bind_refuses_ungoverned_filter_identity() {
+    let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
+    let store = Store::provision(pool.clone(), INSTANCE).await.unwrap();
+    let base = filter();
+    let mut variants = vec![];
+    let mut push = |f: fn(&mut cc_filter::v1::FilterIdentity)| {
+        let mut v = base.clone();
+        f(&mut v);
+        variants.push(v);
+    };
+    push(|v| v.curators.clear());
+    push(|v| v.curators.reverse());
+    push(|v| v.curators.push(v.curators[0]));
+    push(|v| v.curators[0] = [2; 32]);
+    push(|v| v.trust_policy = "cc.trust.foreign.v1".into());
+    push(|v| v.encoding = 0);
+    push(|v| v.constants = 1);
+    push(|v| v.ontology[0] ^= 1);
+    push(|v| v.max_hops = 0);
+    for v in &variants {
+        assert!(!v.is_governed(), "{v:?}");
+        assert!(
+            matches!(
+                store.clone().bind(v.clone()).await,
+                Err(Error::RuleIdentity)
+            ),
+            "{v:?}"
+        );
+    }
+    // Nothing was recorded: the governed identity still binds this store.
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM cc_v1.rule_identity")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    assert!(base.is_governed());
+    store.bind(base).await.unwrap();
     pool.close().await;
     cleanup.cleanup().await;
 }

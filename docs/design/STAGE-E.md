@@ -41,14 +41,25 @@ filter version, corpus digest and exact query bytes.
 
 ## Store, reads and refusal
 
-`Store::bind(filter)` records the identity in a new append-only
-`cc_v1.rule_identity` row; the interim schema hash changes, so Stage (b), (c) and
-(d) stores refuse silent reopening. `semantic_readiness()` reports `ready`,
-`rule_identity_unbound`, `unsupported_fold_version` or
-`incompatible_rule_identity`, with `serving: false`. Snapshots, exports, the
-review route and health refuse on anything but `ready`. A requested fold that is
-not the bound supported one returns `unsupported_fold_version`; it is never
-answered under the current fold.
+`Store::bind(filter)` accepts only an identity `FilterIdentity::governed` would
+construct for this build: its fold, encoding, constants, ontology and trust
+policy, a valid strictly sorted nonempty curator set and a nonzero hop bound.
+Anything else is refused before it is recorded. It records the identity in a new
+append-only `cc_v1.rule_identity` row; the interim schema hash changes, so
+Stage (b), (c) and (d) stores refuse silent reopening.
+
+`semantic_readiness()` always reports `serving: false` and one of:
+- `ready`;
+- `rule_identity_unbound` (no identity bound on this handle);
+- `rule_identity_unrecorded` (bound handle, but no stored row);
+- `unsupported_fold_version`;
+- `incompatible_rule_identity`.
+
+Snapshots, exports and the review route refuse on anything but `ready`. The
+reader-authorized `/health` diagnostic still answers 200 with the readiness
+report; its corpus digest and commitment are null unless the state is `ready`.
+A requested fold that is not the bound supported one returns
+`unsupported_fold_version`; it is never answered under the current fold.
 
 `Snapshot` carries the rule identity, corpus digest and commitment. Entity reads,
 support verdicts (`Supported { path, excluded }` / `Unsupported { reasons }`)
@@ -75,7 +86,17 @@ named rule and never reinterpreted. Accepted envelopes then go through
 `crates/cc-core/tests/vectors/v1_rule_reference.py` independently computes the
 manifest digest, ontology hash, filter canonical bytes and version, corpus
 digests, a view commitment and a cache key into the new `v1-rule.txt`. The
-Stage (a) vectors are unchanged. `cc-wasm-vectors` recomputes all eight with the
+Stage (a) vectors are unchanged.
+
+The real canonical rows of a fixed synthetic projection (genesis, correction,
+second subject, pinned edge, attestation) are pinned byte for byte in
+`crates/cc-ledger/tests/vectors/v1-view-rows.json`. From those bytes the
+reference independently recomputes the rows digest, corpus digest, testkit
+filter version and view commitment into `v1-view.txt`.
+`canonical_rows_and_view_commitment_are_pinned` fails on any serialization or
+framing change. CI reruns the reference and requires both vector files to be
+unchanged. `.gitattributes` keeps the manifest and vector bytes free of
+line-ending normalization. `cc-wasm-vectors` recomputes all eight with the
 shipped cc-core/cc-filter code natively (Cargo test) and as a wasm32 module run
 by Node in a new CI step; both must report mask `0xff`.
 
@@ -86,6 +107,7 @@ by Node in a new CI step; both must report mask `0xff`.
 | i1_union_permutation_partition_convergence | crates/cc-ledger/tests/v1_projection_differential.rs |
 | i2_parent_authority_and_surviving_join_grant and eight i2_* traces | crates/cc-ledger/tests/v1_projection_differential.rs |
 | i3_total_auditable_classification | crates/cc-ledger/tests/v1_invariants.rs |
+| i3_late_eligible_branch_reopens_resolved_frontier | crates/cc-ledger/tests/v1_invariants.rs |
 | i4_subject_key_immutable_across_all_transitions | crates/cc-ledger/tests/v1_admission.rs |
 | i5_pins_survive_correction_resolution_and_reaffirmation | crates/cc-ledger/tests/v1_edges.rs |
 | i6_asserted_time_and_receipt_noninterference | crates/cc-ledger/tests/v1_projection_differential.rs |
@@ -109,10 +131,11 @@ accepted model, checker, mutants and receipts are byte-unchanged.
   equal the model.
 - **I1:** seven traces (intersecting revokes, concurrent delegate descendants,
   retroactive revoke, competing resolutions, laundering, crisscross and partial
-  join with a late sibling), two partitions each, give **14** unions.
-  Complementary halves go to separate stores in different orders, and each must
-  match the model for its subset. Export/restore union, rebuild into a fresh
-  store and duplicate replay must reproduce the independently computed root.
+  join with a late sibling), each split two ways. Complementary halves go to
+  separate stores in different orders, and each must match the model for its
+  subset. Export/restore union, rebuild into a fresh store and duplicate replay
+  must reproduce the independently computed root. The loop count itself is not
+  claimed as evidence.
 - **I6:** all **13** named model traces re-signed under three asserted-time
   patterns have distinct IDs and identical decisions. Receipts claiming other
   results and times, and body retention, leave the snapshot unchanged. A
@@ -120,6 +143,10 @@ accepted model, checker, mutants and receipts are byte-unchanged.
   writer.
 - **I8:** eight single-field identity variants give distinct filter versions,
   commitments and cache keys over fixed events; corpus and rows are committed.
+  `bind_refuses_ungoverned_filter_identity` covers nine ungoverned identities
+  (empty, unsorted, duplicated or invalid curators; foreign trust policy, wrong
+  encoding, constants, ontology; zero hop bound). Each is refused with nothing
+  recorded.
   It also covers binding refusal, requested and stored unknown folds, a tampered
   stored identity, health diagnostics, HTTP 409, and export refusal for a
   version, manifest, root or other rule before admission, with exact restore.
@@ -150,11 +177,25 @@ Each remains open for change only through a new fold version.
 10. Note, authority-only forks contest the subject: `subject.authority_only_fork`.
 11. New, `as_of` hides a later current revision without falling back, and treats
     unknown asserted time as not visible: `as_of`, `as_of.unknown_time`.
-12. New, projection rows use a JSON canonical schema: `projection.rows`.
+12. New, projection rows use a JSON canonical schema: `projection.rows`. The
+    rows bytes are now pinned by a conformance vector.
 13. New, export/restore requires the same filter identity; there is no
     cross-rule migration (`restore_export`).
 14. New, health is reader-authorized on the review router only; the normal
     binary's health stays legacy until runtime integration.
+15. `as_of` considers only the current revision's asserted time. Edge and
+    attestation asserted times are ignored for visibility (edge and media events
+    carry none in v1): `as_of`.
+
+## Owner notes (recorded, behavior unchanged)
+
+- `Store::review`, `review_authority`, `review_projection` and raw `restore`
+  remain public and unversioned for operator review. Runtime integration must
+  remove them or route them through the versioned snapshot.
+- A malformed or out-of-range `fold_version` query parameter gets axum's 400
+  rejection, not the 409 `unsupported_fold_version`.
+- `/health` recomputes the full fold on every request; it is a diagnostic, not
+  a serving-scale endpoint.
 
 Resource bounds remain unqualified for serving: the reaffirmation fixed point is
 O(L^2) and projection is O(edges x candidates); snapshots recompute the full fold.

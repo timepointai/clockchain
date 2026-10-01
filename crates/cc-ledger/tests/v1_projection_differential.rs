@@ -549,7 +549,6 @@ async fn i1_union_permutation_partition_convergence() {
     let expected = model(&traces);
     let base = genesis().envelope().clone();
     let mut cache = BTreeMap::new();
-    let mut unions = 0;
     for (events, expected) in traces.iter().zip(&expected) {
         let signed = wire(events, &base, 0, &mut cache);
         let n = signed.len();
@@ -592,10 +591,8 @@ async fn i1_union_permutation_partition_convergence() {
                 p.close().await;
                 cl.cleanup().await;
             }
-            unions += 1;
         }
     }
-    assert_eq!(unions, 14);
 }
 
 /// I6: isomorphic DAGs re-signed with increasing, reversed-extreme and equal

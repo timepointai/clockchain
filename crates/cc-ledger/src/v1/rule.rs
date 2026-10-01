@@ -233,6 +233,10 @@ impl Store {
         if !supported_fold(&filter.fold) {
             return Err(Error::UnsupportedFoldVersion);
         }
+        // Commitments must never name a policy or encoding this build lacks.
+        if !filter.is_governed() {
+            return Err(Error::RuleIdentity);
+        }
         sqlx::query("INSERT INTO cc_v1.rule_identity(singleton,fold_version,fold_manifest,filter_identity) VALUES(true,$1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(filter.fold.version as i16).bind(filter.fold.manifest.to_vec()).bind(filter.canonical())
             .execute(&self.pool).await?;
