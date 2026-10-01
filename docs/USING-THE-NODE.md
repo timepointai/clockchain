@@ -177,6 +177,7 @@ curl -fsS -H "Authorization: Bearer $CC_NODE_READ_KEY" "$BASE/v1/subjects/$SUBJE
 Missing or unknown credentials get `401`; the read key on a write route gets
 `403`. A frozen node answers writes `503 {"error":"frozen"}` and still serves
 reads and export. Every read names `rule`, `corpus_digest` and `commitment`.
-IDs, digests and `as_of` (a 32-byte coordinate) are lowercase hex. Embedded
+IDs, digests and `as_of` (a 32-byte coordinate) are lowercase hex. An unknown,
+misspelled or repeated query parameter is `400 {"error":"invalid_query"}`. Embedded
 projection objects and the admission outcome keep their canonical JSON, in which
 a hash is a list of 32 byte values.

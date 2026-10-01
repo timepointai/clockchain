@@ -22,7 +22,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{rejection::QueryRejection, DefaultBodyLimit, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -371,17 +371,32 @@ async fn retain_body(
     }
 }
 
+/// Query strings are strict: an unknown, misspelled or repeated parameter is a
+/// 400, never a read answered as if it were absent.
+type Strict<T> = Result<Query<T>, QueryRejection>;
+
+fn query<T>(q: Strict<T>) -> Result<T, Response> {
+    q.map(|Query(q)| q)
+        .map_err(|_| refusal(StatusCode::BAD_REQUEST, "invalid_query"))
+}
+
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FoldQuery {
     fold_version: Option<String>,
     fold_manifest: Option<String>,
 }
 
-async fn snapshot(State(state): State<V1State>, Query(q): Query<FoldQuery>) -> Response {
+async fn snapshot(State(state): State<V1State>, q: Strict<FoldQuery>) -> Response {
+    let q = match query(q) {
+        Ok(q) => q,
+        Err(r) => return r,
+    };
     let requested = match (q.fold_version, q.fold_manifest) {
         (None, None) => None,
         (Some(v), Some(m)) => match (v.parse::<u16>(), hex32(&m)) {
-            (Ok(version), Some(manifest)) if v.bytes().all(|b| b.is_ascii_digit()) => {
+            // Canonical decimal only: no sign, padding or leading zeros.
+            (Ok(version), Some(manifest)) if version.to_string() == v => {
                 Some(FoldRef { version, manifest })
             }
             _ => return refusal(StatusCode::BAD_REQUEST, "invalid_fold_request"),
@@ -414,6 +429,7 @@ async fn snapshot(State(state): State<V1State>, Query(q): Query<FoldQuery>) -> R
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AsOfQuery {
     as_of: Option<String>,
 }
@@ -429,8 +445,12 @@ fn as_of(raw: Option<String>) -> Option<Option<Hash>> {
 async fn subject(
     State(state): State<V1State>,
     Path(subject_id): Path<String>,
-    Query(q): Query<AsOfQuery>,
+    q: Strict<AsOfQuery>,
 ) -> Response {
+    let q = match query(q) {
+        Ok(q) => q,
+        Err(r) => return r,
+    };
     let Some(id) = hex32(&subject_id) else {
         return refusal(StatusCode::BAD_REQUEST, "invalid_subject_id");
     };
@@ -512,13 +532,18 @@ pub(crate) async fn prose_of(
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SupportQuery {
     from: Option<String>,
     to: Option<String>,
     as_of: Option<String>,
 }
 
-async fn support(State(state): State<V1State>, Query(q): Query<SupportQuery>) -> Response {
+async fn support(State(state): State<V1State>, q: Strict<SupportQuery>) -> Response {
+    let q = match query(q) {
+        Ok(q) => q,
+        Err(r) => return r,
+    };
     let (Some(from), Some(to)) = (
         q.from.as_deref().and_then(hex32),
         q.to.as_deref().and_then(hex32),

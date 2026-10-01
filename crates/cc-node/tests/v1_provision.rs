@@ -418,7 +418,7 @@ fn v1_configuration_is_strict() {
         with("CC_V1_MAX_HOPS", "0"),
         Err(ConfigError::V1FilterIdentity(_))
     ));
-    for bad in ["+4", " 4", "4 ", "four", "", "65536", "-1"] {
+    for bad in ["+4", " 4", "4 ", "04", "four", "", "65536", "-1"] {
         assert!(
             matches!(
                 with("CC_V1_MAX_HOPS", bad),

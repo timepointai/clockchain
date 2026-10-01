@@ -407,10 +407,11 @@ impl V1Config {
             .ok_or(ConfigError::V1CuratorsMalformed)?;
         let max_hops = match get("CC_V1_MAX_HOPS") {
             None => V1_DEFAULT_MAX_HOPS,
+            // Canonical decimal only: no sign, padding or leading zeros.
             Some(raw) => raw
                 .parse::<u16>()
                 .ok()
-                .filter(|_| raw.bytes().all(|b| b.is_ascii_digit()))
+                .filter(|n| n.to_string() == raw)
                 .ok_or(ConfigError::V1MaxHopsMalformed(raw))?,
         };
         let filter = cc_filter::v1::FilterIdentity::governed(curators, max_hops)
