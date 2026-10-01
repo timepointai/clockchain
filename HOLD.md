@@ -3,12 +3,41 @@
 Read this file before release, publication, generation, or fixture work. These
 constraints remain active until the owner explicitly changes them.
 
-- No deployment or production writes.
+- No deployment or production writes, except the owner-authorized v1 launch
+  below.
 - No historical or image generation, model calls, new model attempts, or retries.
 - The private inaugural fixture is frozen: preserve its files, receipts, bindings,
-  image bytes and hashes. Do not replace its sources or publish any subset.
+  image bytes and hashes. Do not replace its sources. Apart from the authorized
+  1968 entry below, do not publish any subset.
 - Excluded private images do not imply a signed absence decision.
 - Passing tests or a software merge do not authorize release or publication.
+
+## Owner launch decisions — 2026-10-01
+
+The owner decided the following:
+
+- **Defaults.** The governed defaults in [STAGE-E.md](docs/design/STAGE-E.md) are
+  accepted as pinned for `fold_version` 1, with production `max_hops = 4`.
+- **Stage (f).** Runtime integration, as planned in
+  [STAGE-F.md](docs/design/STAGE-F.md), is authorized.
+- **Release.** One owner-operated release of v1 onto a **fresh, empty v1
+  database** is authorized. Production writes are limited to:
+  - provisioning that database;
+  - binding its rule identity, with the owner's curator key set;
+  - the single inaugural entry below.
+
+  The v0 database is left untouched as an archive.
+- **Inaugural entry.** The Engelbart 1968 "Mother of All Demos" subject, newly
+  authored as a v1 Genesis from the fixture's 1968 claim. It carries no media
+  and no signed absence decision. The 1973 claim, its influence edge, and both
+  images stay private and held. The fixture files themselves stay unchanged.
+- **Human-only steps.** The owner, or the owner's agent at the owner's explicit
+  instruction in that session, runs deployment from the owner's workstation.
+  Never from CI or a cloud session. Only the owner generates, holds and uses
+  the root/curator signing key. Only the owner approves and submits the
+  inaugural entry.
+- **Still held.** Generation and model calls remain held. Issue #6 disposition
+  and any further publication remain owner decisions.
 
 ## PR #5 merge record — 2026-09-28
 
