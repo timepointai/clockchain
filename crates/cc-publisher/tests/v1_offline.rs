@@ -293,6 +293,24 @@ where
         .expect("run cc-publisher")
 }
 
+/// Run the real binary under umask 000, so the only mode restrictions left on
+/// what it creates are the ones it sets itself.
+fn publisher_umask_000<I, S>(args: I) -> Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    Command::new("sh")
+        .arg("-c")
+        .arg(r#"umask 000; exec "$0" "$@""#)
+        .arg(env!("CARGO_BIN_EXE_cc-publisher"))
+        .args(args)
+        .env_remove(cc_publisher::v1::cli::WRITE_TOKEN_ENV)
+        .env_remove(cc_publisher::v1::cli::READ_TOKEN_ENV)
+        .output()
+        .expect("run cc-publisher under umask 000")
+}
+
 #[track_caller]
 fn succeeded(out: &Output) -> String {
     assert!(
@@ -370,7 +388,7 @@ fn run_genesis(flags: Flags) -> Output {
         args.push(flag.into());
         args.push(value);
     }
-    publisher(args)
+    publisher_umask_000(args)
 }
 
 /// A temporary directory holding the vector's seed file (mode 0600) and body.
@@ -627,14 +645,14 @@ fn cli_genesis_matches_library_bytes() {
     assert_eq!(preview["event"], EVENT);
     assert_eq!(preview["envelope_sha256"], ENVELOPE_SHA256);
     assert_eq!(preview["asserted_time"]["calendar"], ASSERTED);
-    // The umask can only narrow these modes; nothing is group or other accessible.
+    // Written under umask 000: these are exactly the modes genesis sets.
+    assert_eq!(mode_of(&cli_dir), 0o700);
     for path in [
-        cli_dir.clone(),
         cli_dir.join(ENVELOPE_FILE),
         cli_dir.join(BODY_FILE),
         cli_dir.join(PREVIEW_FILE),
     ] {
-        assert_eq!(mode_of(&path) & 0o077, 0, "{}", path.display());
+        assert_eq!(mode_of(&path), 0o600, "{}", path.display());
     }
 
     let loaded = Genesis::load_dir(&cli_dir).unwrap();
@@ -712,7 +730,8 @@ fn kind_outside_pinned_taxonomy_is_refused() {
 fn keygen_creates_0600_once_and_never_overwrites() {
     let tmp = tempfile::tempdir().unwrap();
     let k = tmp.path().join("k");
-    let stdout = succeeded(&publisher(["v1", "keygen", "--out", utf8(&k)]));
+    // Under umask 000, so 0600 is the mode keygen sets, not the ambient umask.
+    let stdout = succeeded(&publisher_umask_000(["v1", "keygen", "--out", utf8(&k)]));
 
     let text = fs::read(&k).unwrap();
     assert_eq!(text.len(), 65, "64 hex digits and a newline");
