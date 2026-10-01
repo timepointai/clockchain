@@ -514,12 +514,45 @@ class BackupRestoreV1Tests(PgCase):
         source.execute('CREATE TABLE public.events(id int)')
         self.refused(source, 'relations outside cc_v1')
 
+    def test_populated_store_matches_a_node_export_with_byte_array_hashes(self):
+        # In process, with the re-serving node stubbed: its export uses the
+        # ExportManifest serde shape (hashes as 32-byte arrays), and the
+        # commitment must still be compared, recorded and matched as hex.
+        import backup_restore
+        from types import SimpleNamespace
+        source, restore = self.store(candidates=(b'synthetic populated',)), self.database()
+        ints = lambda h: list(bytes.fromhex(h))
+        contents = verify_contents(source.sql)
+        commitment = hashlib.sha256(b'synthetic node commitment').hexdigest()
+        served = {'encoding': 1, 'envelopes': contents['envelopes'],
+                  'corpus_digest': ints(contents['corpus_digest']), 'commitment': ints(commitment),
+                  'rule': {'fold_version': 1, 'fold_manifest': ints(fold_manifest().hex()),
+                           'filter_version': ints(EXPECTED.filter_version)}}
+        export = Path(self.tmp.name) / 'export.json'
+        export.write_text(json.dumps(dict(served, commitment=commitment)))
+        url = urlsplit(DATABASE_URL)
+        def env(db):
+            return {'PGHOST': url.hostname, 'PGPORT': str(url.port or 5432), 'PGUSER': url.username,
+                    'PGPASSWORD': url.password or '', 'PGDATABASE': db.name}
+        args = SimpleNamespace(output=Path(self.tmp.name) / 'out', export=export,
+                               node_bin=Path('/nonexistent/cc-node'))
+        identity = {'CC_V1_INSTANCE': EXPECTED.instance, 'CC_V1_CURATORS': ','.join(CURATORS),
+                    'CC_V1_MAX_HOPS': '4'}
+        with patch.dict(os.environ, identity), \
+                patch.object(backup_restore, 'reserve', return_value=served) as reserve, \
+                patch('sys.stdout'):
+            report = backup_restore.main_v1(args, env(source), env(restore))
+        reserve.assert_called_once()
+        self.assertEqual((report['commitment'], report['commitment_basis'], report['events']),
+                         (commitment, 'node_reserved_restored_copy', contents['events']))
+        self.assertTrue(report['production_export_matched'])
+
     def test_nonempty_restore_target_is_refused_before_any_dump(self):
         # The guard proofs mutate (and roll back) only an empty restore target.
-        # Any relation counts, in any schema (pg_class, not information_schema).
+        # Any relation counts (pg_class, not information_schema): a lone sequence
+        # is invisible to information_schema.tables but still makes it non-empty.
         source, restore = self.store(), self.database()
-        restore.execute('CREATE SCHEMA hidden; CREATE TABLE hidden.kept(id int); '
-                        'INSERT INTO hidden.kept VALUES (1); REVOKE ALL ON hidden.kept FROM PUBLIC')
+        restore.execute('CREATE SEQUENCE public.leftover')
         result, output = self.run_tool(source, restore)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('restore database must be empty', result.stderr)
@@ -678,9 +711,11 @@ class RestoreVerifyV1Tests(unittest.TestCase):
             finally:
                 self.assertTrue(calls and all(c[0] == 'docker' for c in calls))
                 self.assertTrue(any('pg_restore' in c for c in calls))
-                # With an image the restore container sits on its own network, removed too.
-                self.assertEqual([c[:3] for c in cleanup], [['docker', 'rm', '-f']]
-                                 + ([['docker', 'network', 'rm']] if kwargs.get('image') else []))
+                # The restored copy's volume goes with it (-v). With an image the
+                # restore container sits on its own network, removed too.
+                self.assertEqual([c[:4] for c in cleanup[:1]], [['docker', 'rm', '-f', '-v']])
+                self.assertEqual([c[:3] for c in cleanup[1:]],
+                                 [['docker', 'network', 'rm']] if kwargs.get('image') else [])
 
     def test_uninitialized_restore_requires_explicit_allowance(self):
         state = {'state': 'uninitialized', 'counts': dict(ZEROS)}

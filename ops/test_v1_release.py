@@ -140,13 +140,18 @@ class PromoteV1Tests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp, self.runs = Path(tmp.name), 0
 
+    SECRETS = [{'name': n, 'digest': 'd' * 16, 'status': 'Staged'} for n in
+               ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY', 'CC_V1_CURATORS', 'CC_V1_INSTANCE', 'DATABASE_URL')]
+
     def promote(self, before=None, raises=None, *, fail_checks=False, backup=None, env=None, drop=(),
-                extra=(), config=FLY, after_digest=NEW_DIGEST):
+                extra=(), config=FLY, after_digest=NEW_DIGEST, secrets=None):
         self.runs += 1
         self.evidence, self.log = self.tmp / f'evidence-{self.runs}', []
 
         def fly(*args):
             self.log.append(('fly', args))
+            if args[:2] == ('secrets', 'list'):
+                return json.dumps(self.SECRETS if secrets is None else secrets)
             return ''
 
         def capture_v1(*args, **kw):
@@ -251,6 +256,28 @@ class PromoteV1Tests(unittest.TestCase):
         self.assertEqual(m.machines.call_count, 13)
         self.assertTrue((self.evidence / 'FAILED').exists())
         self.assertFalse((self.evidence / 'acceptance.json').exists())
+
+    def test_secret_overrides_or_missing_v1_secrets_refused_before_backup_or_deploy(self):
+        cases = [(self.SECRETS + [{'name': 'CC_V1_MAX_HOPS', 'digest': 'e', 'status': 'Deployed'}],
+                  'override fly.toml .env.; unset them .--stage.: CC_V1_MAX_HOPS'),
+                 (self.SECRETS + [{'name': 'CC_NODE_POSTURE'}, {'name': 'CC_NODE_LEDGER'}],
+                  'CC_NODE_LEDGER, CC_NODE_POSTURE'),
+                 ([e for e in self.SECRETS if e['name'] != 'CC_V1_CURATORS'],
+                  'v1 secrets missing: CC_V1_CURATORS'),
+                 ({'name': 'DATABASE_URL'}, 'unexpected')]
+        for secrets, message in cases:
+            with self.subTest(message):
+                m = self.promote(raises=ValueError, secrets=secrets)
+                self.assertRegex(str(self.error.exception), message)
+                m.capture_v1.assert_not_called()
+                self.assertFalse(any(args[0] == 'deploy' for args in self.fly_calls()))
+
+    def test_secret_census_reads_names_only_in_either_key_casing(self):
+        capitalized = [{'Name': e['name'], 'Digest': e['digest']} for e in self.SECRETS]
+        self.promote(secrets=capitalized)
+        rollback = json.loads((self.evidence / 'rollback.json').read_text())
+        self.assertEqual(rollback['secret_names'], sorted(e['name'] for e in self.SECRETS))
+        self.assertNotIn('d' * 16, (self.evidence / 'rollback.json').read_text())
 
     def test_post_deploy_backup_must_hold_checked_commitment(self):
         for backup in ({'commitment': OTHER_COMMITMENT}, {'commitment': None}, {'state': 'provisioned_unbound'}):

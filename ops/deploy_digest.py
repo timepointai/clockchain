@@ -138,6 +138,30 @@ def check_config(path, v1):
     return config
 
 
+# A secret overrides fly.toml [env]; these must come from the checked-in config.
+CONFIG_ONLY = ('CC_NODE_LEDGER', 'CC_NODE_POSTURE', 'CC_V1_MAX_HOPS')
+V1_SECRETS = ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY', 'CC_V1_CURATORS', 'CC_V1_INSTANCE', 'DATABASE_URL')
+
+
+def check_secret_names(app):
+    """Names only (Fly never returns values): required v1 secrets present, no overrides.
+
+    provision-v1 binds whatever the secrets say, permanently, so a stale
+    CC_V1_MAX_HOPS secret must be caught before the deploy, not after.
+    """
+    listed = json.loads(fly('secrets', 'list', '--app', app, '--json'))
+    if not isinstance(listed, list):
+        raise ValueError('unexpected `flyctl secrets list --json` output')
+    names = {entry.get('name', entry.get('Name')) for entry in listed if isinstance(entry, dict)}
+    stale = sorted(names & set(CONFIG_ONLY))
+    if stale:
+        raise ValueError('secrets override fly.toml [env]; unset them (--stage): ' + ', '.join(stale))
+    missing = sorted(set(V1_SECRETS) - names)
+    if missing:
+        raise ValueError('v1 secrets missing: ' + ', '.join(missing))
+    return sorted(n for n in names if n)
+
+
 def promote_v1(args):
     """Fresh v1 promotion. Checks and the owner-approved deploy only; no entry."""
     expected = Expected.from_env(production=True)
@@ -153,10 +177,11 @@ def promote_v1(args):
     before = machines(args.app)
     # The tick must already be gone: it writes v0 events.
     verify_v1(before)
+    secret_names = check_secret_names(args.app)
     previous = previous_image(group(before, 'app'))
     (args.evidence / 'rollback.json').write_text(json.dumps(
         {'app': args.app, 'mode': 'v1-fresh', 'previous_image': previous, 'sha': args.sha,
-         'automatic_rollback': False}, indent=2))
+         'automatic_rollback': False, 'secret_names': secret_names}, indent=2))
     try:
         # Empty, or only the expected identity with no evidence rows, else refuse.
         capture_v1(*database, args.evidence / 'backup-before', expected, fresh=True, image=args.image)

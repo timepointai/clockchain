@@ -144,9 +144,14 @@ different identity or posture and the release checks would fail:
 
 ```sh
 fly secrets list -a <APP>
-# Only for names the list shows; plain `unset` would restart machines now.
+# Record any of the three names the list shows, then unset only those.
+# Plain `unset` would restart machines now.
 fly secrets unset --stage CC_NODE_LEDGER CC_V1_MAX_HOPS CC_NODE_POSTURE -a <APP>
 ```
+
+The release refuses to deploy while any of those three names is still a secret,
+and while any of `DATABASE_URL`, `CC_V1_INSTANCE`, `CC_V1_CURATORS`,
+`CC_NODE_API_KEY` or `CC_NODE_READ_KEY` is missing (it reads names only).
 
 Stage the v1 secrets. Values go through stdin as `NAME=VALUE` lines built with
 the shell's `printf` builtin, so they never appear in history or in a process
@@ -180,7 +185,8 @@ credentials in `<PRIVATE_DIR>/node-keys.env` first, with an editor
 ```sh
 umask 077
 {
-  cat <PRIVATE_DIR>/node-keys.env
+  # awk 1 adds a final newline if the file lacks one.
+  awk 1 <PRIVATE_DIR>/node-keys.env
   printf 'CC_BACKUP_DB_APP=%s\n'   '<PG_APP>'
   printf 'CC_BACKUP_DATABASE=%s\n' '<V1_DB>'
   printf 'CC_BACKUP_USER=%s\n'     '<OPERATOR_USER>'
@@ -199,7 +205,8 @@ shows up only in the post-deploy checks (section 9 has the recovery).
 Success: `fly secrets list` shows the three names as staged or updated, and the
 running v0 app has not restarted. Abort point: run
 `fly secrets unset --stage DATABASE_URL CC_V1_INSTANCE CC_V1_CURATORS -a <APP>`,
-then re-stage the v0 `DATABASE_URL` the same way.
+then re-stage the v0 `DATABASE_URL`, and any stale secret recorded above, the
+same way.
 
 ## 5. Stop the tick (before section 4)
 
@@ -394,17 +401,27 @@ flyctl proxy 18080:80 <APP>.flycast -a <APP> --bind-addr 127.0.0.1
 
 Every envelope the node accepts for decoding is kept for good: an admitted or
 refused (422) candidate stays in `cc_v1.candidates` and changes the commitment,
-and undecodable input leaves a `cc_v1.rejections` row. Both tables are
-append-only. So submit exactly once: confirm the store is still empty right
-before, never pass `--allow-untrusted`, and do not retry or re-sign after any
-non-201 answer. Stop and decide as the owner instead.
+and undecodable or wrong-instance input leaves a `cc_v1.rejections` row. Both
+tables are append-only. So submit exactly once: confirm the store is still
+empty right before, never pass `--allow-untrusted`, and do not retry or re-sign
+after any non-201 answer. Stop and decide as the owner instead.
 
 ```sh
 set -a; . <PRIVATE_DIR>/release.env; set +a
 export CC_NODE_URL=http://127.0.0.1:18080
-"$PUB" v1 node-info --node "$CC_NODE_URL"
-python3 ops/v1_checks.py zero --sha "$SHA" > <EVIDENCE_DIR>/release-$SHA/pre-entry-zero.json
+"$PUB" v1 node-info --node "$CC_NODE_URL" \
+  && python3 ops/v1_checks.py zero --sha "$SHA" \
+       > <EVIDENCE_DIR>/release-$SHA/pre-entry-zero.json \
+  && echo "store empty and identity confirmed: submit may run"
+```
+
+Run the submit only if that printed the confirmation line:
+
+```sh
 "$PUB" v1 submit --node "$CC_NODE_URL" --dir <PRIVATE_DIR>/genesis-1968
+```
+
+```sh
 "$PUB" v1 verify --node "$CC_NODE_URL" --subject <SUBJECT> --dir <PRIVATE_DIR>/genesis-1968
 python3 ops/v1_checks.py populated --sha "$SHA" --entry <PRIVATE_DIR>/genesis-1968 \
   > <EVIDENCE_DIR>/release-$SHA/entry-check.json
@@ -466,7 +483,7 @@ key, instance and rule identity are bound and cannot be changed in place.
 | 6 Acceptance | `acceptance/acceptance.json` reads `pass`; cleanup `removed: true` | Nothing in production changed. Fix the cause and build a new image |
 | 6 Pre-deploy inspection or backup | `backup-before` is `uninitialized` (or bound and empty) | Nothing deployed. Investigate any foreign relation, other instance or rows before retrying |
 | 6 `fly deploy` / `provision-v1` | Release command exits 0 | Fly aborts the deploy and the old machine keeps its image. Read the release command's exit status: 78 configuration (a missing or malformed secret), 73 the database holds non-v1 tables, 65 the stored identity differs from the secrets, 69 database unreachable |
-| 6 Post-deploy checks or backup | `production/acceptance.json` and `backup-after` are written | `FAILED` and `recovery.json` record the error and the previous image. Either fix forward with a new release, or return to v0: re-stage the v0 `DATABASE_URL`, then deploy the previous image (from `rollback.json`) with a v0 `fly.toml` from git history and `--skip-release-command`. The v1 database stays as it is (bound, no entry). If the bound identity is wrong (instance or curators), it cannot be rebound: use a new fresh database (section 3) as an owner decision |
+| 6 Post-deploy checks or backup | `production/acceptance.json` and `backup-after` are written | `FAILED` and `recovery.json` record the error and the previous image. Either fix forward with a new release, or return to v0: re-stage the v0 `DATABASE_URL` (and any stale secret recorded in section 4), then deploy the previous image (from `rollback.json`) with a v0 `fly.toml` from git history and `--skip-release-command`. The v1 database stays as it is (bound, no entry). If the bound identity is wrong (instance or curators), it cannot be rebound: use a new fresh database (section 3) as an owner decision |
 | 7 Genesis | `preview.json` reviewed and correct | Delete the output directory and re-author. Nothing has been sent |
 | 8 Submit | `zero` passes just before; 201 and `receipt.json`; `verify` and `populated` pass | Any decodable envelope the node received is permanent, including a 422: it stays a candidate and changes the commitment. Do not retry or re-sign; capture `/v1/export` and decide as the owner. A body uploaded without its envelope stays too but is outside the fold. A second Genesis would be a second subject |
 | 8 Backup | `bound`, candidates 1, commitment equal | Retry the backup. The ledger is unaffected |
