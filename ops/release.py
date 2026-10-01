@@ -67,6 +67,8 @@ def main():
         required += ('CC_SMOKE_ENTITY',)
     if any(not os.environ.get(name) for name in required):
         parser.error('operator environment needs: ' + ', '.join(required))
+    if os.environ['CC_NODE_API_KEY'] == os.environ['CC_NODE_READ_KEY']:
+        parser.error('distinct full and read-only credentials required')
     try:
         if args.v1_fresh:
             # Values stay in the environment; only their validity is checked here.

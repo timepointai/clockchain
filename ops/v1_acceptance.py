@@ -48,8 +48,11 @@ def docker(*args, check=True):
     if not check:
         return result
     if result.returncode:
-        # Docker stderr can echo argv; it never contains env-file values.
-        raise subprocess.CalledProcessError(result.returncode, ['docker', str(args[0])])
+        # Name the step, not its arguments; stderr is kept for synthetic evidence.
+        step = [str(a) for a in args if str(a) in ('cc-node', 'cc-publisher')][:1]
+        tail = [str(args[-1])] if step else []
+        raise subprocess.CalledProcessError(result.returncode, ['docker', str(args[0]), *step, *tail],
+                                            stderr=result.stderr)
     return result.stdout.strip()
 
 
@@ -230,9 +233,10 @@ def accept_v1(image, sha, evidence):
         (work / 'body.txt').write_bytes(SYNTHETIC_BODY)
         node = synthetic_node(app)
         info = json.loads(publisher('node-info', '--node', node, network=ident))
+        reported = info.get('health') or {}
         if not (info.get('fold_matches_build') is True and info.get('filter_version_consistent') is True
-                and info.get('health', {}).get('instance') == instance
-                and info.get('health', {}).get('filter_version') == expected.filter_version):
+                and reported.get('instance') == instance
+                and reported.get('filter_version') == expected.filter_version):
             raise AssertionError('node-info does not match the provisioned identity')
         publisher('genesis', '--key', '/work/curator.seed', '--instance', instance,
                   '--kind', SYNTHETIC_KIND, '--namespace', SYNTHETIC_NAMESPACE,
@@ -297,7 +301,10 @@ def accept_v1(image, sha, evidence):
         for container in (app, restored, db):
             logs = subprocess.run(['docker', 'logs', container], capture_output=True, text=True)
             (evidence / (container + '.log')).write_text(logs.stdout + logs.stderr)
-        (evidence / 'FAILED').write_text(type(error).__name__ + '\n')
+        detail = getattr(error, 'stderr', None) or ''
+        # Everything in this run is synthetic, so the failing step's stderr is kept.
+        (evidence / 'FAILED').write_text(type(error).__name__ + ': ' + str(error) + '\n'
+                                         + detail[-4000:])
         raise
     finally:
         failures = []
@@ -311,6 +318,9 @@ def accept_v1(image, sha, evidence):
                 failures.append('temporary directory')
         (evidence / 'cleanup.json').write_text(json.dumps({'removed': not failures, 'remaining': failures}) + '\n')
         if failures:
+            # A pass result next to leftover resources is not a pass.
+            with open(evidence / 'FAILED', 'a') as marker:
+                marker.write('cleanup failed: ' + ', '.join(failures) + '\n')
             raise RuntimeError('temporary acceptance cleanup failed: ' + ', '.join(failures))
 
 

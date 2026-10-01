@@ -144,6 +144,9 @@ def promote_v1(args):
     check_config(args.config, True)
     url = os.environ['CC_NODE_URL'].rstrip('/')
     key, read_key = os.environ['CC_NODE_API_KEY'], os.environ['CC_NODE_READ_KEY']
+    if not key or not read_key or key == read_key:
+        # Checked before production is touched, not first by the post-deploy checks.
+        raise ValueError('Distinct full and read-only credentials required')
     database = (os.environ['CC_BACKUP_DB_APP'], os.environ['CC_BACKUP_DATABASE'],
                 os.environ['CC_BACKUP_USER'])
     (args.evidence / 'expected.json').write_text(json.dumps(expected.summary(), indent=2))

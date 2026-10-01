@@ -268,12 +268,12 @@ Success: the command ends with `Owner release verified: <sha>` and
   - `expected.json`;
   - `rollback.json`;
   - `backup-before/manifest.json` (`uninitialized`);
-  - `production/acceptance.json` (the check list, `tick`
+  - `acceptance.json` (the check list, `tick`
     `none_running_or_scheduled`, `entry` `left_to_owner`);
   - `backup-after/manifest.json` (`bound`, with the recomputed empty
     commitment).
 
-Nothing has been written to the ledger yet.
+No event exists yet; production holds only the identity rows provisioning wrote.
 
 ## 7. Author the inaugural Genesis (offline)
 
