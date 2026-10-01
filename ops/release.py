@@ -3,6 +3,11 @@
 
 Public GitHub CI holds no production credentials and never deploys. The owner
 runs this from a clean exact-main checkout with local Fly/GitHub authentication.
+
+`--v1-fresh` releases the v1 ledger onto a fresh database. The expected
+identity (`CC_V1_INSTANCE`, `CC_V1_CURATORS`, `CC_V1_MAX_HOPS`) comes from the
+operator environment; acceptance runs the exact image against synthetic v1
+data locally; production only receives the deploy and read-only checks.
 """
 import argparse
 import json
@@ -16,10 +21,20 @@ import time
 
 from local_acceptance import accept
 from deployed_checks import request
+from deploy_digest import check_config
+from v1_acceptance import accept_v1
+from v1_identity import Expected
 
 
 def output(*args):
     return subprocess.check_output(args, text=True).strip()
+
+
+def mode_flag(args):
+    for flag in ('v1_fresh', 'empty_corpus', 'zero_events'):
+        if getattr(args, flag):
+            return ['--' + flag.replace('_', '-')]
+    return []
 
 
 def main():
@@ -30,6 +45,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--zero-events', action='store_true', help='verify a completely empty uninitialized production ledger')
     modes.add_argument('--empty-corpus', action='store_true', help='verify genesis-only production without media fixtures')
+    modes.add_argument('--v1-fresh', action='store_true', help='release v1 onto a fresh database; the entry stays with the owner')
     parser.add_argument('--evidence', type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r'registry\.fly\.io/' + re.escape(args.app) + r'@sha256:[0-9a-f]{64}', args.image):
@@ -47,10 +63,17 @@ def main():
         parser.error('a successful exact-SHA CI run is required')
     required = ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY',
                 'CC_BACKUP_DB_APP', 'CC_BACKUP_DATABASE', 'CC_BACKUP_USER')
-    if not (args.empty_corpus or args.zero_events):
+    if not (args.empty_corpus or args.zero_events or args.v1_fresh):
         required += ('CC_SMOKE_ENTITY',)
     if any(not os.environ.get(name) for name in required):
         parser.error('operator environment needs: ' + ', '.join(required))
+    try:
+        if args.v1_fresh:
+            # Values stay in the environment; only their validity is checked here.
+            Expected.from_env(production=True)
+        check_config(args.config, args.v1_fresh)
+    except ValueError as error:
+        parser.error(str(error))
     args.evidence = args.evidence.resolve()
     if args.evidence.is_relative_to(root):
         parser.error('private release evidence must be outside the public checkout')
@@ -62,7 +85,7 @@ def main():
     with lockpath.open('a') as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         output('flyctl', 'auth', 'docker')
-        accept(args.image, sha, args.evidence / 'acceptance')
+        (accept_v1 if args.v1_fresh else accept)(args.image, sha, args.evidence / 'acceptance')
         if output('git', 'ls-remote', 'origin', 'refs/heads/main').split()[0] != sha:
             raise RuntimeError('main advanced during acceptance; no promotion performed')
         # A private service must not regain public ingress during deployment.
@@ -93,7 +116,7 @@ def main():
             env = {**os.environ, 'CC_NODE_URL': url}
             subprocess.run([sys.executable, 'ops/deploy_digest.py', '--app', args.app,
                             '--config', args.config, '--sha', sha, '--image', args.image,
-                            '--evidence', str(args.evidence / 'production')] + (['--empty-corpus'] if args.empty_corpus else ['--zero-events'] if args.zero_events else []), env=env, check=True)
+                            '--evidence', str(args.evidence / 'production')] + mode_flag(args), env=env, check=True)
             private_ips()
         finally:
             proxy.terminate()
@@ -103,6 +126,8 @@ def main():
                 proxy.kill(); proxy.wait()
             proxylog.close()
     print('Owner release verified:', sha)
+    if args.v1_fresh:
+        print('v1 store bound and empty. The inaugural entry remains the owner\'s step.')
 
 
 if __name__ == '__main__':
