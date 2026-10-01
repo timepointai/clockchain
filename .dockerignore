@@ -1,4 +1,6 @@
-# Deny by default: the remote builder receives only these source inputs.
+# Deny by default: the remote builder receives only these source paths.
+# A re-included directory (e.g. ops/) also passes its other public files;
+# the private-artifact patterns below still apply inside it.
 **
 !Cargo.toml
 !Cargo.lock
@@ -30,6 +32,7 @@
 **/*.key
 **/*.p12
 **/*.pfx
+**/*.seed
 **/id_rsa*
 **/id_ed25519*
 **/*.sqlite*

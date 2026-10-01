@@ -9,8 +9,9 @@ exposed credential before addressing copies in source or Git history.
 
 This repository is public. Its files and Git history can be cloned and indexed.
 `.gitignore` prevents accidental addition of matching untracked files; it cannot
-remove tracked files or past commits. `.dockerignore` admits only build inputs
-and excludes common private artifacts from remote build context uploads.
+remove tracked files or past commits. `.dockerignore` admits only the source paths
+the build reads and excludes common private artifacts from remote build context
+uploads.
 Review staged changes and use a redacted history scanner before publishing:
 
 ```sh

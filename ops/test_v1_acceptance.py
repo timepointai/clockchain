@@ -323,6 +323,12 @@ class FakeDocker:
         if query.startswith('BEGIN; ') and query.endswith('; ROLLBACK;'):
             self.event('guard')
             return 1, '', 'ERROR:  v1 append-only evidence: cc_v1 refuses mutation\n'
+        # prove_guards' catalog half: receipts references candidates; one guard trigger each.
+        if query.startswith("SELECT count(*) FROM pg_constraint WHERE contype='f'"):
+            return 0, ('1' if "'cc_v1.candidates'" in query else '0') + '\n', ''
+        if query.startswith('SELECT count(*) FROM pg_trigger t'):
+            self.event('guard catalog')
+            return 0, '1\n', ''
         raise AssertionError('unexpected query ' + query)
 
 

@@ -103,21 +103,45 @@ def compare_export(export, contents, expected, commitment):
         raise ValueError('export commitment differs from the restored backup')
 
 
-def prove_guards(run):
+# BEFORE (2) + DELETE (8) + UPDATE (16) + TRUNCATE (32), FOR EACH STATEMENT (row bit 1 clear).
+GUARD_TYPE, GUARD_MASK = 58, 59
+
+
+def prove_guards(run, sql):
     """Every cc_v1 table refuses UPDATE, DELETE and TRUNCATE, with or without rows.
 
-    The triggers are statement-level, so they fire on empty tables too. `run`
-    returns an object with `returncode` and `stderr`.
+    Behavior first: the triggers are statement-level, so UPDATE and DELETE are
+    refused on empty tables too. A table another table references by foreign
+    key (candidates, from receipts) refuses a plain TRUNCATE in the foreign-key
+    check before any trigger runs, and a CASCADE would let the referencing
+    table's trigger answer for it; so for such a table the refusal is required
+    and the trigger's TRUNCATE coverage is proven from the catalog. The catalog
+    check then requires, for every table, an enabled statement-level BEFORE
+    UPDATE/DELETE/TRUNCATE trigger calling `cc_v1.append_only`.
+
+    `run` returns an object with `returncode` and `stderr`; `sql` returns
+    stripped `psql -At` output. Use only on an isolated restored copy.
     """
     column = {'bodies': 'body_hash', 'candidates': 'event_id', 'identity': 'singleton',
               'receipts': 'receipt_digest', 'rejections': 'input_digest',
               'rule_identity': 'singleton'}
     proven = {}
     for table in TABLES:
+        referenced = int(sql("SELECT count(*) FROM pg_constraint WHERE contype='f' "
+                             f"AND confrelid='cc_v1.{table}'::regclass"))
         for statement in (f'UPDATE cc_v1.{table} SET {column[table]}={column[table]}',
                           f'DELETE FROM cc_v1.{table}', f'TRUNCATE cc_v1.{table}'):
             result = run('BEGIN; ' + statement + '; ROLLBACK;')
-            if result.returncode == 0 or APPEND_ONLY_ERROR not in result.stderr:
+            refused_by_fk = referenced and statement.startswith('TRUNCATE') and result.returncode
+            if not refused_by_fk and (result.returncode == 0 or APPEND_ONLY_ERROR not in result.stderr):
                 raise ValueError(f'append-only guard missing: {statement}')
+        triggers = int(sql(
+            "SELECT count(*) FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid "
+            "JOIN pg_namespace n ON n.oid=p.pronamespace "
+            f"WHERE t.tgrelid='cc_v1.{table}'::regclass AND NOT t.tgisinternal "
+            f"AND t.tgenabled IN ('O','A') AND t.tgtype & {GUARD_MASK} = {GUARD_TYPE} "
+            "AND n.nspname='cc_v1' AND p.proname='append_only'"))
+        if triggers != 1:
+            raise ValueError(f'append-only trigger missing from catalog: cc_v1.{table}')
         proven[table] = 'proven'
     return proven

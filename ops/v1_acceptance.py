@@ -273,7 +273,8 @@ def accept_v1(image, sha, evidence):
                '--no-owner', '--no-privileges', '/tmp/cc_v1.dump')
         if counts(db, 'restored') != stored:
             raise AssertionError('restored row counts differ')
-        guards = prove_guards(lambda q: psql(db, 'restored', q, check=False))
+        guards = prove_guards(lambda q: psql(db, 'restored', q, check=False),
+                              lambda q: psql(db, 'restored', q))
         if check_provision(provision(image, ident, restored_env), expected) != first:
             raise AssertionError('restored identity differs from the original provision')
         refusals = {'wrong_instance': provision(image, ident, wrong_instance, expect_ok=False),

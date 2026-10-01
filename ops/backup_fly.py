@@ -255,7 +255,7 @@ def restore_verify_v1(bundle, expected, *, allow_uninitialized=False, export=Non
             report.update(guards='not_run_uninitialized', commitment=None,
                           commitment_basis='not_applicable_uninitialized')
         else:
-            report['guards'] = prove_guards(attempt)
+            report['guards'] = prove_guards(attempt, db)
             contents = verify_contents(db)
             report.update(corpus_digest=contents['corpus_digest'], events=contents['events'])
             if image:

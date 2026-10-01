@@ -130,7 +130,7 @@ def main_v1(args, source, restore):
     if state['state'] == 'uninitialized':
         raise ValueError('source holds no v1 store; nothing to verify')
     # Guards are exercised on the isolated restored copy, never on the source.
-    guards = prove_guards(lambda q: attempt(restore, q))
+    guards = prove_guards(lambda q: attempt(restore, q), lambda q: sql(restore, q))
     contents = verify_contents(lambda q: sql(restore, q))
     if args.node_bin:
         reserved = reserve(args.node_bin, restore, expected)
