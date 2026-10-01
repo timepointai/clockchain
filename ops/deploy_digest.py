@@ -193,7 +193,10 @@ def promote_v1(args):
                 fleet = verify_v1(machines(args.app), expected_digest)
                 result = check_v1_zero(url, args.sha, key, read_key, expected)
                 break
-            except (AssertionError, ValueError, OSError):
+            # A transient `flyctl machines list` failure is retried like the
+            # rest; production is already deployed, so failing early would
+            # misreport it.
+            except (AssertionError, ValueError, OSError, subprocess.CalledProcessError):
                 if attempt == 11:
                     raise
                 time.sleep(5)

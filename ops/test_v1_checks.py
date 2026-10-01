@@ -35,6 +35,7 @@ class Node:
         self.calls, self.retained, self.force = [], [], {}
         self.patch = {'pinned': {}, 'export': {}, 'subject': {}}
         self.ready, self.foreign_fold = (200, {'serving': True, 'posture': 'live'}), 409
+        self.busy = 0  # /ready answers 503 busy this many times first
         self.health = {'ledger': 'v1', 'build': REV[:12], 'posture': 'live', 'instance': e.instance,
                        'fold_version': dict(e.fold), 'filter_version': e.filter_version,
                        'curators': list(e.curators), 'max_hops': 4, 'semantic': 'ready'}
@@ -73,6 +74,9 @@ class Node:
         if (method, route) == ('GET', '/health'):
             return 200, self.health
         if (method, route) == ('GET', '/ready'):
+            if self.busy:
+                self.busy -= 1
+                return 503, {'serving': False, 'posture': 'live', 'reason': 'busy'}
             return self.ready
         if (method, route) == ('GET', '/v1/snapshot'):
             if not authed:
@@ -166,6 +170,24 @@ class ZeroTests(unittest.TestCase):
                          (corpus_digest([]).hex(), EXPECTED.empty_commitment))
         self.assertEqual(result['passed'], len(result['checks']))
         self.assertIn('foreign fold refused', result['checks'])
+
+    def test_busy_ready_is_retried_but_not_forever(self):
+        import v1_checks
+        node = Node()
+        node.busy = v1_checks.READY_ATTEMPTS - 1
+        with patch('v1_checks.time.sleep') as sleep:
+            self.assertEqual(zero(node)['commitment'], EXPECTED.empty_commitment)
+        self.assertEqual(sleep.call_count, v1_checks.READY_ATTEMPTS - 1)
+        node = Node()
+        node.busy = v1_checks.READY_ATTEMPTS
+        with patch('v1_checks.time.sleep'), self.assertRaisesRegex(AssertionError, 'ready: HTTP 503'):
+            zero(node)
+        # A non-busy 503 is a verdict, never retried.
+        node = Node()
+        node.ready = (503, {'serving': False, 'posture': 'live', 'reason': 'rule_identity_unbound'})
+        with patch('v1_checks.time.sleep') as sleep, self.assertRaisesRegex(AssertionError, 'ready: HTTP 503'):
+            zero(node)
+        sleep.assert_not_called()
 
     def test_distinct_credentials_required(self):
         for key, read_key in ((WRITE, WRITE), ('', READ), (WRITE, ''), (None, READ)):

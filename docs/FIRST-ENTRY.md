@@ -143,10 +143,12 @@ sets those, and a secret overrides `[env]`, so `/health` would report a
 different identity or posture and the release checks would fail:
 
 ```sh
-fly secrets list -a <APP>
-# Record any of the three names the list shows, then unset only those.
-# Plain `unset` would restart machines now.
-fly secrets unset --stage CC_NODE_LEDGER CC_V1_MAX_HOPS CC_NODE_POSTURE -a <APP>
+# Only the stale names that exist, recorded for a later abort.
+stale=$(fly secrets list -a <APP> --json \
+  | jq -r '.[] | (.name // .Name) | select(. == "CC_NODE_LEDGER" or . == "CC_V1_MAX_HOPS" or . == "CC_NODE_POSTURE")')
+printf '%s\n' "$stale" > <PRIVATE_DIR>/stale-secrets.txt
+# --stage: plain `unset` would restart machines now.
+if [ -n "$stale" ]; then fly secrets unset --stage $stale -a <APP>; fi
 ```
 
 The release refuses to deploy while any of those three names is still a secret,
@@ -434,7 +436,7 @@ python3 ops/v1_checks.py populated --sha "$SHA" --entry <PRIVATE_DIR>/genesis-19
   subject and prose, compares the bytes, and writes `receipt.json`.
 - `<SUBJECT>` is the `subject` from `preview.json`.
 - `v1_checks.py populated` is read-only. It checks:
-  - exactly one valid Genesis row, which is the frontier;
+  - exactly one Genesis row, in state `head` and on the frontier;
   - a resolved subject;
   - prose identical to `body.bin`;
   - an export whose single envelope is byte-equal to `envelope.bin`;
@@ -482,7 +484,7 @@ key, instance and rule identity are bound and cannot be changed in place.
 | 4 Secrets | Staged; v0 app not restarted | Unset the staged secrets; re-stage the v0 `DATABASE_URL` |
 | 6 Acceptance | `acceptance/acceptance.json` reads `pass`; cleanup `removed: true` | Nothing in production changed. Fix the cause and build a new image |
 | 6 Pre-deploy inspection or backup | `backup-before` is `uninitialized` (or bound and empty) | Nothing deployed. Investigate any foreign relation, other instance or rows before retrying |
-| 6 `fly deploy` / `provision-v1` | Release command exits 0 | Fly aborts the deploy and the old machine keeps its image. Read the release command's exit status: 78 configuration (a missing or malformed secret), 73 the database holds non-v1 tables, 65 the stored identity differs from the secrets, 69 database unreachable |
+| 6 `fly deploy` / `provision-v1` | Release command exits 0 | Fly aborts the deploy and the old machine keeps its image. Read the release command's exit status: 78 configuration (a missing or malformed secret), 73 the database holds non-v1 tables, 65 the stored identity differs from the secrets (or is missing or partial), 69 database unreachable or refused the operation, 70 any other refusal (for example a store that is not ready or a corrupt stored candidate) |
 | 6 Post-deploy checks or backup | `production/acceptance.json` and `backup-after` are written | `FAILED` and `recovery.json` record the error and the previous image. Either fix forward with a new release, or return to v0: re-stage the v0 `DATABASE_URL` (and any stale secret recorded in section 4), then deploy the previous image (from `rollback.json`) with a v0 `fly.toml` from git history and `--skip-release-command`. The v1 database stays as it is (bound, no entry). If the bound identity is wrong (instance or curators), it cannot be rebound: use a new fresh database (section 3) as an owner decision |
 | 7 Genesis | `preview.json` reviewed and correct | Delete the output directory and re-author. Nothing has been sent |
 | 8 Submit | `zero` passes just before; 201 and `receipt.json`; `verify` and `populated` pass | Any decodable envelope the node received is permanent, including a 422: it stays a candidate and changes the commitment. Do not retry or re-sign; capture `/v1/export` and decide as the owner. A body uploaded without its envelope stays too but is outside the fold. A second Genesis would be a second subject |

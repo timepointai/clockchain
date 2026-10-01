@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -144,7 +145,7 @@ class PromoteV1Tests(unittest.TestCase):
                ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY', 'CC_V1_CURATORS', 'CC_V1_INSTANCE', 'DATABASE_URL')]
 
     def promote(self, before=None, raises=None, *, fail_checks=False, backup=None, env=None, drop=(),
-                extra=(), config=FLY, after_digest=NEW_DIGEST, secrets=None):
+                extra=(), config=FLY, after_digest=NEW_DIGEST, secrets=None, list_errors=0):
         self.runs += 1
         self.evidence, self.log = self.tmp / f'evidence-{self.runs}', []
 
@@ -176,7 +177,8 @@ class PromoteV1Tests(unittest.TestCase):
             stack.enter_context(patch('sys.argv', argv))
             stack.enter_context(patch.object(subject.time, 'sleep'))
             stack.enter_context(contextlib.redirect_stderr(self.stderr))
-            for name, effect in (('fly', fly), ('machines', [before or [app()]] + [[app(digest=after_digest)]] * 12),
+            listing = [before or [app()]] + [subprocess.CalledProcessError(1, ['flyctl'])] * list_errors
+            for name, effect in (('fly', fly), ('machines', listing + [[app(digest=after_digest)]] * 12),
                                  ('capture_v1', capture_v1), ('check_v1_zero', check), ('http', http),
                                  ('seed', None), ('capture', None), ('wake', None), ('request', None)):
                 setattr(m, name, stack.enter_context(patch.object(subject, name, side_effect=effect)))
@@ -278,6 +280,15 @@ class PromoteV1Tests(unittest.TestCase):
         rollback = json.loads((self.evidence / 'rollback.json').read_text())
         self.assertEqual(rollback['secret_names'], sorted(e['name'] for e in self.SECRETS))
         self.assertNotIn('d' * 16, (self.evidence / 'rollback.json').read_text())
+
+    def test_transient_machine_listing_failure_after_deploy_is_retried(self):
+        # Production is already deployed; one failed `flyctl machines list` must not report FAILED.
+        self.promote(list_errors=1)
+        self.assertTrue((self.evidence / 'acceptance.json').exists())
+        self.assertFalse((self.evidence / 'FAILED').exists())
+        # The retry is bounded: a listing that never recovers still fails.
+        self.promote(raises=subprocess.CalledProcessError, list_errors=12)
+        self.assertTrue((self.evidence / 'FAILED').exists())
 
     def test_post_deploy_backup_must_hold_checked_commitment(self):
         for backup in ({'commitment': OTHER_COMMITMENT}, {'commitment': None}, {'state': 'provisioned_unbound'}):

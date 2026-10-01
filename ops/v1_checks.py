@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -93,11 +94,35 @@ def check_rule(snapshot, expected):
     assert hexbytes(rule.get('filter_version')) == expected.filter_version, 'snapshot filter mismatch'
 
 
+READY_ATTEMPTS = 5
+
+
+def ready_answer(p, posture):
+    """/ready, retried a few times while the node answers `busy`.
+
+    The node runs one /ready store query at a time and answers any concurrent
+    caller 503 `busy`; that is not a readiness verdict, so it is retried.
+    """
+    for attempt in range(READY_ATTEMPTS):
+        status, raw = http(p.base, 'GET', '/ready')
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = {}
+        if status == 503 and body.get('reason') == 'busy' and attempt < READY_ATTEMPTS - 1:
+            time.sleep(1)
+            continue
+        if status != 200:
+            raise AssertionError(f'ready: HTTP {status}, expected 200')
+        p.checks.append('ready')
+        return body
+
+
 def common(p, revision, key, read_key, expected, posture, probe_candidates):
     if not key or not read_key or key == read_key:
         raise ValueError('Distinct full and read-only credentials required')
     health = check_v1_health(p.json('health', '/health', None), expected, revision, posture)
-    ready = p.json('ready', '/ready', None)
+    ready = ready_answer(p, posture)
     assert ready.get('serving') is True and ready.get('posture') == posture, 'node not serving'
     p.expect('snapshot anonymous denied', 'GET', '/v1/snapshot', None, ANONYMOUS)
     p.expect('snapshot wrong credential denied', 'GET', '/v1/snapshot', 'invalid-credential', ANONYMOUS)
