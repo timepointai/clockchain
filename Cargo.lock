@@ -361,16 +361,21 @@ name = "cc-publisher"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "axum",
  "cc-authoring",
  "cc-core",
  "cc-filter",
  "cc-ledger",
+ "cc-node",
  "cc-testkit",
  "clap",
+ "getrandom 0.2.17",
  "hex",
+ "reqwest",
  "serde_json",
  "sha2",
  "sqlx",
+ "tempfile",
  "tokio",
 ]
 

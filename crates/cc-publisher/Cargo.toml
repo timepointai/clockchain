@@ -15,5 +15,13 @@ hex.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 clap.workspace = true
+# v1 client: the node's HTTP surface over rustls, and seeds/nonces from the
+# operating-system RNG.
+reqwest.workspace = true
+getrandom = "0.2"
 [dev-dependencies]
 cc-testkit.workspace = true
+# In-process v1 node for online tests over real PostgreSQL.
+cc-node = { path = "../cc-node" }
+axum.workspace = true
+tempfile = "3"
