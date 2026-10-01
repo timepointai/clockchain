@@ -50,9 +50,10 @@ either app or database. Recheck allocations and machine services before releases
 adding a public IP can expose configured services. Other peers on the same Fly
 private network can still reach them. See [Flycast](https://fly.io/docs/networking/flycast/).
 
-Corpus reads and writes require scoped Bearer authentication: the read key
-reads, only the write key submits, uploads bodies or exports. In v1 mode only
-`/health` and `/ready` are anonymous; they report build, posture and rule
+Corpus reads and writes require scoped Bearer authentication, checked before
+request bodies are parsed: the read key reads, only the write key submits,
+uploads bodies or exports. In v1 mode only `/health`, `/ready` and
+`/robots.txt` are anonymous; they report build, posture and rule
 identity (instance, fold, filter version, curator public keys, hop bound), not
 corpus data. A frozen posture refuses writes. v1 envelopes and bodies are
 limited to 1 MiB each. The runtime uses a non-root container user. No HTTP route
@@ -66,8 +67,11 @@ Proxy, not requests per second, direct private-network connections or response
 bytes. See [Fly concurrency](https://fly.io/docs/apps/concurrency/). These
 controls do not constitute a public-service abuse defense or a traffic-spend cap.
 
-`robots.txt` at the repository root is a deny-all crawler file for the node to
-serve. Crawler rules are voluntary and cannot secure private material or control
+In v1 mode the node serves a deny-all `/robots.txt` (the same rules as the
+repository's `robots.txt`) and sets `X-Robots-Tag`, `Cache-Control: private,
+no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a
+restrictive Content-Security-Policy on its responses, including refusals.
+Crawler rules are voluntary and cannot secure private material or control
 GitHub's hosting of this repository. See [robots.txt limitations](https://developers.google.com/search/docs/crawling-indexing/robots/intro).
 
 ## Data egress and residual risk
