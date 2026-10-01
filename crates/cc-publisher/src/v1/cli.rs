@@ -180,12 +180,10 @@ pub async fn run(cmd: Command) -> Result<()> {
             for w in &done.warnings {
                 eprintln!("warning (--allow-untrusted): {w}");
             }
+            // stdout is the receipt JSON; the human summary goes to stderr.
             print_json(&done.receipt)?;
-            let path = dir.join(node::RECEIPT_FILE);
-            if done.receipt_written {
-                eprintln!("receipt written to {}", path.display());
-            } else {
-                eprintln!("{} already exists; left unchanged", path.display());
+            for line in node::summary(&done, &dir) {
+                eprintln!("{line}");
             }
         }
         Command::Verify { node, subject, dir } => {

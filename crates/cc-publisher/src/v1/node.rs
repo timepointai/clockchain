@@ -422,6 +422,39 @@ pub struct Submitted {
     pub warnings: Vec<String>,
 }
 
+/// One human-readable line per step of a completed `submit`.
+pub fn summary(done: &Submitted, dir: &Path) -> Vec<String> {
+    let r = &done.receipt;
+    let body = match r["body"]["result"].as_str() {
+        Some("stored") => "stored (HTTP 201)".to_owned(),
+        _ => "already present on the node (HTTP 200)".to_owned(),
+    };
+    let envelope = match r["admission"]["result"].as_str() {
+        Some("admitted") => "admitted as valid (HTTP 201)".to_owned(),
+        _ => "already admitted; not re-posted".to_owned(),
+    };
+    let path = dir.join(RECEIPT_FILE);
+    vec![
+        format!("body      {body}"),
+        format!("envelope  {envelope}"),
+        format!(
+            "readback  subject {} resolved and visible at revision {}; prose equals {} ({} bytes)",
+            r["subject"].as_str().unwrap_or_default(),
+            r["revision"].as_str().unwrap_or_default(),
+            super::genesis::BODY_FILE,
+            r["readback"]["prose_bytes"]
+        ),
+        if done.receipt_written {
+            format!("receipt   written to {}", path.display())
+        } else {
+            format!(
+                "receipt   {} already exists; left unchanged",
+                path.display()
+            )
+        },
+    ]
+}
+
 /// Check, write and read back one Genesis directory. See `docs/PUBLISHER-V1.md`.
 pub async fn submit(node: &Node, dir: &Path, allow_untrusted: bool) -> Result<Submitted> {
     let g = Genesis::load_dir(dir)?;

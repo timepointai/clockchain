@@ -269,10 +269,12 @@ async fn submit_admits_reads_back_and_rerun_is_idempotent() {
         .env("CC_NODE_API_KEY", WRITE)
         .output()
         .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("body      stored (HTTP 201)"), "{stderr}");
     assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+        stderr.contains("envelope  admitted as valid (HTTP 201)"),
+        "{stderr}"
     );
     let stored = std::fs::read(dir.join(RECEIPT_FILE)).unwrap();
     let receipt: Value = serde_json::from_slice(&stored).unwrap();
@@ -326,6 +328,16 @@ async fn submit_admits_reads_back_and_rerun_is_idempotent() {
     );
     assert_eq!(n.writes(&g.body).await, (1, 0, true));
     assert_eq!(std::fs::read(dir.join(RECEIPT_FILE)).unwrap(), stored);
+    let lines = node::summary(&again, &dir).join("\n");
+    assert!(
+        lines.contains("body      already present on the node (HTTP 200)"),
+        "{lines}"
+    );
+    assert!(
+        lines.contains("envelope  already admitted; not re-posted"),
+        "{lines}"
+    );
+    assert!(lines.contains("already exists; left unchanged"), "{lines}");
 
     // Read-only verification, with and without the local directory.
     let (ok, report) = node::verify(&n.client(READ), g.subject(), Some(&dir))
