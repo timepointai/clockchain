@@ -99,7 +99,7 @@ def compare_export(export, contents, expected, commitment):
             hexbytes(rule.get('fold_manifest'), 'fold_manifest') != fold_manifest().hex() or \
             hexbytes(rule.get('filter_version'), 'filter_version') != expected.filter_version:
         raise ValueError('export rule identity differs from the expected identity')
-    if hexbytes(export.get('commitment'), 'commitment') != commitment:
+    if hexbytes(export.get('commitment'), 'commitment') != hexbytes(commitment, 'commitment'):
         raise ValueError('export commitment differs from the restored backup')
 
 

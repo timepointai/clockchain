@@ -25,7 +25,7 @@ import time
 import uuid
 
 from v1_backup import compare_export, inspect_v1, prove_guards, require_fresh, verify_contents
-from v1_identity import Expected
+from v1_identity import Expected, hexbytes
 from verify_fly_machines import group
 
 
@@ -265,8 +265,9 @@ def restore_verify_v1(bundle, expected, *, allow_uninitialized=False, export=Non
             if image:
                 restored = serve_restored(image, name, f'postgres://postgres@{name}:5432/restore',
                                           expected)
-                compare_export(restored, contents, expected, restored['commitment'])
-                commitment, basis = restored['commitment'], 'exact_image_reserved_restored_copy'
+                commitment = hexbytes(restored.get('commitment'), 'commitment')
+                compare_export(restored, contents, expected, commitment)
+                basis = 'exact_image_reserved_restored_copy'
                 if not contents['events'] and commitment != expected.empty_commitment:
                     raise ValueError('empty restored copy does not commit to the recomputed empty view')
             elif not contents['events']:

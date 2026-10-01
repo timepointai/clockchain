@@ -25,7 +25,7 @@ import time
 from urllib.parse import quote
 
 from v1_backup import RELATIONS, compare_export, inspect_v1, prove_guards, verify_contents
-from v1_identity import Expected
+from v1_identity import Expected, hexbytes
 
 
 def connection(prefix):
@@ -134,8 +134,9 @@ def main_v1(args, source, restore):
     contents = verify_contents(lambda q: sql(restore, q))
     if args.node_bin:
         reserved = reserve(args.node_bin, restore, expected)
-        compare_export(reserved, contents, expected, reserved['commitment'])
-        commitment, basis = reserved['commitment'], 'node_reserved_restored_copy'
+        commitment = hexbytes(reserved.get('commitment'), 'commitment')
+        compare_export(reserved, contents, expected, commitment)
+        basis = 'node_reserved_restored_copy'
         if not contents['events'] and commitment != expected.empty_commitment:
             raise ValueError('empty restored copy does not commit to the recomputed empty view')
     elif not contents['events']:

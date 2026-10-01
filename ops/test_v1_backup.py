@@ -678,7 +678,9 @@ class RestoreVerifyV1Tests(unittest.TestCase):
             finally:
                 self.assertTrue(calls and all(c[0] == 'docker' for c in calls))
                 self.assertTrue(any('pg_restore' in c for c in calls))
-                self.assertEqual([c[:4] for c in cleanup], [['docker', 'rm', '-f', '-v']])
+                # With an image the restore container sits on its own network, removed too.
+                self.assertEqual([c[:3] for c in cleanup], [['docker', 'rm', '-f']]
+                                 + ([['docker', 'network', 'rm']] if kwargs.get('image') else []))
 
     def test_uninitialized_restore_requires_explicit_allowance(self):
         state = {'state': 'uninitialized', 'counts': dict(ZEROS)}
@@ -699,6 +701,30 @@ class RestoreVerifyV1Tests(unittest.TestCase):
         self.assertEqual(report, manifest)
         self.assertEqual((report['guards'], report['commitment'], report['commitment_basis']),
                          (guards, EXPECTED.empty_commitment, 'recomputed_empty_corpus'))
+
+
+    def test_reserved_copy_export_with_byte_array_hashes_is_compared_as_hex(self):
+        # The node serializes ExportManifest hashes as 32-byte arrays; production's
+        # export (hex or arrays) must still match the re-served copy exactly.
+        state = {'state': 'bound', 'counts': dict(ZEROS, identity=1, rule_identity=1)}
+        guards = {t: 'proven' for t in TABLES}
+        empty = {'events': [], 'envelopes': [], 'corpus_digest': corpus_digest([]).hex()}
+        ints = lambda h: list(bytes.fromhex(h))
+        served = {'encoding': 1, 'envelopes': [], 'corpus_digest': ints(corpus_digest([]).hex()),
+                  'commitment': ints(EXPECTED.empty_commitment),
+                  'rule': {'fold_version': 1, 'fold_manifest': ints(fold_manifest().hex()),
+                           'filter_version': ints(EXPECTED.filter_version)}}
+        production = dict(served, commitment=EXPECTED.empty_commitment)
+        with patch.object(backup_fly, 'serve_restored', return_value=served):
+            report, _ = self.verify(state, guards, empty, image='registry.fly.io/x@sha256:' + 'c' * 64,
+                                    export=production)
+        self.assertEqual((report['commitment'], report['commitment_basis']),
+                         (EXPECTED.empty_commitment, 'exact_image_reserved_restored_copy'))
+        self.assertTrue(report['production_export_matched'])
+        with patch.object(backup_fly, 'serve_restored', return_value=served), \
+                self.assertRaisesRegex(ValueError, 'export commitment differs'):
+            self.verify(state, guards, empty, image='registry.fly.io/x@sha256:' + 'c' * 64,
+                        export=dict(served, commitment=OTHER.empty_commitment))
 
 
 if __name__ == '__main__':
