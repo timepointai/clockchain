@@ -331,6 +331,6 @@ impl Store {
         if s.corpus_digest != m.corpus_digest || s.commitment != m.commitment {
             return Err(Error::RootMismatch);
         }
-        self.import(&m.envelopes).await
+        self.admit_all(&m.envelopes).await
     }
 }

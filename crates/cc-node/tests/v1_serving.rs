@@ -308,7 +308,8 @@ async fn frozen_posture_refuses_writes_and_keeps_serving_reads() {
     assert_eq!((status, &read["visibility"]), (S::OK, &json!("visible")));
     let export = frozen.ok("/v1/export", WRITE).await;
     assert_eq!(export["envelopes"], json!([hex::encode(g.bytes())]));
-    assert_eq!(export["commitment"], before["commitment"]);
+    let commitment = hex::decode(before["commitment"].as_str().unwrap()).unwrap();
+    assert_eq!(export["commitment"], json!(commitment));
 
     // The refused body was never retained: the live node stores it as new.
     let (status, put) = node.put_body(body, PROSE.as_bytes()).await;
@@ -427,24 +428,24 @@ async fn export_restores_to_the_same_served_commitment() {
     }
     let export = node.ok("/v1/export", WRITE).await;
     let served = node.ok("/v1/snapshot", READ).await;
-    for field in ["rule", "corpus_digest", "commitment"] {
-        assert_eq!(export[field], served[field], "{field}");
-    }
-    // Hex on the wire, canonical byte arrays in the manifest.
-    let bytes = |v: &Json| json!(hex::decode(v.as_str().unwrap()).unwrap());
-    let (rule, envelopes) = (&export["rule"], export["envelopes"].as_array().unwrap());
-    let manifest: ExportManifest = serde_json::from_value(json!({
-        "encoding": export["encoding"],
-        "rule": {
-            "fold_version": rule["fold_version"],
-            "fold_manifest": bytes(&rule["fold_manifest"]),
-            "filter_version": bytes(&rule["filter_version"]),
-        },
-        "corpus_digest": bytes(&export["corpus_digest"]),
-        "commitment": bytes(&export["commitment"]),
-        "envelopes": envelopes.iter().map(bytes).collect::<Vec<_>>(),
-    }))
-    .unwrap();
+    // The ExportManifest serde JSON, envelopes as hex strings.
+    let mut wire = export.clone();
+    let envelopes = export["envelopes"].as_array().unwrap();
+    let decode = |v: &Json| json!(hex::decode(v.as_str().unwrap()).unwrap());
+    wire["envelopes"] = envelopes.iter().map(decode).collect();
+    let manifest: ExportManifest = serde_json::from_value(wire).unwrap();
+    assert_eq!(served["commitment"], hex::encode(manifest.commitment));
+    assert_eq!(served["corpus_digest"], hex::encode(manifest.corpus_digest));
+    let rule = &served["rule"];
+    assert_eq!(rule["fold_version"], manifest.rule.fold_version);
+    assert_eq!(
+        rule["fold_manifest"],
+        hex::encode(manifest.rule.fold_manifest)
+    );
+    assert_eq!(
+        rule["filter_version"],
+        hex::encode(manifest.rule.filter_version)
+    );
     assert_eq!(manifest, store.export(None).await.unwrap());
     let sent: BTreeSet<_> = [&g, &c, &b, &e].map(|x| x.bytes().to_vec()).into();
     let exported: BTreeSet<_> = manifest.envelopes.iter().cloned().collect();
@@ -588,9 +589,60 @@ async fn support_between_curated_subjects_and_query_refusals() {
         (format!("{query}&asof={}", hex::encode(at)), "invalid_query"),
         (format!("{query}&from={from}"), "invalid_query"),
         (format!("{}?at=0", subject_path(g.id())), "invalid_query"),
+        (format!("{}?as_of=0", prose_path(&g)), "invalid_query"),
     ] {
         let invalid = refusal(S::BAD_REQUEST, error);
         assert_eq!(node.get(&path, READ).await, invalid, "{path}");
     }
+    // Routes without parameters refuse any rather than ignore them.
+    let fold = format!("fold_version=2&fold_manifest={}", hex::encode([0; 32]));
+    let invalid = refusal(S::BAD_REQUEST, "invalid_query");
+    assert_eq!(
+        node.get(&format!("/v1/export?{fold}"), WRITE).await,
+        invalid
+    );
+    let before = node.ok("/v1/snapshot", READ).await;
+    let c = correction(&g, &g, 0, 5);
+    let path = format!("{CANDIDATES}?{fold}");
+    let posted = node.call(Method::POST, &path, Some(WRITE), c.bytes().to_vec());
+    assert_eq!(posted.await, invalid);
+    let path = format!("{}?x=1", body_path(hash(PROSE.as_bytes())));
+    let put = node.call(Method::PUT, &path, Some(WRITE), PROSE.as_bytes().to_vec());
+    assert_eq!(put.await, invalid);
+    assert_eq!(node.ok("/v1/snapshot", READ).await, before);
+    assert_eq!(
+        store.body_bytes(hash(PROSE.as_bytes())).await.unwrap(),
+        None
+    );
+    done(node, pool, cleanup).await;
+}
+
+#[tokio::test]
+async fn admission_answers_201_valid_202_pending_and_422_invalid() {
+    let (pool, cleanup, _, node) = live().await;
+    let g = genesis();
+    let c = correction(&g, &g, 0, 5);
+    let (status, outcome) = node.submit(&c).await;
+    assert_eq!(status, S::ACCEPTED);
+    let outcome: Outcome = serde_json::from_value(outcome).unwrap();
+    assert_eq!(outcome.status.state, State::Pending);
+    assert_eq!(outcome.status.reason, "parent_missing");
+    assert_eq!(outcome.status.missing, vec![g.id()]);
+    let garbage = vec![0u8; 64];
+    let (status, outcome) = node
+        .call(Method::POST, CANDIDATES, Some(WRITE), garbage)
+        .await;
+    assert_eq!(status, S::UNPROCESSABLE_ENTITY);
+    assert_eq!(outcome["status"]["state"], "invalid");
+    assert!(outcome["event"].is_null());
+    assert_eq!(node.submit(&g).await.0, S::CREATED);
+    // The pending correction is now valid on resubmission.
+    let (status, outcome) = node.submit(&c).await;
+    assert_eq!(
+        (status, &outcome["status"]["state"]),
+        (S::CREATED, &json!("valid"))
+    );
+    let rows = node.ok("/v1/snapshot", READ).await["rows"].clone();
+    assert_eq!(rows.as_array().unwrap().len(), 2);
     done(node, pool, cleanup).await;
 }

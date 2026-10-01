@@ -345,9 +345,19 @@ pub enum Ledger {
     V1,
 }
 
+/// An environment lookup in which a set but non-UTF-8 value is not absent:
+/// it comes back lossily decoded, so every validator below refuses it.
+pub fn env_lookup(key: &str) -> Option<String> {
+    match std::env::var(key) {
+        Ok(v) => Some(v),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(raw)) => Some(raw.to_string_lossy().into_owned()),
+    }
+}
+
 impl Ledger {
     pub fn from_env() -> Result<Ledger, ConfigError> {
-        Ledger::from_lookup(|k| std::env::var(k).ok())
+        Ledger::from_lookup(env_lookup)
     }
 
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Ledger, ConfigError> {
@@ -385,7 +395,7 @@ impl std::fmt::Debug for V1Config {
 
 impl V1Config {
     pub fn from_env() -> Result<V1Config, ConfigError> {
-        V1Config::from_lookup(|k| std::env::var(k).ok())
+        V1Config::from_lookup(env_lookup)
     }
 
     /// Strict parse: exact lowercase hex, no padding, no defaults except the

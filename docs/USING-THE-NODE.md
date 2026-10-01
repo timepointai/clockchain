@@ -154,16 +154,17 @@ accepts a database already provisioned with exactly this identity. It needs only
 | 78 | Configuration error, or `migrate` in v1 mode |
 | 73 | The database holds non-v1 tables |
 | 65 | Stored instance or rule identity differs, or the store is not provisioned and bound (`serve`) |
-| 69 | Database unreachable |
+| 69 | Database error: unreachable, refused or failing SQL |
+| 70 | Any other refusal, such as a corrupt stored candidate |
 
 | Route | Scope | Answer |
 |---|---|---|
 | `GET /health` | public | Identity fixed at boot: `ledger`, `build`, `posture`, `instance`, `fold_version`, `filter_version`, `curators`, `max_hops`, `semantic`. No database access |
-| `GET /ready` | public | 200 `{serving:true, posture}`, or 503 with `reason` |
+| `GET /ready` | public | Re-checks the store: 200 `{serving:true, posture}`, or 503 with `reason` |
 | `GET /robots.txt` | public | Deny all |
 | `POST /v1/candidates` | write | Signed envelope bytes, at most 1 MiB; 201 valid, 202 pending, 422 invalid |
 | `PUT /v1/bodies/{sha256}` | write | Body bytes, at most 1 MiB; 201 new, 200 existing, 422 hash mismatch |
-| `GET /v1/export` | write | Envelopes as hex, with rule, corpus digest and commitment |
+| `GET /v1/export` | write | `ExportManifest` JSON with each envelope as one hex string |
 | `GET /v1/snapshot` | read | Optional `fold_version` and `fold_manifest`; 409 if unsupported |
 | `GET /v1/subjects/{id}` | read | Optional `as_of`; 404 for an unknown subject |
 | `GET /v1/revisions/{id}/prose` | read | Verified body text when retained |
@@ -177,7 +178,8 @@ curl -fsS -H "Authorization: Bearer $CC_NODE_READ_KEY" "$BASE/v1/subjects/$SUBJE
 Missing or unknown credentials get `401`; the read key on a write route gets
 `403`. A frozen node answers writes `503 {"error":"frozen"}` and still serves
 reads and export. Every read names `rule`, `corpus_digest` and `commitment`.
-IDs, digests and `as_of` (a 32-byte coordinate) are lowercase hex. An unknown,
-misspelled or repeated query parameter is `400 {"error":"invalid_query"}`. Embedded
-projection objects and the admission outcome keep their canonical JSON, in which
-a hash is a list of 32 byte values.
+IDs, digests and `as_of` (a 32-byte coordinate) are lowercase hex. Embedded
+projection objects, the admission outcome and the export manifest keep their
+canonical JSON, in which a hash is a list of 32 byte values. An unknown,
+misspelled or repeated query parameter on any v1 data route is
+`400 {"error":"invalid_query"}`.

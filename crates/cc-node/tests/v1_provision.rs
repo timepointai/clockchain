@@ -437,7 +437,21 @@ fn v1_configuration_is_strict() {
     let mut unsorted = good.clone();
     unsorted.insert("CC_V1_CURATORS", format!("{},{}", sorted[1], sorted[0]));
     assert_eq!(run(&["provision-v1"], &unsorted).status.code(), Some(78));
+    let (code, err) = serve_exit(&unsorted);
+    assert_eq!(code, 78, "{err}");
     let mut legacy = good.clone();
     legacy.remove("CC_NODE_LEDGER");
     assert_eq!(run(&["provision-v1"], &legacy).status.code(), Some(78));
+    // A set but non-UTF-8 ledger value is refused, never read as absent.
+    use std::os::unix::ffi::OsStrExt;
+    let mut c = cc_node(&["migrate"], &legacy);
+    c.env("CC_NODE_LEDGER", std::ffi::OsStr::from_bytes(b"v1\xff"));
+    assert_eq!(c.output().unwrap().status.code(), Some(78));
+    // A database that cannot be reached is 69, not a configuration error.
+    let mut unreachable = good.clone();
+    unreachable.insert(
+        "DATABASE_URL",
+        "postgres://synthetic:synthetic@127.0.0.1:9/none".into(),
+    );
+    assert_eq!(run(&["provision-v1"], &unreachable).status.code(), Some(69));
 }

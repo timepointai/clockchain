@@ -465,9 +465,6 @@ impl Store {
         store.readiness().await?;
         Ok(store)
     }
-    pub fn instance(&self) -> Hash {
-        self.instance
-    }
     /// Serving readiness: the bound identity is recorded, supported and equal
     /// to the stored one. Anything else is the refusal that names why.
     pub async fn readiness(&self) -> Result<RuleId, Error> {
@@ -559,18 +556,24 @@ impl Store {
             .bind(hash(bytes).to_vec()).bind(r.event.to_vec()).bind(bytes).execute(&self.pool).await?;
         Ok(())
     }
-    pub async fn import(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
+    /// Admit each envelope in order. Private: the served path to bulk
+    /// admission is [`Store::restore_export`], which verifies the root first.
+    async fn admit_all(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
         let mut out = Vec::new();
         for bytes in envelopes {
             out.push(self.admit(bytes).await?);
         }
         Ok(out)
     }
-    /// Raw restore without a verified root. Operator review and tests only;
-    /// served nodes restore through [`Store::restore_export`].
+    /// Raw bulk import and restore without a verified root. Operator review
+    /// and tests only (`review` feature).
+    #[cfg(feature = "review")]
+    pub async fn import(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
+        self.admit_all(envelopes).await
+    }
     #[cfg(feature = "review")]
     pub async fn restore(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
-        self.import(envelopes).await
+        self.admit_all(envelopes).await
     }
     /// Recompute classifications from verified retained bytes, never a cached verdict.
     async fn verified_candidates(&self) -> Result<BTreeMap<Hash, Signed>, Error> {

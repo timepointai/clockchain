@@ -309,8 +309,14 @@ async fn health(State(state): State<V1State>) -> Response {
         .into_response()
 }
 
+/// At most one `/ready` store query in flight per process: the route is
+/// public, and a flood of it must not take the pool from authenticated reads
+/// and writes. Waiters queue here, never on the pool.
+static READY_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn ready(State(state): State<V1State>) -> Response {
     let posture = state.posture.as_str();
+    let _gate = READY_GATE.lock().await;
     match state.store.semantic_readiness().await {
         Ok(r) if r.serving => Json(json!({ "serving": true, "posture": posture })).into_response(),
         Ok(r) => (
@@ -334,7 +340,10 @@ async fn not_found() -> Response {
     refusal(StatusCode::NOT_FOUND, "no_such_route")
 }
 
-async fn submit(State(state): State<V1State>, body: Bytes) -> Response {
+async fn submit(State(state): State<V1State>, q: Strict<NoQuery>, body: Bytes) -> Response {
+    if query(q).is_none() {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
+    }
     match state.store.admit(&body).await {
         Ok(outcome) => {
             let code = match outcome.status.state {
@@ -351,8 +360,12 @@ async fn submit(State(state): State<V1State>, body: Bytes) -> Response {
 async fn retain_body(
     State(state): State<V1State>,
     Path(sha256): Path<String>,
+    q: Strict<NoQuery>,
     body: Bytes,
 ) -> Response {
+    if query(q).is_none() {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
+    }
     let Some(expected) = hex32(&sha256) else {
         return refusal(StatusCode::BAD_REQUEST, "invalid_body_hash");
     };
@@ -378,6 +391,11 @@ type Strict<T> = Result<Query<T>, QueryRejection>;
 fn query<T>(q: Strict<T>) -> Option<T> {
     q.ok().map(|Query(q)| q)
 }
+
+/// Routes that take no parameters refuse any.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoQuery {}
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -421,6 +439,7 @@ async fn snapshot(State(state): State<V1State>, q: Strict<FoldQuery>) -> Respons
             "tombstones": to_value(a.tombstones),
             "effective_revokes": to_value(a.effective_revokes),
             "canceled": to_value(a.canceled),
+            "effects": to_value(a.effects.into_iter().collect::<Vec<_>>()),
         }),
     );
     Json(Value::Object(m)).into_response()
@@ -482,7 +501,14 @@ async fn subject(
     (code, Json(Value::Object(m))).into_response()
 }
 
-async fn prose(State(state): State<V1State>, Path(revision): Path<String>) -> Response {
+async fn prose(
+    State(state): State<V1State>,
+    Path(revision): Path<String>,
+    q: Strict<NoQuery>,
+) -> Response {
+    if query(q).is_none() {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
+    }
     let Some(id) = hex32(&revision) else {
         return refusal(StatusCode::BAD_REQUEST, "invalid_revision_id");
     };
@@ -562,16 +588,23 @@ async fn support(State(state): State<V1State>, q: Strict<SupportQuery>) -> Respo
     Json(Value::Object(m)).into_response()
 }
 
-async fn export(State(state): State<V1State>) -> Response {
+/// The `ExportManifest` serde JSON exactly, except that each envelope is one
+/// hex string rather than a list of byte values.
+async fn export(State(state): State<V1State>, q: Strict<NoQuery>) -> Response {
+    if query(q).is_none() {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
+    }
     match state.store.export(None).await {
-        Ok(m) => Json(json!({
-            "encoding": m.encoding,
-            "rule": rule_json(&m.rule),
-            "corpus_digest": hex::encode(m.corpus_digest),
-            "commitment": hex::encode(m.commitment),
-            "envelopes": m.envelopes.iter().map(hex::encode).collect::<Vec<_>>(),
-        }))
-        .into_response(),
+        Ok(m) => {
+            let mut v = to_value(&m);
+            v["envelopes"] = m
+                .envelopes
+                .iter()
+                .map(hex::encode)
+                .collect::<Vec<_>>()
+                .into();
+            Json(v).into_response()
+        }
         Err(e) => store_refusal(e),
     }
 }

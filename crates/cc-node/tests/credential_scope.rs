@@ -541,10 +541,13 @@ async fn the_v1_credential_scope_matrix_holds_in_both_postures() {
         for (cred, expected) in V1_MATRIX {
             for (col, (label, method, path, _template)) in V1_BOUNDARIES.iter().enumerate() {
                 let url = format!("{base}{path}");
+                // A body unique to this credential, so every one that reaches
+                // admission leaves its own rejection row.
+                let body = format!("{{\"credential\":\"{cred:?}\"}}");
                 let mut req = match *method {
                     "GET" => http.get(&url),
-                    "POST" => http.post(&url).body("{}"),
-                    "PUT" => http.put(&url).body("{}"),
+                    "POST" => http.post(&url).body(body),
+                    "PUT" => http.put(&url).body(body),
                     m => panic!("unhandled method {m}"),
                 };
                 if let Some(t) = cred.token() {
@@ -571,12 +574,20 @@ async fn the_v1_credential_scope_matrix_holds_in_both_postures() {
                 checked += 1;
             }
         }
-        // Nothing a refused or garbage request sent was admitted.
-        let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM cc_v1.candidates")
-            .fetch_one(&pool)
-            .await
-            .expect("count candidates");
-        assert_eq!(stored, 0, "{posture:?}");
+        // Only the full key's POST reached admission, and only while live:
+        // one rejection row (the body is not an envelope), no candidate.
+        let rows = |table: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM cc_v1.{table}"))
+                    .fetch_one(&pool)
+                    .await
+                    .expect("count rows")
+            }
+        };
+        let admitted = if posture == Posture::Live { 1 } else { 0 };
+        assert_eq!(rows("rejections").await, admitted, "{posture:?}");
+        assert_eq!(rows("candidates").await, 0, "{posture:?}");
         server.abort();
         pool.close().await;
         cleanup.cleanup().await;
