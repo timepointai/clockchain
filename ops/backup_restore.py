@@ -5,14 +5,27 @@ Connection parameters use CC_SOURCE_PG* / CC_RESTORE_PG* environment variables
 (e.g. PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE), never secret argv.
 The media input must be a local copy of the production media volume. Stop media
 publication while obtaining that copy and dumping. No source mutation occurs.
+
+`--v1` backs up a v1 database instead (no media). Both sides are inspected for
+the expected `CC_V1_*` identity; the isolated restore must keep every
+append-only trigger, candidates must hash to their ids, and the commitment is
+recomputed for an empty corpus or read from `--node-bin` re-serving the
+restored copy. `--export` must then match it exactly.
 """
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import shutil
+import socket
 import subprocess
+import time
+from urllib.parse import quote
+
+from v1_backup import RELATIONS, compare_export, inspect_v1, prove_guards, verify_contents
+from v1_identity import Expected, hexbytes
 
 
 def connection(prefix):
@@ -48,11 +61,111 @@ def verify_objects(rows, directory):
     return checked
 
 
+def attempt(env, query):
+    return subprocess.run(['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-c', query], env=env,
+                          capture_output=True, text=True)
+
+
+def database_url(env):
+    user = quote(env['PGUSER'], safe='')
+    password = ':' + quote(env['PGPASSWORD'], safe='') if env.get('PGPASSWORD') else ''
+    host = env['PGHOST']
+    if host.startswith('/'):
+        return f'postgres://{user}{password}@/{quote(env["PGDATABASE"], safe="")}?host={quote(host, safe="")}'
+    port = ':' + env['PGPORT'] if env.get('PGPORT') else ''
+    return f'postgres://{user}{password}@{host}{port}/{quote(env["PGDATABASE"], safe="")}'
+
+
+def reserve(node_bin, restore, expected):
+    """Serve the isolated restored copy with a local cc-node; return its export."""
+    from v1_checks import http
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    key, read_key = secrets.token_hex(32), secrets.token_hex(32)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('PG', 'CC_', 'DATABASE_URL'))}
+    env.update({'DATABASE_URL': database_url(restore), 'CC_NODE_API_KEY': key,
+                'CC_NODE_READ_KEY': read_key, 'CC_NODE_POSTURE': 'live', 'PORT': str(port),
+                'CC_NODE_LEDGER': 'v1', 'CC_V1_INSTANCE': expected.instance,
+                'CC_V1_CURATORS': ','.join(expected.curators),
+                'CC_V1_MAX_HOPS': str(expected.max_hops)})
+    provisioned = subprocess.run([str(node_bin), 'provision-v1'], env=env, capture_output=True, text=True)
+    if provisioned.returncode:
+        raise ValueError('restored copy failed the provision-v1 identity check')
+    from v1_acceptance import check_provision
+    check_provision(json.loads(provisioned.stdout), expected)
+    node = subprocess.Popen([str(node_bin), 'serve'], env=env, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    try:
+        url = f'http://127.0.0.1:{port}'
+        for _ in range(60):
+            try:
+                if http(url, 'GET', '/health')[0] == 200:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
+        code, raw = http(url, 'GET', '/v1/export', key)
+        if code != 200:
+            raise ValueError('restored copy cannot export')
+        return json.loads(raw)
+    finally:
+        node.terminate()
+        node.wait(timeout=10)
+
+
+def main_v1(args, source, restore):
+    expected = Expected.from_env()
+    source_state = inspect_v1(lambda q: sql(source, q), expected)
+    args.output.mkdir(mode=0o700, parents=True)
+    dump = args.output / 'database.dump'
+    subprocess.run(['pg_dump', '--format=custom', '--no-owner', '--no-privileges', '--file', str(dump)],
+                   env=source, check=True, stderr=subprocess.DEVNULL)
+    subprocess.run(['pg_restore', '--exit-on-error', '--no-owner', '--no-privileges',
+                    '--dbname', restore['PGDATABASE'], str(dump)], env=restore, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    state = inspect_v1(lambda q: sql(restore, q), expected)
+    if state != source_state:
+        raise ValueError('restored v1 copy differs from the source')
+    if state['state'] == 'uninitialized':
+        raise ValueError('source holds no v1 store; nothing to verify')
+    # Guards are exercised on the isolated restored copy, never on the source.
+    guards = prove_guards(lambda q: attempt(restore, q), lambda q: sql(restore, q))
+    contents = verify_contents(lambda q: sql(restore, q))
+    if args.node_bin:
+        reserved = reserve(args.node_bin, restore, expected)
+        commitment = hexbytes(reserved.get('commitment'), 'commitment')
+        compare_export(reserved, contents, expected, commitment)
+        basis = 'node_reserved_restored_copy'
+        if not contents['events'] and commitment != expected.empty_commitment:
+            raise ValueError('empty restored copy does not commit to the recomputed empty view')
+    elif not contents['events']:
+        commitment, basis = expected.empty_commitment, 'recomputed_empty_corpus'
+    else:
+        raise ValueError('a populated v1 backup needs --node-bin to verify its commitment')
+    if args.export:
+        compare_export(json.loads(args.export.read_text()), contents, expected, commitment)
+    report = {'schema': 'cc.backup-restore-v1.v1', 'dump_sha256': sha(dump), 'state': state['state'],
+              'counts': state['counts'], 'guards': guards, 'corpus_digest': contents['corpus_digest'],
+              'events': contents['events'], 'commitment': commitment, 'commitment_basis': basis,
+              'production_export_matched': bool(args.export), 'restore_verified': True,
+              'expected': expected.summary()}
+    (args.output / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps({'restore_verified': True, 'state': state['state'], 'counts': state['counts'],
+                      'commitment': commitment}))
+    return report
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--media', type=Path, required=True)
+    p.add_argument('--media', type=Path)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--v1', action='store_true', help='back up a v1 database (no media)')
+    p.add_argument('--export', type=Path, help='v1: production /v1/export JSON that must match')
+    p.add_argument('--node-bin', type=Path, help='v1: cc-node binary to re-serve the restored copy')
     args = p.parse_args()
+    if args.v1 == bool(args.media):
+        p.error('exactly one of --media (v0) or --v1 is required')
     source, restore = connection('CC_SOURCE_'), connection('CC_RESTORE_')
     identity = lambda env: tuple(env.get(k, '') for k in ('PGHOST', 'PGPORT', 'PGDATABASE'))
     if identity(source) == identity(restore):
@@ -66,8 +179,12 @@ def main():
         version = subprocess.check_output([tool, '--version'], text=True)
         if ' 18.' not in version:
             p.error(tool + ' must be version 18')
-    if sql(restore, "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'") != '0':
+    # pg_class, not information_schema: the latter hides relations the
+    # connecting role cannot read. Guard proofs mutate (and roll back) only here.
+    if sql(restore, RELATIONS) != '0':
         p.error('restore database must be empty; nothing is dropped automatically')
+    if args.v1:
+        return main_v1(args, source, restore)
     args.output.mkdir(mode=0o700, parents=True)
     dump = args.output / 'database.dump'
     subprocess.run(['pg_dump', '--format=custom', '--no-owner', '--no-privileges', '--file', str(dump)],

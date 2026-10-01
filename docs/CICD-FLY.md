@@ -20,7 +20,15 @@ curl -fsS -H "Authorization: Bearer $CC_NODE_READ_KEY" http://127.0.0.1:18080/he
 
 Flycast uses private HTTP; do not force an HTTPS redirect to a public endpoint.
 `fly.toml` describes this private service. Promotion explicitly disables public IP
-allocation. Keep exactly one app writer and a stopped-between-runs hourly tick.
+allocation. Keep exactly one app writer. The v0 ledger used a stopped-between-runs
+hourly tick; the v1 ledger runs none (see the v1 section below).
+
+Check IP allocations on both app and database and inspect actual machine services,
+not just this file. The checked-in request concurrency is soft 8 / hard 16; it
+applies through Fly Proxy after an owner-run release and is not a per-client
+rate limit. Read [security boundaries](../SECURITY.md) for crawler, cache and
+egress limits. Retain live inspection evidence privately; a private ingress
+address does not prove outbound traffic is restricted.
 
 ## Build, accept and release
 
@@ -77,3 +85,96 @@ append-only truncate guard, and leaves publication paused. It never initializes
 the ledger to make a smoke check pass. `CC_SMOKE_ENTITY` is unnecessary in either
 empty mode. Exact-image Docker acceptance still exercises zero, genesis-only and
 synthetic populated states in its isolated database.
+
+## v1 release onto a fresh database
+
+`--v1-fresh` is the owner-authorized v1 launch. It is mutually exclusive with
+`--zero-events` and `--empty-corpus`. The checked-in `fly.toml` is now a v1
+config:
+
+- `CC_NODE_LEDGER=v1`;
+- `CC_V1_MAX_HOPS=4`;
+- `release_command = "cc-node provision-v1"`;
+- a `/health` check.
+
+The v0 modes refuse it, and `--v1-fresh` refuses a v0 config. The step-by-step
+owner procedure, including key ceremony, database creation, staged secrets, the
+tick and the inaugural entry, is [FIRST-ENTRY.md](FIRST-ENTRY.md).
+
+The operator environment adds `CC_V1_INSTANCE`, `CC_V1_CURATORS` and
+`CC_V1_MAX_HOPS` (which must be 4) to the existing credentials and
+`CC_BACKUP_*`, where `CC_BACKUP_DATABASE` names the v1 database.
+`CC_SMOKE_ENTITY` is not used. The expected identity is recomputed from the
+checkout and never taken from the node:
+
+- `filter_version` comes from the curators and the hop bound;
+- the empty view commitment is recomputed;
+- the `cc_v1` schema hash comes from the checkout's `v1.sql`.
+
+```sh
+set -a; . <private operator env file>; set +a
+ops/deploy-fly.sh --v1-fresh --app <app> \
+  --image registry.fly.io/<app>@sha256:<manifest-digest> \
+  --evidence /absolute/private/path/release-<sha>
+```
+
+1. **Exact-image acceptance** (`ops/v1_acceptance.py`) runs in a temporary
+   Docker network with an isolated PostgreSQL 18 and synthetic data only:
+   1. `cc-node migrate` must exit 78.
+   2. `cc-node provision-v1` must succeed twice with identical output, using a
+      synthetic curator from the image's own `cc-publisher v1 keygen`.
+   3. The node serves, and `check_v1_zero` runs, including the candidate-route
+      denial probes.
+   4. A synthetic Genesis goes through `cc-publisher v1 genesis`, `submit` and
+      `verify`.
+   5. `check_v1_populated` runs.
+   6. `pg_dump -n cc_v1` is restored into a fresh empty database. There,
+      `provision-v1` must reproduce the identity and refuse a wrong instance
+      and a wrong curator set. Every append-only trigger must refuse UPDATE,
+      DELETE and TRUNCATE. The restored node must serve the same commitment
+      and a byte-equal export.
+
+   Containers, the network and the temporary key directory are removed on
+   success or failure.
+2. **Production**, after main is rechecked and public IPs are refused, has
+   these steps:
+   1. Machine census: one app, and no tick running or scheduled. Any scheduled
+      machine is refused.
+   2. A read-only inspection of the v1 database. It must hold no relation
+      outside `cc_v1`, and must be uninitialized or hold exactly the expected
+      instance, schema hash and rule identity with zero candidates, bodies,
+      receipts and rejections.
+   3. A backup, restored and verified in local PostgreSQL 18.
+   4. `fly deploy` of the exact digest. The release command provisions and
+      binds.
+   5. The census again.
+   6. `/health` checked against the expected instance, fold, `filter_version`,
+      curators and `max_hops`, with `semantic` `ready`. `/ready` must return
+      200.
+   7. The read-only `check_v1_zero`.
+   8. A second backup. Its restored copy is re-served by the same image, and
+      its export must equal production's.
+
+v1 mode never pauses or resumes v0 publication, because that would write to the
+archived v0 database. It never updates or starts a tick, never submits an
+entry, and never rolls back automatically. On failure, `FAILED` and
+`recovery.json` record the previous image for an owner decision.
+
+Production probes are read-only by construction. The only mutating-method
+requests are anonymous and read-key `PUT /v1/bodies/<sha256("")>` carrying a
+body that does not hash to that path. Even a node with broken authorization
+could only refuse them. Candidate-route probes, which a broken node could record
+as rejections, run only in acceptance.
+
+Backups of a v1 database use `ops/backup_fly.py --v1`, or `ops/backup_restore.py
+--v1` for a manually reachable source:
+
+- The table census must list exactly the six `cc_v1` tables.
+- All six statement-level append-only triggers must be proven on the restored
+  copy, which also works with empty tables.
+- Every candidate must hash to its event id, and every body to its key.
+- The corpus digest is recomputed.
+- The commitment is either recomputed (empty corpus) or read from the exact
+  image re-serving the restored copy (`--image`, or `--node-bin` for the
+  manual tool). Either way it must match production's `/v1/export` when one is
+  given (`--export`).

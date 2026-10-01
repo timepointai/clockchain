@@ -13,6 +13,8 @@ import deploy_digest as subject
 SHA = 'b' * 40
 OLD = 'sha256:' + 'a' * 64
 NEW = 'registry.fly.io/timepoint-clockchain-prod@sha256:' + 'b' * 64
+# The checked-in fly.toml is v1, which every v0 mode refuses.
+V0_CONFIG = '[env]\nCC_NODE_POSTURE = "live"\n\n[deploy]\nrelease_command = "cc-node migrate"\n'
 
 
 def fleet():
@@ -27,6 +29,12 @@ def fleet():
 
 
 class PromotionTests(unittest.TestCase):
+    def setUp(self):
+        config = tempfile.TemporaryDirectory()
+        self.addCleanup(config.cleanup)
+        self.config = Path(config.name) / 'fly.toml'
+        self.config.write_text(V0_CONFIG)
+
     def test_only_rollback_skips_old_migrator(self):
         with patch.object(subject, 'fly') as fly:
             subject.deploy('acceptance', 'fly.toml', NEW)
@@ -85,7 +93,7 @@ class PromotionTests(unittest.TestCase):
             machine_calls += [after] * (12 if fail in ('checks', 'recovery') else 1)
         machine_calls += [restored] * 12
         argv = ['deploy_digest.py', '--app', 'acceptance' if acceptance else 'production',
-                '--image', NEW, '--sha', SHA, '--evidence', str(directory)]
+                '--image', NEW, '--sha', SHA, '--evidence', str(directory), '--config', str(self.config)]
         if acceptance:
             argv += ['--acceptance']
         env = {'CC_NODE_URL': 'https://example.invalid', 'CC_NODE_API_KEY': 'full',

@@ -10,6 +10,11 @@ primary_region = "sjc"
     CC_BUILD_REV = "unknown"
 
 [env]
+  # v1 ledger mode. DATABASE_URL (the fresh v1 database), CC_V1_INSTANCE and
+  # CC_V1_CURATORS are Fly secrets; see docs/FIRST-ENTRY.md.
+  CC_NODE_LEDGER = "v1"
+  # Governed production hop bound (HOLD.md); part of the filter identity.
+  CC_V1_MAX_HOPS = "4"
   CC_NODE_POSTURE = "live"
   PORT = "8080"
   RUST_LOG = "info"
@@ -21,9 +26,10 @@ primary_region = "sjc"
   processes = ["app"]
 
 [deploy]
-  # Same pre-deploy step Railway ran. Additive, idempotent. The server itself
-  # does no I/O at boot, so this is the only place migrations run.
-  release_command = "cc-node migrate"
+  # Owner-run pre-deploy step. Idempotently provisions the fresh v1 store and
+  # binds its rule identity; exits non-zero on a non-empty or mismatched
+  # database. `cc-node migrate` refuses in v1 mode, so no v0 table can appear.
+  release_command = "cc-node provision-v1"
 
 [http_service]
   internal_port = 8080
@@ -31,6 +37,13 @@ primary_region = "sjc"
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+
+  # Bounds simultaneous proxy requests to the single 512 MiB writer.
+  # This is not a per-client rate limit and does not cover direct 6PN traffic.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 8
+    hard_limit = 16
 
   [[http_service.checks]]
     method = "GET"
@@ -40,9 +53,9 @@ primary_region = "sjc"
     grace_period = "30s"
 
 # Single instance: do not scale horizontally. The ledger is one writer.
-# Hourly seal/anchor is NOT a Launch process:
-# process group `tick`, schedule=hourly, restart=no. Stopped between ticks is
-# correct. ops/deploy-fly.sh refreshes its image after deploy.
+# v1 launches without a tick: the v0 hourly `tick` machine writes v0 events and
+# must be destroyed first. ops/deploy-fly.sh --v1-fresh refuses any scheduled
+# machine and any running machine other than the app.
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"

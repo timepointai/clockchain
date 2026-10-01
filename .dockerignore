@@ -1,21 +1,78 @@
-# Fly's remote builder uploads the whole build context. Without this file that
-# is the local cargo target/ plus .git. Everything below is either rebuilt
-# inside the image or never read by the build.
-#
-# NOTE: .dockerignore has no inline comments — a trailing "# ..." on a pattern
-# line becomes part of the pattern. Comments get their own line.
+# Deny by default: the remote builder receives only these source paths.
+# A re-included directory (e.g. ops/) also passes its other public files;
+# the private-artifact patterns below still apply inside it.
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!Dockerfile
+!.dockerignore
+!crates/
+!crates/**
+!migrations/
+!migrations/*.sql
+!vendor/
+!vendor/**
+!ops/
+!ops/*.py
+!ops/requirements.txt
+!ops/flux_profile.json
+!ops/fixtures/
+!ops/fixtures/**
+!robots.txt
 
-target
-.git
-.github
-.DS_Store
-.env
-*.log
-HANDOFF.md
-AGENTS.md
-
-.env.*
-*.dump
-*.gpg
-*.bundle
-release-evidence
+# Private artifacts remain excluded even inside an allowed source directory.
+**/.env
+**/.env.*
+**/.git
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.seed
+**/id_rsa*
+**/id_ed25519*
+**/*.sqlite*
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.dump
+**/*.dump.*
+**/*.gpg
+**/*.bundle
+**/*.log
+**/*.bak
+**/*.zip
+**/*.tar
+**/*.tar.gz
+**/secrets
+**/credentials
+**/private
+**/archive
+**/backups
+**/captures
+**/approvals
+**/proposals
+**/plans
+**/research
+**/.agents
+**/.codex
+**/release-evidence
+**/HANDOFF.md
+**/MEMORY.md
+**/CURRENT.md
+**/proposal.json
+**/brief.json
+**/sources.json
+**/request.json
+**/request-wire.json
+**/response.json
+**/response-wire.json
+**/response-stream.ndjson
+**/source-review.json
+**/services.json
+**/budget.json
+**/active.json

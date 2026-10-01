@@ -3,6 +3,13 @@
 
 The owner release wrapper owns exact-main checks and its local concurrency lock.
 Failure never resumes publication. No source build occurs in this command.
+
+`--v1-fresh` promotes onto a fresh v1 database instead. It checks the database
+is empty or holds only the expected identity, backs it up, deploys the digest
+(release command `cc-node provision-v1`), then only reads: machine census with
+no tick, /health identity, /ready, the read-only `check_v1_zero` and a second
+verified backup. It never pauses or resumes v0 publication, never touches a
+tick, never writes an entry, and never rolls back automatically.
 """
 import argparse
 import json
@@ -11,11 +18,16 @@ from pathlib import Path
 import re
 import subprocess
 import time
+import tomllib
 
 from acceptance_seed import seed
 from deployed_checks import check, check_empty, check_zero, request
-from backup_fly import capture, wake
-from verify_fly_machines import digest, group, verify
+from backup_fly import capture, capture_v1, wake
+from v1_checks import check_v1_zero, http
+from v1_identity import PRODUCTION_MAX_HOPS, Expected
+from verify_fly_machines import digest, group, verify, verify_v1
+
+V1_RELEASE_COMMAND = 'cc-node provision-v1'
 
 
 def fly(*args):
@@ -107,6 +119,109 @@ def recover(args, before, rollback):
     return evidence
 
 
+def check_config(path, v1):
+    """The Fly config must match the release mode before anything is deployed."""
+    with open(path, 'rb') as f:
+        config = tomllib.load(f)
+    env = config.get('env', {})
+    command = config.get('deploy', {}).get('release_command')
+    checks = [c.get('path') for c in config.get('http_service', {}).get('checks', [])]
+    if v1:
+        if env.get('CC_NODE_LEDGER') != 'v1' or command != V1_RELEASE_COMMAND:
+            raise ValueError(f'v1 release needs CC_NODE_LEDGER=v1 and release_command "{V1_RELEASE_COMMAND}"')
+        if '/health' not in checks:
+            raise ValueError('v1 release needs an HTTP health check on /health')
+        if env.get('CC_V1_MAX_HOPS') != str(PRODUCTION_MAX_HOPS):
+            raise ValueError(f'v1 release config must pin CC_V1_MAX_HOPS = "{PRODUCTION_MAX_HOPS}"')
+    elif env.get('CC_NODE_LEDGER') == 'v1' or command == V1_RELEASE_COMMAND:
+        raise ValueError('a v0 release mode cannot deploy a v1 configuration')
+    return config
+
+
+# A secret overrides fly.toml [env]; these must come from the checked-in config.
+CONFIG_ONLY = ('CC_NODE_LEDGER', 'CC_NODE_POSTURE', 'CC_V1_MAX_HOPS')
+V1_SECRETS = ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY', 'CC_V1_CURATORS', 'CC_V1_INSTANCE', 'DATABASE_URL')
+
+
+def check_secret_names(app):
+    """Names only (Fly never returns values): required v1 secrets present, no overrides.
+
+    provision-v1 binds whatever the secrets say, permanently, so a stale
+    CC_V1_MAX_HOPS secret must be caught before the deploy, not after.
+    """
+    listed = json.loads(fly('secrets', 'list', '--app', app, '--json'))
+    if not isinstance(listed, list):
+        raise ValueError('unexpected `flyctl secrets list --json` output')
+    names = {entry.get('name', entry.get('Name')) for entry in listed if isinstance(entry, dict)}
+    stale = sorted(names & set(CONFIG_ONLY))
+    if stale:
+        raise ValueError('secrets override fly.toml [env]; unset them (--stage): ' + ', '.join(stale))
+    missing = sorted(set(V1_SECRETS) - names)
+    if missing:
+        raise ValueError('v1 secrets missing: ' + ', '.join(missing))
+    return sorted(n for n in names if n)
+
+
+def promote_v1(args):
+    """Fresh v1 promotion. Checks and the owner-approved deploy only; no entry."""
+    expected = Expected.from_env(production=True)
+    check_config(args.config, True)
+    url = os.environ['CC_NODE_URL'].rstrip('/')
+    key, read_key = os.environ['CC_NODE_API_KEY'], os.environ['CC_NODE_READ_KEY']
+    if not key or not read_key or key == read_key:
+        # Checked before production is touched, not first by the post-deploy checks.
+        raise ValueError('Distinct full and read-only credentials required')
+    database = (os.environ['CC_BACKUP_DB_APP'], os.environ['CC_BACKUP_DATABASE'],
+                os.environ['CC_BACKUP_USER'])
+    (args.evidence / 'expected.json').write_text(json.dumps(expected.summary(), indent=2))
+    before = machines(args.app)
+    # The tick must already be gone: it writes v0 events.
+    verify_v1(before)
+    secret_names = check_secret_names(args.app)
+    previous = previous_image(group(before, 'app'))
+    (args.evidence / 'rollback.json').write_text(json.dumps(
+        {'app': args.app, 'mode': 'v1-fresh', 'previous_image': previous, 'sha': args.sha,
+         'automatic_rollback': False, 'secret_names': secret_names}, indent=2))
+    try:
+        # Empty, or only the expected identity with no evidence rows, else refuse.
+        capture_v1(*database, args.evidence / 'backup-before', expected, fresh=True, image=args.image)
+        deploy(args.app, args.config, args.image)
+        fly('scale', 'count', '1', '--process-group', 'app', '--app', args.app, '--yes')
+        expected_digest = args.image.split('@')[1]
+        for attempt in range(12):
+            try:
+                fleet = verify_v1(machines(args.app), expected_digest)
+                result = check_v1_zero(url, args.sha, key, read_key, expected)
+                break
+            # A transient `flyctl machines list` failure is retried like the
+            # rest; production is already deployed, so failing early would
+            # misreport it.
+            except (AssertionError, ValueError, OSError, subprocess.CalledProcessError):
+                if attempt == 11:
+                    raise
+                time.sleep(5)
+        code, raw = http(url, 'GET', '/v1/export', key)
+        if code != 200:
+            raise ValueError('production export unavailable after deploy')
+        after = capture_v1(*database, args.evidence / 'backup-after', expected, fresh=True,
+                           export=json.loads(raw), image=args.image)
+        if after['state'] != 'bound' or after['commitment'] != result['commitment']:
+            raise ValueError('post-deploy backup does not hold the bound empty store')
+        result.update({'image': args.image, 'app': args.app, 'machines': fleet,
+                       'backup_after': {k: after[k] for k in ('state', 'counts', 'commitment',
+                                                             'commitment_basis', 'dump_sha256')},
+                       'tick': 'none_running_or_scheduled', 'entry': 'left_to_owner'})
+        (args.evidence / 'acceptance.json').write_text(json.dumps(result, indent=2))
+        return result
+    except Exception as error:
+        (args.evidence / 'FAILED').write_text(
+            'v1 promotion failed. No automatic rollback: see docs/FIRST-ENTRY.md abort points.\n')
+        (args.evidence / 'recovery.json').write_text(json.dumps(
+            {'status': 'NOT RUN', 'error': type(error).__name__, 'previous_image': previous,
+             'reason': 'v1-fresh never redeploys v0 automatically; the owner decides'}, indent=2))
+        raise
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--app', required=True)
@@ -117,6 +232,7 @@ def main():
     modes=p.add_mutually_exclusive_group()
     modes.add_argument('--empty-corpus', action='store_true')
     modes.add_argument('--zero-events', action='store_true')
+    modes.add_argument('--v1-fresh', action='store_true')
     p.add_argument('--evidence', type=Path, required=True)
     args = p.parse_args()
     if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
@@ -125,9 +241,15 @@ def main():
         p.error('immutable Fly registry image required')
     if args.acceptance and args.app == 'timepoint-clockchain-prod':
         p.error('acceptance cannot target production')
+    if args.v1_fresh and args.acceptance:
+        p.error('v1 acceptance runs locally in Docker; --v1-fresh is production only')
     args.evidence.mkdir(parents=True, exist_ok=True)
     if any(args.evidence.iterdir()):
         p.error('evidence directory must be empty; use a fresh path for each attempt')
+    if args.v1_fresh:
+        promote_v1(args)
+        return
+    check_config(args.config, False)
     # The initial rollout predates cc-publisher. Only that explicitly marked
     # bootstrap may omit the old binary; migration0014 starts publication paused.
     was_paused = True
