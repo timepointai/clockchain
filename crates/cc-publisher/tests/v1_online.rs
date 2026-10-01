@@ -1,25 +1,24 @@
 //! Online `cc-publisher v1` tests over real PostgreSQL. Synthetic keys and
 //! data only.
 //!
-//! Until the v1 serving node (STAGE-F W1) merges, the node under test is the
-//! test-only `cc_node::v1::review_router` for `POST /v1/candidates` and
-//! revision prose, behind in-process contract routes for `GET /health`,
-//! `PUT /v1/bodies/{sha256}` and `GET /v1/subjects/{id}`. All of them call the
-//! same bound `cc_ledger::v1::Store`. A response-rewriting layer makes the node
-//! answer as a misconfigured or lying node would.
+//! The node under test is the real v1 serving router (`cc_node::serve_v1`),
+//! booted in-process the way `cc-node serve` boots it: a provisioned and bound
+//! store, reopened and verified with `Store::open`. A response-rewriting layer
+//! in front of it makes the node answer as a misconfigured or lying node would,
+//! which the real node cannot be configured to do.
 use axum::{
-    body::{Body, Bytes},
-    extract::{Path as UrlPath, Request, State},
+    body::Body,
+    extract::{Request, State},
     http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::{get, put},
-    Json, Router,
+    response::Response,
+    Router,
 };
 use cc_core::v1::{hash, Hash};
 use cc_core::SecretKey;
 use cc_ledger::v1::{ProjectionState, Store};
-use cc_node::config::KeyDigest;
+use cc_node::config::{KeyDigest, Posture, V1Config};
+use cc_node::serve_v1::{self, V1State};
 use cc_publisher::v1::genesis::{self, Genesis, GenesisInput};
 use cc_publisher::v1::node::{self, Node, RECEIPT_FILE};
 use cc_publisher::v1::{hash_json, key, time};
@@ -37,14 +36,6 @@ type Rewrite = Arc<dyn Fn(&mut StatusCode, &mut HeaderMap, &mut Value) + Send + 
 /// Active rewrites, each applied to responses whose path contains its key.
 type Rewrites = Arc<Mutex<Vec<(String, Rewrite)>>>;
 
-#[derive(Clone)]
-struct Contract {
-    store: Store,
-    curators: Vec<Hash>,
-    max_hops: u16,
-    instance: Hash,
-}
-
 struct TestNode {
     url: String,
     store: Store,
@@ -53,32 +44,44 @@ struct TestNode {
     cleanup: cc_testkit::Cleanup,
 }
 impl TestNode {
-    async fn start(instance: Hash, mut curators: Vec<Hash>) -> Self {
+    async fn start(instance: Hash, curators: Vec<Hash>) -> Self {
+        Self::boot(instance, curators, Posture::Live).await
+    }
+    async fn boot(instance: Hash, mut curators: Vec<Hash>, posture: Posture) -> Self {
         curators.sort();
         let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
-        let filter = cc_filter::v1::FilterIdentity::governed(curators.clone(), 4).unwrap();
-        let store = Store::provision(pool.clone(), instance)
+        let filter = cc_filter::v1::FilterIdentity::governed(curators, 4).unwrap();
+        // What `cc-node provision-v1` does, then what `cc-node serve` does.
+        Store::provision(pool.clone(), instance)
             .await
             .unwrap()
-            .bind(filter)
+            .bind(filter.clone())
             .await
             .unwrap();
-        let contract = Contract {
-            store: store.clone(),
-            curators,
-            max_hops: 4,
+        let store = Store::open(pool.clone(), instance, filter.clone())
+            .await
+            .unwrap();
+        let readiness = store.semantic_readiness().await.unwrap();
+        assert!(readiness.serving, "{readiness:?}");
+        let v1 = V1Config {
+            database_url: String::new(),
             instance,
+            filter,
         };
-        let review =
-            cc_node::v1::review_router(store.clone(), KeyDigest::of(WRITE), KeyDigest::of(READ));
+        let state = V1State {
+            store: store.clone(),
+            posture,
+            health_body: serve_v1::health_body(&v1, posture, &readiness.semantic),
+            ready_gate: Default::default(),
+            api_key: KeyDigest::of(WRITE),
+            read_key: Some(KeyDigest::of(READ)),
+            gallery_key: None,
+            beta_key: None,
+            telemetry_key: None,
+        };
         let rewrites = Rewrites::default();
-        let app = Router::new()
-            .route("/health", get(health))
-            .route("/v1/bodies/:sha", put(put_body))
-            .route("/v1/subjects/:id", get(subject))
-            .with_state(contract)
-            .fallback_service(review)
-            .layer(middleware::from_fn_with_state(rewrites.clone(), inject));
+        let app =
+            serve_v1::router(state).layer(middleware::from_fn_with_state(rewrites.clone(), inject));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -124,70 +127,6 @@ impl TestNode {
     }
 }
 
-/// The node's scopes: the write key everywhere, the read key on reads (403 on
-/// writes, as the v1 node answers), anything else 401.
-fn refused(headers: &HeaderMap, write: bool) -> Option<StatusCode> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    match token {
-        Some(t) if KeyDigest::of(WRITE).matches(t) => None,
-        Some(t) if KeyDigest::of(READ).matches(t) => write.then_some(StatusCode::FORBIDDEN),
-        _ => Some(StatusCode::UNAUTHORIZED),
-    }
-}
-async fn health(State(c): State<Contract>) -> Json<Value> {
-    let r = c.store.semantic_readiness().await.unwrap();
-    let rule = cc_filter::v1::FilterIdentity::governed(c.curators.clone(), c.max_hops).unwrap();
-    Json(json!({
-        "ledger": "v1",
-        "build": "synthetic-test",
-        "posture": "live",
-        "instance": hex::encode(c.instance),
-        "fold_version": {"version": rule.fold.version, "manifest": hex::encode(rule.fold.manifest)},
-        "filter_version": hex::encode(rule.version()),
-        "curators": c.curators.iter().map(hex::encode).collect::<Vec<_>>(),
-        "max_hops": c.max_hops,
-        "semantic": r.semantic,
-    }))
-}
-async fn put_body(
-    State(c): State<Contract>,
-    headers: HeaderMap,
-    UrlPath(sha): UrlPath<String>,
-    body: Bytes,
-) -> Response {
-    if let Some(code) = refused(&headers, true) {
-        return code.into_response();
-    }
-    let Some(expected) = cc_publisher::v1::hex32(&sha) else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    let existed = c.store.body_bytes(expected).await.unwrap().is_some();
-    match c.store.retain_body(expected, &body).await {
-        Ok(_) if existed => StatusCode::OK.into_response(),
-        Ok(_) => StatusCode::CREATED.into_response(),
-        Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, "body_hash_mismatch").into_response(),
-    }
-}
-async fn subject(
-    State(c): State<Contract>,
-    headers: HeaderMap,
-    UrlPath(id): UrlPath<String>,
-) -> Response {
-    if let Some(code) = refused(&headers, false) {
-        return code.into_response();
-    }
-    let Some(id) = cc_publisher::v1::hex32(&id) else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    let snapshot = c.store.snapshot(None).await.unwrap();
-    // `EntityRead` serializes hashes as integer arrays; the client accepts both.
-    let mut v = serde_json::to_value(snapshot.entity(id, None)).unwrap();
-    v["commitment"] = json!(hex::encode(snapshot.commitment));
-    Json(v).into_response()
-}
 /// Apply the active rewrites to a response.
 async fn inject(State(rewrites): State<Rewrites>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_owned();
@@ -414,12 +353,6 @@ async fn submit_refuses_curator_mismatch_before_any_write() {
     let (_, k) = curator(tmp.path());
     let stranger = SecretKey::from_seed([0x32; 32]).author().to_bytes();
     let n = TestNode::start(INSTANCE, vec![stranger]).await;
-    // This node answers an unknown subject with 404, as the v1 node does.
-    n.rewrite("/v1/subjects/", |status, _, v| {
-        if v["visibility"] == "subject_unknown" {
-            *status = StatusCode::NOT_FOUND;
-        }
-    });
     let dir = tmp.path().join("entry");
     let g = signed_genesis(&k, INSTANCE, "online-curator", &dir);
     let e = error_text(
@@ -563,6 +496,18 @@ async fn submit_needs_the_env_token_and_a_writable_node() {
     assert!(e.contains("403"), "{e}");
     assert_eq!(n.writes(&g.body).await, (0, 0, false));
     n.cleanup.cleanup().await;
+
+    // A really frozen node is refused before any write, even overridden.
+    let frozen = TestNode::boot(INSTANCE, vec![k.author().to_bytes()], Posture::Frozen).await;
+    let e = error_text(
+        node::submit(&frozen.client(WRITE), &dir, true)
+            .await
+            .err()
+            .unwrap(),
+    );
+    assert!(e.contains("posture is frozen"), "{e}");
+    assert_eq!(frozen.writes(&g.body).await, (0, 0, false));
+    frozen.cleanup.cleanup().await;
 }
 
 /// Node states in which nothing is written whatever the flags, and the filter
