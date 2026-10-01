@@ -220,7 +220,7 @@ const MATRIX: [(Cred, [V; 14]); 7] = [
     // more than was asked for is not a scope, and those two cells say so.
     (Cred::Beta,      [Accept, Unauthorized, Unauthorized, Unauthorized, Accept,       Accept,       Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized]),
     // Telemetry holds beta's scope on a separate secret, PLUS the gallery route
-    // as of Sean's direct authorisation 2026-08-18 — so their daily gate can run
+    // as of the owner's scope decision 2026-08-18 — so their daily gate can run
     // the Ed25519 triple check on their own credential against the live surface
     // rather than reading my output. The gallery cell below and the arm in
     // `require_gallery` are the whole of that change. Still refused on
