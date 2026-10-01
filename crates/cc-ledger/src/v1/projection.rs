@@ -45,6 +45,8 @@ pub struct Projection {
     pub revisions: Vec<Revision>,
     pub subjects: Vec<SubjectReading>,
     pub authority: Authority,
+    pub edges: Vec<EdgeReading>,
+    pub media: Vec<MediaReading>,
 }
 /// Immutable revision records, including retained suppressed readings.
 pub(super) fn revisions(valid: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Revision> {
@@ -72,7 +74,7 @@ pub(super) fn revisions(valid: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Revisi
         })
         .collect()
 }
-fn selections(valid: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Hash> {
+pub(super) fn selections(valid: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Hash> {
     let mut out = BTreeMap::new();
     while out.len() < valid.len() {
         for (&id, e) in valid {
@@ -105,7 +107,7 @@ pub fn project(candidates: &BTreeMap<Hash, Signed>) -> Projection {
     } = analyze(candidates);
     let valid: BTreeMap<_, _> = candidates
         .iter()
-        .filter(|(id, _)| admission[*id].state == State::Valid)
+        .filter(|(id, e)| admission[*id].state == State::Valid && is_subject(e))
         .map(|(&id, e)| (id, e.clone()))
         .collect();
     let selected = selections(&valid);
@@ -170,6 +172,9 @@ pub fn project(candidates: &BTreeMap<Hash, Signed>) -> Projection {
                 .any(|g| authority.grants[g].subject == subject),
         });
     }
+    let (edges, media, edge_states) =
+        super::edges::project(candidates, &admission, &subjects, &ancestors);
+    states.extend(edge_states);
     let rows = candidates
         .iter()
         .map(|(&id, e)| {
@@ -206,5 +211,7 @@ pub fn project(candidates: &BTreeMap<Hash, Signed>) -> Projection {
         subjects,
         revisions: revisions(&valid).into_values().collect(),
         authority,
+        edges,
+        media,
     }
 }

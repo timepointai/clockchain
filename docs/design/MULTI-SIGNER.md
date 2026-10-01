@@ -5,7 +5,9 @@ receipt and green CI. Stage 0 is an executable reference specification, not
 production code. Stage (a) is authorized after that merge, on a separate branch
 for review. Subsequent owner decision: the full **(a) → (b) → (c) → (d) → (e)**
 sequence is selected. PR #9 is approved and Stage (c) is authorized through its
-first PR review; later implementation stages still require scoped authorization.
+first PR review. Owner decision, 2026-09-30: PR #10 (Stage (c)) merged and Stage
+(d) is authorized through its first PR review; Stage (e) still requires scoped
+authorization.
 [HOLD.md](../../HOLD.md) remains the operating boundary.
 This specifies every gate in [#6](https://github.com/timepointai/clockchain/issues/6).
 Decided below means a concrete choice in this proposal, not a completed gate or

@@ -1,12 +1,17 @@
-//! Stage (c) admission and projection review. No support verdict or readiness.
+//! Stage (d) admission and projection review. No serving fold identity or readiness.
 //! HTTP, import and restore must all use `Store::admit`; SQL insertion is private.
 use cc_core::v1::{hash, root_grant, Hash, Kind, Payload, Selection, Signed, Value};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::{BTreeMap, BTreeSet};
 mod authority;
+mod edges;
 mod projection;
 pub use authority::{Authority, Effect, Grant};
+pub use edges::{
+    support_graph, EdgeReading, Exclusion, MediaReading, Neighbor, Reason, Support, SupportGraph,
+    RELATIONS,
+};
 pub use projection::{
     project, EventReading, Projection, ProjectionState, Revision, SubjectReading,
 };
@@ -79,19 +84,6 @@ pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
                     Status::invalid("genesis")
                 };
             }
-            if matches!(
-                kind,
-                Kind::EdgeAssert | Kind::EdgeReaffirm | Kind::Attestation
-            ) {
-                if e.subject.is_some()
-                    || e.subject_key.is_some()
-                    || e.grant.is_some()
-                    || e.asserted_time.is_some()
-                {
-                    return Status::invalid("non_subject_header");
-                }
-                return Status::pending("stage_d_not_implemented", vec![]);
-            }
             if e.parents.0.is_empty()
                 || (kind != Kind::Resolve && e.parents.0.len() != 1)
                 || (kind == Kind::Resolve && e.parents.0.len() < 2)
@@ -110,6 +102,10 @@ pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
                 .collect();
             if !missing.is_empty() {
                 return Status::pending("parent_missing", missing);
+            }
+            // An edge or attestation is never a subject parent.
+            if e.parents.0.iter().any(|p| !is_subject(&all[p])) {
+                return Status::invalid("wrong_subject");
             }
             let parent_states: Vec<_> = e.parents.0.iter().map(|p| out[p].clone()).collect();
             if parent_states.iter().any(|s| s.state == State::Invalid) {
@@ -284,33 +280,43 @@ pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
         })()
     }
     let mut out = BTreeMap::new();
+    let subjects = candidates.iter().filter(|(_, e)| is_subject(e)).count();
     // Iterative dependency evaluation: no chain-depth policy or recursive stack
     // ceiling. An unavailable parent stays pending; display order is irrelevant.
-    while out.len() < candidates.len() {
+    // Subject events are classified first; edges and media only read them.
+    while out.len() < subjects {
         let before = out.len();
         for (&id, event) in candidates {
-            if out.contains_key(&id) {
+            if out.contains_key(&id) || !is_subject(event) {
                 continue;
             }
             let e = event.envelope();
-            let no_parent_semantics = matches!(
-                e.payload.kind(),
-                Kind::Genesis | Kind::EdgeAssert | Kind::EdgeReaffirm | Kind::Attestation
-            );
-            if no_parent_semantics
-                || e.parents.0.iter().any(|p| !candidates.contains_key(p))
+            if e.payload.kind() == Kind::Genesis
+                || e.parents
+                    .0
+                    .iter()
+                    .any(|p| !candidates.get(p).is_some_and(is_subject))
                 || e.parents.0.iter().all(|p| out.contains_key(p))
             {
                 out.insert(id, evaluate(id, candidates, &out));
             }
         }
         if out.len() == before {
-            for &id in candidates.keys() {
-                out.entry(id).or_insert_with(|| Status::invalid("cycle"));
+            for (&id, event) in candidates {
+                if is_subject(event) {
+                    out.entry(id).or_insert_with(|| Status::invalid("cycle"));
+                }
             }
         }
     }
+    edges::classify(candidates, &mut out);
     out
+}
+pub(crate) fn is_subject(event: &Signed) -> bool {
+    !matches!(
+        event.envelope().payload.kind(),
+        Kind::EdgeAssert | Kind::EdgeReaffirm | Kind::Attestation
+    )
 }
 
 /// Branch validity and authority effects are separate; neither selects a body head.
@@ -323,7 +329,7 @@ pub fn analyze(candidates: &BTreeMap<Hash, Signed>) -> Analysis {
     let admission = classify(candidates);
     let valid = candidates
         .iter()
-        .filter(|(id, _)| admission[*id].state == State::Valid)
+        .filter(|(id, e)| admission[*id].state == State::Valid && is_subject(e))
         .map(|(id, e)| (*id, e.clone()))
         .collect();
     Analysis {
@@ -342,7 +348,7 @@ pub enum Error {
     Identity,
     #[error("stored_candidate_corrupt")]
     Corrupt,
-    #[error("stage_c_non_serving")]
+    #[error("stage_d_non_serving")]
     NonServing,
     #[error("invalid_node_receipt")]
     Receipt,
