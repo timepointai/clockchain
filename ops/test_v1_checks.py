@@ -48,7 +48,8 @@ class Node:
         if entry:
             event = bytes.fromhex(entry['event'])
             self.view.update(
-                rows=[{'event': list(event), 'state': 'valid', 'frontier': True}],
+                rows=[{'event': list(event), 'state': 'head', 'frontier': True,
+                       'revision': list(bytes.fromhex(entry['revision']))}],
                 subjects=[{'subject': entry['subject'], 'state': 'resolved'}],
                 revisions=[{'id': list(bytes.fromhex(entry['revision'])), 'body': entry['body_hash']}],
                 corpus_digest=corpus_digest([event]).hex(),
@@ -179,7 +180,7 @@ class ZeroTests(unittest.TestCase):
                 zero(Node(load_entry(write_entry(d))))
 
     def test_dishonest_node_refused(self):
-        row = {'event': [7] * 32, 'state': 'valid', 'frontier': True}
+        row = {'event': [7] * 32, 'state': 'head', 'frontier': True, 'revision': [8] * 32}
         manifest = EXPECTED.fold['manifest']
         mutations = [
             ('instance mismatch', health(instance='22' * 32)),
@@ -283,15 +284,18 @@ class PopulatedTests(unittest.TestCase):
         flipped = bytes([ENVELOPE[0] ^ 1]) + ENVELOPE[1:]
         other = corpus_digest([bytes.fromhex(h('other event'))]).hex()
         subject, revision = PREVIEW['subject'], PREVIEW['revision']
-        extra = {'event': list(bytes.fromhex(h('extra'))), 'state': 'valid', 'frontier': True}
+        extra = {'event': list(bytes.fromhex(h('extra'))), 'state': 'head', 'frontier': True,
+                 'revision': list(bytes.fromhex(h('extra revision')))}
         mutations = [
             ('exported envelope differs', attr('envelopes', [flipped.hex()])),
             ('exported envelope differs', attr('envelopes', [ENVELOPE.hex()] * 2)),
             ('served prose differs', lambda n: n.prose[revision].update(prose=BODY.decode() + '!')),
             ('body is not retained', lambda n: n.prose[revision].update(availability='missing')),
             ('unexpected rows', lambda n: n.view['rows'].append(extra)),
-            ('entry not a valid head', lambda n: n.view['rows'][0].update(state='superseded')),
-            ('entry not a valid head', lambda n: n.view['rows'][0].update(frontier=False)),
+            ('entry is not the head', lambda n: n.view['rows'][0].update(state='superseded')),
+            ('entry is not the head', lambda n: n.view['rows'][0].update(state='valid')),
+            ('entry is not the head', lambda n: n.view['rows'][0].update(frontier=False)),
+            ('head row names another revision', lambda n: n.view['rows'][0].update(revision=[9] * 32)),
             ('corpus is not exactly the entry', view(corpus_digest=other)),
             ('still names the empty view', view(commitment=EXPECTED.empty_commitment)),
             ('unexpected subjects', lambda n: n.view['subjects'].append({'subject': h('s2'), 'state': 'resolved'})),

@@ -189,7 +189,8 @@ def check_v1_populated(base, revision, key, read_key, expected, entry, *, postur
     check_rule(snapshot, expected)
     rows = snapshot.get('rows') or []
     assert [hexbytes(r.get('event')) for r in rows] == [entry['event']], 'unexpected rows'
-    assert rows[0].get('state') == 'valid' and rows[0].get('frontier') is True, 'entry not a valid head'
+    assert rows[0].get('state') == 'head' and rows[0].get('frontier') is True, 'entry is not the head'
+    assert hexbytes(rows[0].get('revision')) == entry['revision'], 'head row names another revision'
     subjects = snapshot.get('subjects') or []
     assert [hexbytes(s.get('subject')) for s in subjects] == [entry['subject']], 'unexpected subjects'
     assert subjects[0].get('state') == 'resolved', 'subject is not resolved'
