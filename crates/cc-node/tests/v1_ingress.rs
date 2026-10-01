@@ -16,6 +16,7 @@ async fn i7_http_import_admission_differential() {
     let router = cc_node::v1::review_router(
         http.clone(),
         cc_node::config::KeyDigest::of("synthetic-write"),
+        cc_node::config::KeyDigest::of("synthetic-read"),
     );
     let server = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
@@ -24,6 +25,14 @@ async fn i7_http_import_admission_differential() {
     let url = format!("http://{address}/v1/candidates");
     let g = genesis();
     let correction = correction(&g, &g, 0, 5);
+    let sibling = cc_testkit::v1::correction(&g, &g, 0, 17);
+    let joined = resolve(
+        &g,
+        &[&correction, &sibling],
+        0,
+        root_grant(g.id()),
+        Selection::MergedBody([18; 32]),
+    );
     let wrong = cc_testkit::v1::correction(&g, &g, 1, 6);
     let mut bad = correction.bytes().to_vec();
     *bad.last_mut().unwrap() ^= 1;
@@ -38,6 +47,8 @@ async fn i7_http_import_admission_differential() {
     let inner = revoke(&g, &sub, 1, d.id(), sub.id(), true);
     let outer = revoke(&g, &sub, 0, root_grant(g.id()), d.id(), false);
     let inputs = vec![
+        joined.bytes().to_vec(),
+        sibling.bytes().to_vec(),
         inner.bytes().to_vec(),
         sub.bytes().to_vec(),
         correction.bytes().to_vec(),
@@ -98,6 +109,14 @@ async fn i7_http_import_admission_differential() {
         assert_eq!(
             http.review_authority().await.unwrap(),
             restore.review_authority().await.unwrap()
+        );
+        assert_eq!(
+            http.review_projection().await.unwrap(),
+            import.review_projection().await.unwrap()
+        );
+        assert_eq!(
+            http.review_projection().await.unwrap(),
+            restore.review_projection().await.unwrap()
         );
         assert_eq!(http.review().await.unwrap(), import.review().await.unwrap());
         assert_eq!(

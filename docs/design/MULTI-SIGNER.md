@@ -3,7 +3,10 @@
 Owner decision, 2026-09-30: merge this design only after the final full-bound
 receipt and green CI. Stage 0 is an executable reference specification, not
 production code. Stage (a) is authorized after that merge, on a separate branch
-for review. Later stages require subsequent owner approval; ship order is undecided. [HOLD.md](../../HOLD.md) remains the operating boundary.
+for review. Subsequent owner decision: the full **(a) → (b) → (c) → (d) → (e)**
+sequence is selected. PR #9 is approved and Stage (c) is authorized through its
+first PR review; later implementation stages still require scoped authorization.
+[HOLD.md](../../HOLD.md) remains the operating boundary.
 This specifies every gate in [#6](https://github.com/timepointai/clockchain/issues/6).
 Decided below means a concrete choice in this proposal, not a completed gate or
 authorization for the first production entry.
@@ -500,8 +503,8 @@ under its explicit legacy version; it must not force preservation of that gap.
 Estimates are changed lines including meaningful tests and docs, excluding lock
 files/generated vectors. They are review sizing estimates, not completed work.
 No intermediate stage writes production or permits a v0/v1 mixed graph. The
-owner chooses a ship sequence and separately opens any first-publication gate;
-no sequence is selected by this proposal.
+owner selected the full (a)–(e) sequence; first-publication authorization remains
+a separate decision.
 
 **Stage 0** is the pure [Python reference fold](stage0/model.py) and
 [exhaustive/Hypothesis checker](stage0/check.py). Python makes counterexample
@@ -522,7 +525,7 @@ gate. This is executable specification only.
 | **(d) Pinned edges** | Both endpoint pins, disputes, author-only reaffirmation/forks, neighbor filtering, revision-scoped media behavior, I5. No inferred absence or auto-retarget. | 700–1,100 lines. |
 | **(e) fold_version** | Final governed manifest, filter trust root, versioned roots/protocol/verdicts/cache/export/restore, refusal paths and native/Wasm checks; run I1–I8 end to end. Earlier stages reserve version fields; this stage pins and enables the complete rule identity. | 650–1,000 lines. |
 
-**Owner ship-order alternative, not selected:** `(a) → (c) → (d) → (e)`, with
+**Rejected ship-order alternative (retained design rationale):** `(a) → (c) → (d) → (e)`, with
 Delegate and Revoke tags rejected by the shared admit() on every ingress before
 candidate storage (rejection receipts only), permits a single-authority-key-per-
 subject first publish. Enabling (b) cannot resurrect rejected candidates from the
@@ -534,15 +537,15 @@ Revocation/grant properties hold only vacuously because those operations reject,
 not because multi-signer safety shipped. Lost: delegation, hot-key recovery,
 rotation and cold-root/hot-delegate operation. The root must sign body changes;
 its compromise is unrecoverable within that subject. The full sequence including
-(b) retains all multi-signer obligations. Both require the owner to decide; this
-document does not choose the constrained first publish.
+(b) retains all multi-signer obligations and is the selected sequence.
 
 Total estimate: 4,750–7,300 changed lines. Each implementation stage requires
 `make check`, Wasm and applicable Python checks against synthetic real Postgres.
 Stage 0 is reference specification code only; existing production CI cannot
 prove the proposed invariants. Stages (b)/(c) are accepted only when the Rust fold
 agrees with the model on generated DAGs, including states/reasons and grant effects. Completion of code still does not authorize production
-content. #6 closes only with evidence that every implementation gate passes.
+content. Refs #6. Only the owner may resolve that issue, after Stage (e) and
+operational evidence for every launch gate.
 
 ## Non-goals and enforced exclusions
 

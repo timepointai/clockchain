@@ -1,4 +1,4 @@
-//! Authority effects over branch-valid G/C/D/R events. No frontier/body projection.
+//! Authority effects over branch-valid G/C/D/R/S events; separate from frontier selection.
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +264,16 @@ pub(super) fn body(all: &BTreeMap<Hash, Signed>, mut id: Hash) -> Hash {
         let e = all[&id].envelope();
         match e.payload {
             Payload::Genesis { body, .. } | Payload::Correction { body, .. } => return body,
+            Payload::Resolve {
+                selection: Selection::MergedBody(body),
+                ..
+            } => return body,
+            Payload::Resolve {
+                selection: Selection::Revision(revision),
+                ..
+            } => {
+                return super::projection::revisions(all)[&revision].body;
+            }
             _ => id = e.parents.0[0],
         }
     }

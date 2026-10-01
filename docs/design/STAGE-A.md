@@ -7,7 +7,7 @@ This implements the encoding and candidate-store foundation of
 [MULTI-SIGNER.md](MULTI-SIGNER.md). It is **non-serving**. The node binary and its
 legacy router do not enable v1; `Store::readiness()` and the review router's
 `/ready` always refuse. No production migration, projection, support verdict,
-media record or publication path is introduced. Ship order remains undecided.
+media record or publication path is introduced. The owner has selected the full (a)–(e) ship sequence.
 
 `cc_core::CANON_VERSION` is now 1. Existing `canon_event` explicitly uses
 `LEGACY_CANON_VERSION = 0`, preserving all v0 identities and applied migrations.
@@ -68,8 +68,8 @@ transitions check stable identity when their parents are known. Delegate/Revoke,
 Resolve, edges and attestations retain explicit later-stage pending reasons;
 they grant no authority or support. No production fold identity is claimed.
 The interim store cannot become serving by toggling a flag. Later stages must
-change the schema/rule contract explicitly; the chosen single-key alternative
-must reject Delegate/Revoke before candidate storage as the design requires.
+change the schema/rule contract explicitly; the rejected single-key alternative would have required rejecting Delegate/Revoke
+before candidate storage.
 
 `cc_node::v1::review_router` exists for operator integration tests against fresh
 synthetic stores. Its only write route is `POST /v1/candidates` with raw signed
@@ -93,4 +93,5 @@ Run `make check` with synthetic `TEST_DATABASE_URL`, the Wasm build, and the
 operator unittest suite per AGENTS.md. Cargo's differential test requires
 `python3` (or `CC_MODEL_PYTHON`) and only the standard library; CI's normal Cargo
 job runs it. The separate Stage 0 job still runs its bounded checker and all
-mutants. Passing this stage does not close #6 or authorize a later stage.
+mutants. Refs #6. Its final disposition remains the owner's explicit action after
+Stage (e) and operational evidence.

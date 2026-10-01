@@ -129,3 +129,52 @@ pub fn revoke(
         },
     )
 }
+
+/// Explicit signed synthetic resolution, including every parent's disposition.
+pub fn resolve(
+    g: &Signed,
+    parents: &[&Signed],
+    signer: u8,
+    grant: Hash,
+    selection: Selection,
+) -> Signed {
+    let mut parents = Set(parents.iter().map(|p| p.id()).collect());
+    parents.0.sort();
+    let (new, action) = match selection {
+        Selection::MergedBody(body) => (Value::Body(body), DispositionKind::Merged),
+        Selection::Revision(revision) => (Value::Revision(revision), DispositionKind::Selected),
+    };
+    Signed::sign(
+        &key(signer),
+        Envelope {
+            instance: INSTANCE,
+            author: [0; 32],
+            subject: Some(g.id()),
+            subject_key: g.envelope().subject_key.clone(),
+            grant: Some(grant),
+            parents: parents.clone(),
+            asserted_time: None,
+            payload: Payload::Resolve {
+                selection,
+                dispositions: Set(parents
+                    .0
+                    .iter()
+                    .map(|&parent| Disposition {
+                        parent,
+                        action,
+                        rationale: "Synthetic resolution disposition".into(),
+                    })
+                    .collect()),
+                decision: Decision {
+                    kind: Kind::Resolve,
+                    rationale: "Synthetic resolution".into(),
+                    evidence: Set(vec![[4; 32]]),
+                    parents: parents.clone(),
+                    old: Value::Heads(parents),
+                    new,
+                },
+            },
+        },
+    )
+    .unwrap()
+}

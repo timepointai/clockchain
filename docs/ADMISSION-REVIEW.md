@@ -1,3 +1,7 @@
+> Current v1 implementation: [Stage (c) review boundary](design/STAGE-C.md).
+> The normal node remains legacy. The owner selected full stages (a)–(e);
+> Refs #6, with final disposition reserved for the owner after (e) and operational evidence.
+
 # Node admission and review contract
 
 This describes source behavior, not a deployment receipt. Standing owner
