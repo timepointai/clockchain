@@ -336,6 +336,102 @@ impl Config {
     }
 }
 
+/// Which ledger this process serves. Absent `CC_NODE_LEDGER` is the legacy v0
+/// node, unchanged; `v1` is the explicit v1 mode. Any other value is refused
+/// rather than guessed at.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ledger {
+    Legacy,
+    V1,
+}
+
+impl Ledger {
+    pub fn from_env() -> Result<Ledger, ConfigError> {
+        Ledger::from_lookup(|k| std::env::var(k).ok())
+    }
+
+    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Ledger, ConfigError> {
+        match get("CC_NODE_LEDGER").as_deref() {
+            None => Ok(Ledger::Legacy),
+            Some("v1") => Ok(Ledger::V1),
+            Some(other) => Err(ConfigError::LedgerUnrecognized(other.to_string())),
+        }
+    }
+}
+
+/// The governed production hop bound, used when `CC_V1_MAX_HOPS` is unset.
+pub const V1_DEFAULT_MAX_HOPS: u16 = 4;
+
+/// The v1 store identity: which database, which instance, which rule.
+///
+/// Everything here is checked against the store before the node serves; none
+/// of it is ever written by `serve`. Only `provision-v1` records it.
+#[derive(Clone)]
+pub struct V1Config {
+    pub database_url: String,
+    pub instance: cc_core::v1::Hash,
+    pub filter: cc_filter::v1::FilterIdentity,
+}
+
+impl std::fmt::Debug for V1Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("V1Config")
+            .field("database_url", &"<redacted>")
+            .field("instance", &hex::encode(self.instance))
+            .field("filter_version", &hex::encode(self.filter.version()))
+            .finish()
+    }
+}
+
+impl V1Config {
+    pub fn from_env() -> Result<V1Config, ConfigError> {
+        V1Config::from_lookup(|k| std::env::var(k).ok())
+    }
+
+    /// Strict parse: exact lowercase hex, no padding, no defaults except the
+    /// governed hop bound, and an identity [`FilterIdentity::governed`] accepts.
+    ///
+    /// [`FilterIdentity::governed`]: cc_filter::v1::FilterIdentity::governed
+    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<V1Config, ConfigError> {
+        let database_url = get("DATABASE_URL").ok_or(ConfigError::DatabaseAbsent)?;
+        if database_url.trim().is_empty() {
+            return Err(ConfigError::DatabaseAbsent);
+        }
+        let instance = get("CC_V1_INSTANCE").ok_or(ConfigError::V1InstanceAbsent)?;
+        let instance = lower_hex32(&instance).ok_or(ConfigError::V1InstanceMalformed)?;
+        let curators = get("CC_V1_CURATORS").ok_or(ConfigError::V1CuratorsAbsent)?;
+        let curators = curators
+            .split(',')
+            .map(lower_hex32)
+            .collect::<Option<Vec<_>>>()
+            .ok_or(ConfigError::V1CuratorsMalformed)?;
+        let max_hops = match get("CC_V1_MAX_HOPS") {
+            None => V1_DEFAULT_MAX_HOPS,
+            Some(raw) => raw
+                .parse::<u16>()
+                .ok()
+                .filter(|_| raw.bytes().all(|b| b.is_ascii_digit()))
+                .ok_or(ConfigError::V1MaxHopsMalformed(raw))?,
+        };
+        let filter = cc_filter::v1::FilterIdentity::governed(curators, max_hops)
+            .map_err(|e| ConfigError::V1FilterIdentity(e.to_string()))?;
+        Ok(V1Config {
+            database_url,
+            instance,
+            filter,
+        })
+    }
+}
+
+/// Exactly 64 lowercase hex characters, or `None`. Uppercase is refused so a
+/// configured value and the hex `/health` publishes compare as equal strings.
+fn lower_hex32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 || !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return None;
+    }
+    hex::decode(s).ok()?.try_into().ok()
+}
+
 /// Why a key is not fit to boot with, or `None` if it is.
 ///
 /// Whitespace padding is rejected rather than trimmed. Trimming would make the
@@ -433,6 +529,22 @@ pub enum ConfigError {
     PortMalformed(String),
     #[error("CC_GENESIS_EXHIBIT is not 32 bytes of hex. Unset it or pin the real committed hash; a wrong exhibit id is worse than an absent one.")]
     ExhibitMalformed,
+    #[error("CC_NODE_LEDGER={0:?} is not a ledger mode. Unset it for the legacy node or set it to `v1`.")]
+    LedgerUnrecognized(String),
+    #[error(
+        "CC_V1_INSTANCE is not set. v1 mode needs the instance ID as 64 lowercase hex characters."
+    )]
+    V1InstanceAbsent,
+    #[error("CC_V1_INSTANCE must be exactly 64 lowercase hex characters (32 bytes), with no whitespace.")]
+    V1InstanceMalformed,
+    #[error("CC_V1_CURATORS is not set. v1 mode needs the curator Ed25519 public keys, comma-separated.")]
+    V1CuratorsAbsent,
+    #[error("CC_V1_CURATORS must be comma-separated Ed25519 public keys, each exactly 64 lowercase hex characters, with no spaces or empty entries.")]
+    V1CuratorsMalformed,
+    #[error("CC_V1_MAX_HOPS={0:?} is not a hop bound. Unset it for the governed default of 4 or set a decimal integer from 1 to 65535.")]
+    V1MaxHopsMalformed(String),
+    #[error("CC_V1_CURATORS/CC_V1_MAX_HOPS do not form a governed filter identity ({0}): curators must be valid Ed25519 keys, nonempty and strictly sorted, and the hop bound nonzero.")]
+    V1FilterIdentity(String),
 }
 
 #[cfg(test)]

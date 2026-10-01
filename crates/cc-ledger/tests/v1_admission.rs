@@ -81,7 +81,7 @@ fn i4_subject_key_immutable_across_all_transitions() {
 async fn candidates_replay_pending_invalid_and_rejections_are_retained() {
     let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
     let store = Store::provision(pool.clone(), INSTANCE).await.unwrap();
-    assert!(store.readiness().is_err());
+    assert!(store.readiness().await.is_err());
     let g = genesis();
     let c = correction(&g, &g, 0, 5);
     let wrong = correction(&g, &g, 1, 6);
@@ -202,14 +202,11 @@ async fn resolve_and_media_are_checked_while_stage_e_cannot_grant_readiness() {
     let header = Signed::sign(&key(0), header).unwrap();
     let result = store.admit(header.bytes()).await.unwrap();
     assert_eq!(result.status.reason, "non_subject_header");
+    // Provisioned but never bound: not serving.
     assert!(matches!(
-        store.readiness(),
-        Err(cc_ledger::v1::Error::NonServing)
+        store.readiness().await,
+        Err(cc_ledger::v1::Error::Unbound)
     ));
-    assert_eq!(
-        cc_ledger::v1::Error::NonServing.to_string(),
-        "stage_e_non_serving"
-    );
     let media: bool = sqlx::query_scalar("SELECT to_regclass('public.media') IS NOT NULL")
         .fetch_one(&pool)
         .await

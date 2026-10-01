@@ -45,17 +45,54 @@ use axum::{
 };
 use serde_json::json;
 
+use crate::config::KeyDigest;
 use crate::state::AppState;
+
+/// The credential digests the guards compare against.
+///
+/// Implemented by the legacy [`AppState`] and the v1 serving state, so both
+/// routers are guarded by these same functions and the same constant-time
+/// [`KeyDigest::matches`]. A credential a state does not carry is `None`, never
+/// "anyone".
+pub trait Credentials: Clone + Send + Sync + 'static {
+    fn api_key(&self) -> &KeyDigest;
+    fn read_key(&self) -> Option<&KeyDigest>;
+    fn gallery_key(&self) -> Option<&KeyDigest>;
+    fn beta_key(&self) -> Option<&KeyDigest>;
+    fn telemetry_key(&self) -> Option<&KeyDigest>;
+}
+
+impl Credentials for AppState {
+    fn api_key(&self) -> &KeyDigest {
+        &self.api_key
+    }
+    fn read_key(&self) -> Option<&KeyDigest> {
+        self.read_key.as_ref()
+    }
+    fn gallery_key(&self) -> Option<&KeyDigest> {
+        self.gallery_key.as_ref()
+    }
+    fn beta_key(&self) -> Option<&KeyDigest> {
+        self.beta_key.as_ref()
+    }
+    fn telemetry_key(&self) -> Option<&KeyDigest> {
+        self.telemetry_key.as_ref()
+    }
+}
 
 /// The read surface: the full key **or** the read-only key.
 ///
 /// The token itself is never logged, never echoed, and never included in the
 /// refusal body — a 401 that quoted the presented credential would move the
 /// secret into whatever aggregates the response.
-pub async fn require_read(State(state): State<AppState>, req: Request, next: Next) -> Response {
+pub async fn require_read<S: Credentials>(
+    State(state): State<S>,
+    req: Request,
+    next: Next,
+) -> Response {
     match presented(&req) {
-        Some(t) if state.api_key.matches(t) => next.run(req).await,
-        Some(t) if state.read_key.as_ref().is_some_and(|k| k.matches(t)) => next.run(req).await,
+        Some(t) if state.api_key().matches(t) => next.run(req).await,
+        Some(t) if state.read_key().is_some_and(|k| k.matches(t)) => next.run(req).await,
         _ => unauthorized(),
     }
 }
@@ -77,11 +114,15 @@ pub async fn require_read(State(state): State<AppState>, req: Request, next: Nex
 /// The wider credentials are accepted too: a caller holding the read key can
 /// already read this data by other routes, so refusing it here would be
 /// ceremony rather than a boundary.
-pub async fn require_gallery(State(state): State<AppState>, req: Request, next: Next) -> Response {
+pub async fn require_gallery<S: Credentials>(
+    State(state): State<S>,
+    req: Request,
+    next: Next,
+) -> Response {
     match presented(&req) {
-        Some(t) if state.api_key.matches(t) => next.run(req).await,
-        Some(t) if state.read_key.as_ref().is_some_and(|k| k.matches(t)) => next.run(req).await,
-        Some(t) if state.gallery_key.as_ref().is_some_and(|k| k.matches(t)) => next.run(req).await,
+        Some(t) if state.api_key().matches(t) => next.run(req).await,
+        Some(t) if state.read_key().is_some_and(|k| k.matches(t)) => next.run(req).await,
+        Some(t) if state.gallery_key().is_some_and(|k| k.matches(t)) => next.run(req).await,
         // Telemetry, added on Sean's direct authorisation 2026-08-18.
         //
         // Their daily gate verifies the published `(head_event_id, author_key,
@@ -96,9 +137,7 @@ pub async fn require_gallery(State(state): State<AppState>, req: Request, next: 
         // requires revoking two, and would put one holder behind two keys —
         // worse revocation and a less attributable leak, which is the opposite
         // of what "two holders, two secrets" buys.
-        Some(t) if state.telemetry_key.as_ref().is_some_and(|k| k.matches(t)) => {
-            next.run(req).await
-        }
+        Some(t) if state.telemetry_key().is_some_and(|k| k.matches(t)) => next.run(req).await,
         _ => unauthorized(),
     }
 }
@@ -124,18 +163,16 @@ pub async fn require_gallery(State(state): State<AppState>, req: Request, next: 
 /// the only consumer; a guard named after one of its two consumers is a comment
 /// that goes stale without anything failing — the same drift that let a config
 /// value describe a corpus the node no longer served.
-pub async fn require_entity_read(
-    State(state): State<AppState>,
+pub async fn require_entity_read<S: Credentials>(
+    State(state): State<S>,
     req: Request,
     next: Next,
 ) -> Response {
     match presented(&req) {
-        Some(t) if state.api_key.matches(t) => next.run(req).await,
-        Some(t) if state.read_key.as_ref().is_some_and(|k| k.matches(t)) => next.run(req).await,
-        Some(t) if state.beta_key.as_ref().is_some_and(|k| k.matches(t)) => next.run(req).await,
-        Some(t) if state.telemetry_key.as_ref().is_some_and(|k| k.matches(t)) => {
-            next.run(req).await
-        }
+        Some(t) if state.api_key().matches(t) => next.run(req).await,
+        Some(t) if state.read_key().is_some_and(|k| k.matches(t)) => next.run(req).await,
+        Some(t) if state.beta_key().is_some_and(|k| k.matches(t)) => next.run(req).await,
+        Some(t) if state.telemetry_key().is_some_and(|k| k.matches(t)) => next.run(req).await,
         _ => unauthorized(),
     }
 }
@@ -147,14 +184,16 @@ pub async fn require_entity_read(
 /// repeating it to a caller who authenticated correctly would tell them their
 /// key was rejected as unknown — sending them to rotate a perfectly good
 /// credential instead of asking for the right scope.
-pub async fn require_write(State(state): State<AppState>, req: Request, next: Next) -> Response {
+pub async fn require_write<S: Credentials>(
+    State(state): State<S>,
+    req: Request,
+    next: Next,
+) -> Response {
     match presented(&req) {
-        Some(t) if state.api_key.matches(t) => next.run(req).await,
-        Some(t) if state.read_key.as_ref().is_some_and(|k| k.matches(t)) => forbidden_read_only(),
-        Some(t) if state.gallery_key.as_ref().is_some_and(|k| k.matches(t)) => {
-            forbidden_read_only()
-        }
-        Some(t) if state.beta_key.as_ref().is_some_and(|k| k.matches(t)) => forbidden_read_only(),
+        Some(t) if state.api_key().matches(t) => next.run(req).await,
+        Some(t) if state.read_key().is_some_and(|k| k.matches(t)) => forbidden_read_only(),
+        Some(t) if state.gallery_key().is_some_and(|k| k.matches(t)) => forbidden_read_only(),
+        Some(t) if state.beta_key().is_some_and(|k| k.matches(t)) => forbidden_read_only(),
         // Every scoped credential must be listed here, not just the ones that
         // existed when this was written. A new scope that is added to its own
         // guard and forgotten here still gets refused — but with 401, telling a
@@ -170,9 +209,7 @@ pub async fn require_write(State(state): State<AppState>, req: Request, next: Ne
         // credential field will not compile until someone decides its cells. A
         // rule stated in a comment is a rule that drifts; the comment survives
         // because it explains the test, not because it enforces anything.
-        Some(t) if state.telemetry_key.as_ref().is_some_and(|k| k.matches(t)) => {
-            forbidden_read_only()
-        }
+        Some(t) if state.telemetry_key().is_some_and(|k| k.matches(t)) => forbidden_read_only(),
         _ => unauthorized(),
     }
 }

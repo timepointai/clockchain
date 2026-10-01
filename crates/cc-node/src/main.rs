@@ -3,6 +3,11 @@
 //! Subcommands:
 //!   * `cc-node serve` (or no argument) — run the axum server.
 //!   * `cc-node migrate` — connect using `DATABASE_URL`, run migrations, exit.
+//!   * `cc-node provision-v1` — v1 mode only: provision and bind the v1 store.
+//!
+//! `CC_NODE_LEDGER` selects the ledger. Absent, everything below the dispatch
+//! is the legacy v0 node, unchanged. `v1` serves the v1 store instead and
+//! refuses `migrate`, which would put v0 tables into the v1 database.
 //!
 //! **The server performs no I/O at startup.** The pool is lazy, so boot cannot
 //! be blocked by a database that is down and `/health` answers regardless —
@@ -16,7 +21,11 @@
 //! trees on disconnect, and v1 proved that five different ways in one afternoon.
 //! Long-running work is a subcommand invoked by the platform's job primitive.
 
-use cc_node::{config::Config, router, state::AppState};
+use cc_node::{
+    config::{Config, Ledger, V1Config},
+    router, serve_v1,
+    state::AppState,
+};
 
 /// `EX_CONFIG` from `sysexits.h`: the process could not start because its
 /// configuration is wrong. A distinct code so a supervisor can tell "this will
@@ -27,14 +36,103 @@ const EX_CONFIG: i32 = 78;
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    match std::env::args().nth(1).as_deref() {
-        Some("migrate") => run_migrate().await,
-        None | Some("serve") => run_server().await,
-        Some(other) => {
+    let ledger = match Ledger::from_env() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("cc-node: refusing to start — {e}");
+            std::process::exit(EX_CONFIG);
+        }
+    };
+
+    match (std::env::args().nth(1).as_deref(), ledger) {
+        (Some("migrate"), Ledger::Legacy) => run_migrate().await,
+        (None | Some("serve"), Ledger::Legacy) => run_server().await,
+        (Some("migrate"), Ledger::V1) => {
+            eprintln!(
+                "cc-node: refusing `migrate` with CC_NODE_LEDGER=v1 — the v0 migrations must \
+                 never run against the v1 database. Use `cc-node provision-v1`."
+            );
+            std::process::exit(EX_CONFIG);
+        }
+        (Some("provision-v1"), Ledger::V1) => run_provision_v1().await,
+        (None | Some("serve"), Ledger::V1) => run_server_v1().await,
+        (Some("provision-v1"), Ledger::Legacy) => {
+            eprintln!("cc-node: `provision-v1` requires CC_NODE_LEDGER=v1");
+            std::process::exit(EX_CONFIG);
+        }
+        (Some(other), _) => {
             eprintln!("cc-node: unknown subcommand {other:?}; expected `serve` or `migrate`");
             std::process::exit(EX_CONFIG);
         }
     }
+}
+
+/// `cc-node provision-v1`: provision and bind the v1 store, idempotently.
+///
+/// Prints the identity as JSON and exits 0 only when semantic readiness is
+/// `ready`. Needs only `DATABASE_URL` and the `CC_V1_*` variables: it is the
+/// release command, and it serves nothing.
+async fn run_provision_v1() {
+    let v1 = match V1Config::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cc-node: refusing to provision — {e}");
+            std::process::exit(EX_CONFIG);
+        }
+    };
+    match serve_v1::provision(&v1).await {
+        Ok(report) => println!(
+            "{}",
+            serde_json::to_string(&report).expect("the report is plain JSON")
+        ),
+        Err(e) => {
+            eprintln!("cc-node: provision-v1 refused — {e}");
+            std::process::exit(e.exit_code());
+        }
+    }
+}
+
+/// `serve` in v1 mode. Unlike the legacy node this does I/O before binding:
+/// the stored identity is verified first, and any mismatch stops the process.
+/// It never provisions or binds; `provision-v1` does that.
+async fn run_server_v1() {
+    let (config, v1) = match Config::from_env().and_then(|c| Ok((c, V1Config::from_env()?))) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cc-node: refusing to start — {e}");
+            std::process::exit(EX_CONFIG);
+        }
+    };
+    let store = match serve_v1::open_store(&v1).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cc-node: refusing to serve v1 — {e}");
+            std::process::exit(e.exit_code());
+        }
+    };
+    let state = serve_v1::V1State::build(store, &config, &v1);
+
+    tracing::info!(
+        bind = %config.bind,
+        posture = config.posture.as_str(),
+        build = cc_node::protocol::BUILD_REV,
+        ledger = "v1",
+        instance = %hex::encode(v1.instance),
+        filter_version = %hex::encode(v1.filter.version()),
+        "cc-node starting"
+    );
+
+    let listener = match tokio::net::TcpListener::bind(config.bind).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("cc-node: could not bind {}: {e}", config.bind);
+            std::process::exit(1);
+        }
+    };
+
+    axum::serve(listener, serve_v1::router(state))
+        .await
+        .expect("serve");
 }
 
 /// `cc-node migrate`: apply migrations to `DATABASE_URL`, then exit.

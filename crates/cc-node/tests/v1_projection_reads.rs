@@ -171,7 +171,7 @@ async fn i3_all_event_review_and_verified_revision_prose_stay_non_serving() {
             .status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    assert!(store.readiness().is_err());
+    assert!(store.readiness().await.is_ok());
     assert!(sqlx::query("DELETE FROM cc_v1.bodies")
         .execute(&pool)
         .await

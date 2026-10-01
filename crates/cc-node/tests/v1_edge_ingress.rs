@@ -185,7 +185,8 @@ async fn i7_edge_http_import_restore_admission_parity() {
     let ready = client.get(format!("{base}/ready")).send().await.unwrap();
     assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(ready.text().await.unwrap(), "stage_e_non_serving");
-    assert!(http.readiness().is_err());
+    // The bound store is serving-ready; the review router still is not.
+    assert!(http.readiness().await.is_ok());
     server.abort();
     let _ = server.await;
     for pool in [a_pool, b_pool, c_pool] {

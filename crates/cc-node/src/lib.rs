@@ -49,6 +49,8 @@ pub mod health;
 pub mod media;
 pub mod media_absence;
 pub mod protocol;
+mod security;
+pub mod serve_v1;
 pub mod state;
 pub mod v1;
 pub mod view;
@@ -117,7 +119,7 @@ pub fn router(state: AppState) -> Router {
         .fallback(not_found)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            auth::require_read,
+            auth::require_read::<AppState>,
         ))
         .with_state(state.clone());
 
@@ -135,7 +137,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/recents", get(api::list_recents))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            auth::require_gallery,
+            auth::require_gallery::<AppState>,
         ))
         .with_state(state.clone());
 
@@ -150,7 +152,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/feasibility", post(api::feasibility))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            auth::require_entity_read,
+            auth::require_entity_read::<AppState>,
         ))
         .with_state(state.clone());
 
@@ -174,7 +176,7 @@ pub fn router(state: AppState) -> Router {
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            auth::require_write,
+            auth::require_write::<AppState>,
         ))
         .with_state(state.clone());
 

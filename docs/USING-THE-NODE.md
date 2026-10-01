@@ -122,3 +122,61 @@ separate source evidence. The title/year identity and TT envelope stay unchanged
 Candidates without a day retain their existing year mapping; applied events and
 migration bytes are never rewritten. A source interval must not be represented
 as an invented exact day.
+
+## v1 mode
+
+`CC_NODE_LEDGER=v1` makes `cc-node` serve a fresh v1 database instead of the
+legacy ledger. Without that variable the node is the legacy node, unchanged.
+In v1 mode none of the routes above are mounted. The contract is
+[STAGE-F](design/STAGE-F.md).
+
+| Variable | Meaning |
+|---|---|
+| `CC_NODE_LEDGER` | `v1`; any other value is refused |
+| `DATABASE_URL` | The fresh v1 database, never the legacy one |
+| `CC_V1_INSTANCE` | Instance ID, exactly 64 lowercase hex characters |
+| `CC_V1_CURATORS` | Ed25519 public keys, 64 lowercase hex each, comma-separated with no spaces, strictly sorted |
+| `CC_V1_MAX_HOPS` | Decimal hop bound; default `4` |
+
+`CC_NODE_API_KEY`, `CC_NODE_READ_KEY`, `CC_NODE_POSTURE` and `PORT` keep their
+meaning. The gallery, beta and telemetry keys open no v1 route.
+
+`cc-node provision-v1` creates the v1 schema and records the rule identity, or
+accepts a database already provisioned with exactly this identity. It needs only
+`CC_NODE_LEDGER`, `DATABASE_URL` and the `CC_V1_*` variables, and prints
+`{instance, fold_version:{version,manifest}, filter_version, semantic}`.
+`cc-node serve` reopens that database read-only at boot and never provisions.
+`cc-node migrate` refuses in v1 mode. Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | Provisioned and `ready` |
+| 78 | Configuration error, or `migrate` in v1 mode |
+| 73 | The database holds non-v1 tables |
+| 65 | Stored instance or rule identity differs, or the store is not provisioned and bound (`serve`) |
+| 69 | Database unreachable |
+
+| Route | Scope | Answer |
+|---|---|---|
+| `GET /health` | public | Identity fixed at boot: `ledger`, `build`, `posture`, `instance`, `fold_version`, `filter_version`, `curators`, `max_hops`, `semantic`. No database access |
+| `GET /ready` | public | 200 `{serving:true, posture}`, or 503 with `reason` |
+| `GET /robots.txt` | public | Deny all |
+| `POST /v1/candidates` | write | Signed envelope bytes, at most 1 MiB; 201 valid, 202 pending, 422 invalid |
+| `PUT /v1/bodies/{sha256}` | write | Body bytes, at most 1 MiB; 201 new, 200 existing, 422 hash mismatch |
+| `GET /v1/export` | write | Envelopes as hex, with rule, corpus digest and commitment |
+| `GET /v1/snapshot` | read | Optional `fold_version` and `fold_manifest`; 409 if unsupported |
+| `GET /v1/subjects/{id}` | read | Optional `as_of`; 404 for an unknown subject |
+| `GET /v1/revisions/{id}/prose` | read | Verified body text when retained |
+| `GET /v1/support?from=&to=` | read | Optional `as_of`; support verdict |
+
+```sh
+curl -fsS "$BASE/health"
+curl -fsS -H "Authorization: Bearer $CC_NODE_READ_KEY" "$BASE/v1/subjects/$SUBJECT"
+```
+
+Missing or unknown credentials get `401`; the read key on a write route gets
+`403`. A frozen node answers writes `503 {"error":"frozen"}` and still serves
+reads and export. Every read names `rule`, `corpus_digest` and `commitment`.
+IDs, digests and `as_of` (a 32-byte coordinate) are lowercase hex. Embedded
+projection objects and the admission outcome keep their canonical JSON, in which
+a hash is a list of 32 byte values.
