@@ -131,7 +131,14 @@ fn token(primary: &str, fallback: Option<&str>) -> Result<String> {
             return Ok(v);
         }
     }
-    bail!("{primary} must be set in the environment (tokens are never taken from argv)")
+    match fallback {
+        Some(f) => bail!(
+            "{primary} or {f} must be set in the environment (tokens are never taken from argv)"
+        ),
+        None => {
+            bail!("{primary} must be set in the environment (tokens are never taken from argv)")
+        }
+    }
 }
 fn subject_arg(s: &str) -> Result<cc_core::v1::Hash> {
     hex32(s).context("--subject must be 64 hex characters")
@@ -177,9 +184,6 @@ pub async fn run(cmd: Command) -> Result<()> {
         } => {
             let node = Node::new(&node, Some(&token(WRITE_TOKEN_ENV, None)?))?;
             let done = node::submit(&node, &dir, allow_untrusted).await?;
-            for w in &done.warnings {
-                eprintln!("warning (--allow-untrusted): {w}");
-            }
             // stdout is the receipt JSON; the human summary goes to stderr.
             print_json(&done.receipt)?;
             for line in node::summary(&done, &dir) {

@@ -87,6 +87,10 @@ impl Node {
             None => None,
             Some(t) => {
                 ensure!(!t.trim().is_empty(), "node token is empty");
+                ensure!(
+                    t.trim() == t,
+                    "node token must not start or end with whitespace"
+                );
                 let mut v = HeaderValue::from_str(&format!("Bearer {t}")).map_err(|_| {
                     anyhow::anyhow!("node token contains characters not allowed in a header")
                 })?;
@@ -94,7 +98,12 @@ impl Node {
                 Some(v)
             }
         };
-        let http = reqwest::Client::builder()
+        let mut http = reqwest::Client::builder();
+        if base.scheme() == "http" {
+            // A proxy would see a plain-http bearer token; https is tunneled.
+            http = http.no_proxy();
+        }
+        let http = http
             // A token is never replayed to a redirect target.
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(15))
@@ -385,13 +394,14 @@ impl Trust {
         }
         out
     }
-    fn to_json(&self, allow_untrusted: bool) -> Value {
+    fn to_json(&self, allow_untrusted: bool, overridden: &[String]) -> Value {
         json!({
             "instance_matches": self.instance,
             "fold_matches": self.fold,
             "author_is_curator": self.curator,
             "filter_version_consistent": self.filter,
             "allow_untrusted": allow_untrusted,
+            "overridden": overridden,
         })
     }
 }
@@ -468,6 +478,10 @@ pub async fn submit(node: &Node, dir: &Path, allow_untrusted: bool) -> Result<Su
             warnings.join("\n  - ")
         );
     }
+    // Shown before anything is written, whatever happens next.
+    for w in &warnings {
+        eprintln!("warning: --allow-untrusted overrides: {w}");
+    }
     // A retained Genesis is a known subject; it is reported, never re-posted.
     let already = node.subject(g.subject()).await?.is_some();
     let body_status = node.put_body(&g.body).await?;
@@ -493,7 +507,7 @@ pub async fn submit(node: &Node, dir: &Path, allow_untrusted: bool) -> Result<Su
         "schema": RECEIPT_SCHEMA,
         "node": node.url(),
         "node_health": health.to_json(),
-        "trust": trust.to_json(allow_untrusted),
+        "trust": trust.to_json(allow_untrusted, &warnings),
         "event": hex::encode(g.id()),
         "subject": hex::encode(g.subject()),
         "revision": hex::encode(g.revision()),
@@ -675,7 +689,13 @@ pub async fn verify(node: &Node, subject: Hash, dir: Option<&Path>) -> Result<(b
                     });
                     if let (Some(id), Some(body)) = (id, body) {
                         let prose = match node.prose(id).await {
-                            Ok(p) => p,
+                            Ok(p) => {
+                                let answered = p.get("revision").and_then(|r| r.get("id"));
+                                if answered.and_then(hash_json) != Some(id) {
+                                    failures.push("prose answered for another revision".into());
+                                }
+                                p
+                            }
                             Err(e) => json!({"availability": format!("read failed: {e:#}")}),
                         };
                         let availability = text(&prose, "availability");

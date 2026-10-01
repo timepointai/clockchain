@@ -62,9 +62,22 @@ pub fn validate_kind(kind: &str) -> Result<()> {
     Ok(())
 }
 
+/// Characters that render as nothing or reorder text: soft hyphen, zero-width
+/// and joiner characters, bidirectional marks, embeddings, overrides and
+/// isolates, invisible operators, fillers, variation selectors, the
+/// byte-order mark, interlinear annotation and tag characters.
+pub fn is_invisible(c: char) -> bool {
+    matches!(c,
+        '\u{AD}' | '\u{34F}' | '\u{61C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
+        | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}'
+        | '\u{FFA0}' | '\u{FFF9}'..='\u{FFFB}' | '\u{1BCA0}'..='\u{1BCA3}'
+        | '\u{1D173}'..='\u{1D17A}' | '\u{E0000}'..='\u{E0FFF}')
+}
+
 /// Namespace and value: nonempty UTF-8 of at most 1024 bytes, without
-/// control characters or leading/trailing whitespace, so the signed key is
-/// exactly what a reviewer sees.
+/// control, invisible or bidirectional characters or leading/trailing
+/// whitespace, so the signed key is exactly what a reviewer sees.
 pub fn validate_key_field(field: &str, s: &str) -> Result<()> {
     ensure!(!s.is_empty(), "{field} must not be empty");
     ensure!(
@@ -75,6 +88,12 @@ pub fn validate_key_field(field: &str, s: &str) -> Result<()> {
         !s.chars().any(char::is_control),
         "{field} must not contain control characters"
     );
+    if let Some(c) = s.chars().find(|c| is_invisible(*c)) {
+        bail!(
+            "{field} must not contain invisible or bidirectional characters (found U+{:04X})",
+            u32::from(c)
+        );
+    }
     ensure!(
         s.trim() == s,
         "{field} must not start or end with whitespace"
@@ -318,7 +337,11 @@ impl Genesis {
         let preview = serde_json::to_string_pretty(&self.preview()?)? + "\n";
         write_new(&dir.join(BODY_FILE), &self.body)?;
         write_new(&dir.join(ENVELOPE_FILE), self.signed.bytes())?;
-        write_new(&dir.join(PREVIEW_FILE), preview.as_bytes())
+        write_new(&dir.join(PREVIEW_FILE), preview.as_bytes())?;
+        if let Ok(d) = fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+        Ok(())
     }
 
     /// Reload a `genesis` directory and re-run every check `build` ran: the
@@ -370,7 +393,11 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Read a regular file of at most `cap` bytes. Anything else (a FIFO or a
+/// device included) is refused before it is opened, so a read cannot block.
 pub(crate) fn read_capped(path: &Path, cap: usize) -> Result<Vec<u8>> {
+    let meta = fs::metadata(path).with_context(|| format!("open {}", path.display()))?;
+    ensure!(meta.is_file(), "{} is not a regular file", path.display());
     let f = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut out = Vec::new();
     f.take(cap as u64 + 1).read_to_end(&mut out)?;

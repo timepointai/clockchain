@@ -295,7 +295,7 @@ async fn submit_admits_reads_back_and_rerun_is_idempotent() {
     assert_eq!(
         receipt["trust"],
         json!({"instance_matches": true, "fold_matches": true, "author_is_curator": true,
-               "filter_version_consistent": true, "allow_untrusted": false})
+               "filter_version_consistent": true, "allow_untrusted": false, "overridden": []})
     );
     assert_eq!(receipt["readback"]["prose_equals_body_bin"], true);
     assert_eq!(receipt["readback"]["prose_bytes"], g.body.len());
@@ -415,6 +415,11 @@ async fn submit_refuses_curator_mismatch_before_any_write() {
     assert_eq!(done.warnings.len(), 1, "{:?}", done.warnings);
     assert_eq!(done.receipt["trust"]["author_is_curator"], false);
     assert_eq!(done.receipt["trust"]["allow_untrusted"], true);
+    let overridden = done.receipt["trust"]["overridden"].to_string();
+    assert!(
+        overridden.contains("is not in the node's curator set"),
+        "{overridden}"
+    );
     assert_eq!(done.receipt["admission"]["result"], "admitted");
     assert_eq!(n.writes(&g.body).await, (1, 0, true));
     n.cleanup.cleanup().await;
@@ -564,4 +569,8 @@ fn node_url_rules() {
         .err()
         .map(error_text);
     assert!(e.unwrap().contains("token is empty"));
+    let e = Node::new("https://node.example", Some("token\n"))
+        .err()
+        .map(error_text);
+    assert!(e.unwrap().contains("must not start or end with whitespace"));
 }

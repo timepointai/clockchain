@@ -12,10 +12,11 @@
 //! Exactly four year digits with an optional leading `-`, two month digits
 //! and two day digits; nothing else (no time of day, zone or whitespace).
 //! `-0000` is refused because `0000` names the same year. The coordinate is
-//! the `cc_core::Tick` of that instant: whole SI seconds since J2000.0
-//! (2000-01-01T12:00:00 UTC), shifted left by the governed 64 fractional bits
-//! and serialized by `Tick::to_canon_bytes`. It is the mapping
-//! `cc_authoring::year_tick` and the v0 publisher's day precision use.
+//! the `cc_core::Tick` of that instant: whole seconds since J2000.0
+//! (2000-01-01T12:00:00 UTC), counting every day as 86,400 seconds, shifted
+//! left by the governed 64 fractional bits and serialized by
+//! `Tick::to_canon_bytes`. It is the mapping `cc_authoring::year_tick` and the
+//! v0 publisher's day precision use.
 use anyhow::{bail, ensure, Result};
 use cc_core::v1::AssertedTime;
 use cc_core::{B256Constants, Tick};
