@@ -220,7 +220,7 @@ const MATRIX: [(Cred, [V; 14]); 7] = [
     // more than was asked for is not a scope, and those two cells say so.
     (Cred::Beta,      [Accept, Unauthorized, Unauthorized, Unauthorized, Accept,       Accept,       Forbidden,    Unauthorized, Unauthorized, Unauthorized, Forbidden, Unauthorized, Forbidden, Unauthorized]),
     // Telemetry holds beta's scope on a separate secret, PLUS the gallery route
-    // as of Sean's direct authorisation 2026-08-18 — so their daily gate can run
+    // as of the owner's scope decision 2026-08-18 — so their daily gate can run
     // the Ed25519 triple check on their own credential against the live surface
     // rather than reading my output. The gallery cell below and the arm in
     // `require_gallery` are the whole of that change. Still refused on
@@ -402,4 +402,271 @@ fn every_authenticated_route_appears_in_the_matrix() {
              The column is testing nothing and passing while it does so."
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// v1 mode (`CC_NODE_LEDGER=v1`): a different router, the same guards.
+// ---------------------------------------------------------------------------
+
+/// Every route `serve_v1::router()` registers, plus the fallback probe. Same
+/// rules as `BOUNDARIES`: the fourth element is the template as registered.
+const V1_BOUNDARIES: [(&str, &str, &str, Option<&str>); 11] = [
+    ("health (public)", "GET", "/health", Some("/health")),
+    ("ready (public)", "GET", "/ready", Some("/ready")),
+    ("robots (public)", "GET", "/robots.txt", Some("/robots.txt")),
+    (
+        "read: snapshot",
+        "GET",
+        "/v1/snapshot",
+        Some("/v1/snapshot"),
+    ),
+    (
+        "read: subject",
+        "GET",
+        "/v1/subjects/00",
+        Some("/v1/subjects/:subject_id"),
+    ),
+    (
+        "read: prose",
+        "GET",
+        "/v1/revisions/00/prose",
+        Some("/v1/revisions/:revision/prose"),
+    ),
+    ("read: support", "GET", "/v1/support", Some("/v1/support")),
+    (
+        "write: candidates",
+        "POST",
+        "/v1/candidates",
+        Some("/v1/candidates"),
+    ),
+    (
+        "write: bodies",
+        "PUT",
+        "/v1/bodies/00",
+        Some("/v1/bodies/:sha256"),
+    ),
+    ("write: export", "GET", "/v1/export", Some("/v1/export")),
+    (
+        "unknown path (read fallback)",
+        "GET",
+        "/v1/no-such-route",
+        None,
+    ),
+];
+
+/// The v1 matrix. The legacy scoped keys open no v1 route; the write guard
+/// still answers them 403, as it does on the legacy router.
+#[rustfmt::skip]
+const V1_MATRIX: [(Cred, [V; 11]); 7] = [
+    //                health  ready   robots  snapshot      subject       prose         support       candidates    bodies        export        unknown
+    (Cred::Full,      [Accept, Accept, Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept]),
+    (Cred::Read,      [Accept, Accept, Accept, Accept,       Accept,       Accept,       Accept,       Forbidden,    Forbidden,    Forbidden,    Accept]),
+    (Cred::Gallery,   [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
+    (Cred::Beta,      [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
+    (Cred::Telemetry, [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
+    (Cred::Stranger,  [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
+    (Cred::None,      [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
+];
+
+/// Boot the v1 router over a provisioned, bound and reopened synthetic store.
+/// `V1State` is built with exhaustive struct syntax for the same reason
+/// `AppState` is above.
+async fn boot_v1(
+    posture: Posture,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    sqlx::PgPool,
+    cc_testkit::Cleanup,
+) {
+    use cc_ledger::v1::Store;
+    let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
+    let filter = cc_testkit::v1::filter();
+    Store::provision(pool.clone(), cc_testkit::v1::INSTANCE)
+        .await
+        .expect("provision")
+        .bind(filter.clone())
+        .await
+        .expect("bind");
+    let store = Store::open(pool.clone(), cc_testkit::v1::INSTANCE, filter.clone())
+        .await
+        .expect("open");
+    let v1 = cc_node::config::V1Config {
+        database_url: String::new(),
+        instance: cc_testkit::v1::INSTANCE,
+        filter,
+    };
+    let readiness = store.semantic_readiness().await.expect("readiness");
+    let state = cc_node::serve_v1::V1State {
+        store,
+        posture,
+        health_body: cc_node::serve_v1::health_body(&v1, posture, &readiness.semantic),
+        ready_gate: Default::default(),
+        api_key: KeyDigest::of(FULL),
+        read_key: Some(KeyDigest::of(READ)),
+        gallery_key: Some(KeyDigest::of(GALLERY)),
+        beta_key: Some(KeyDigest::of(BETA)),
+        telemetry_key: Some(KeyDigest::of(TELEMETRY)),
+    };
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind an ephemeral port");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, cc_node::serve_v1::router(state)).await;
+    });
+    (format!("http://{addr}"), server, pool, cleanup)
+}
+
+/// The salvage privacy headers, on every v1 response whatever its status.
+const V1_HEADERS: [(&str, &str); 5] = [
+    ("cache-control", "private, no-store"),
+    ("x-robots-tag", "noindex, nofollow, noarchive"),
+    ("x-content-type-options", "nosniff"),
+    ("referrer-policy", "no-referrer"),
+    (
+        "content-security-policy",
+        "default-src 'none'; frame-ancestors 'none'",
+    ),
+];
+
+#[tokio::test]
+async fn the_v1_credential_scope_matrix_holds_in_both_postures() {
+    let http = reqwest::Client::new();
+    let mut checked = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    // Frozen swaps the write handlers, never the guards: the matrix is the
+    // same, and a refusal from a frozen handler still counts as Accept.
+    for posture in [Posture::Live, Posture::Frozen] {
+        let (base, server, pool, cleanup) = boot_v1(posture).await;
+        for (cred, expected) in V1_MATRIX {
+            for (col, (label, method, path, _template)) in V1_BOUNDARIES.iter().enumerate() {
+                let url = format!("{base}{path}");
+                // A body unique to this credential, so every one that reaches
+                // admission leaves its own rejection row.
+                let body = format!("{{\"credential\":\"{cred:?}\"}}");
+                let mut req = match *method {
+                    "GET" => http.get(&url),
+                    "POST" => http.post(&url).body(body),
+                    "PUT" => http.put(&url).body(body),
+                    m => panic!("unhandled method {m}"),
+                };
+                if let Some(t) = cred.token() {
+                    req = req.bearer_auth(t);
+                }
+                let response = req.send().await.expect("request");
+                let status = response.status().as_u16();
+                for (name, value) in V1_HEADERS {
+                    if response.headers().get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+                        failures.push(format!("  {posture:?} {cred:?} x {label}: header {name}"));
+                    }
+                }
+                let got = match status {
+                    401 => Unauthorized,
+                    403 => Forbidden,
+                    _ => Accept,
+                };
+                if got != expected[col] {
+                    failures.push(format!(
+                        "  {posture:?} {cred:?} x {label}: expected {:?}, got {got:?} (HTTP {status})",
+                        expected[col]
+                    ));
+                }
+                checked += 1;
+            }
+        }
+        // Only the full key's POST reached admission, and only while live:
+        // one rejection row (the body is not an envelope), no candidate.
+        let rows = |table: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM cc_v1.{table}"))
+                    .fetch_one(&pool)
+                    .await
+                    .expect("count rows")
+            }
+        };
+        let admitted = if posture == Posture::Live { 1 } else { 0 };
+        assert_eq!(rows("rejections").await, admitted, "{posture:?}");
+        assert_eq!(rows("candidates").await, 0, "{posture:?}");
+        server.abort();
+        pool.close().await;
+        cleanup.cleanup().await;
+    }
+
+    assert_eq!(checked, 2 * V1_MATRIX.len() * V1_BOUNDARIES.len());
+    assert!(
+        failures.is_empty(),
+        "the v1 router does not match the declared scope matrix ({} of {checked} cells):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// The v1 census, bidirectional, over `serve_v1.rs` exactly as the legacy
+/// census reads `lib.rs`.
+#[test]
+fn every_v1_route_appears_in_the_v1_matrix() {
+    const ROUTER_SRC: &str = include_str!("../src/serve_v1.rs");
+
+    let registered: Vec<&str> = ROUTER_SRC
+        .match_indices(".route(")
+        .map(|(i, m)| {
+            let rest = ROUTER_SRC[i + m.len()..]
+                .trim_start()
+                .strip_prefix('"')
+                .expect("route path must be a literal");
+            &rest[..rest.find('"').expect("unterminated route literal")]
+        })
+        .collect();
+    assert!(
+        !registered.is_empty(),
+        "no `.route(\"...\")` literals found in serve_v1.rs — the scan has broken"
+    );
+
+    let columns: Vec<&str> = V1_BOUNDARIES.iter().filter_map(|b| b.3).collect();
+    for path in &registered {
+        assert!(
+            columns.contains(path),
+            "route {path} is registered in serve_v1::router() and has no column in V1_MATRIX"
+        );
+    }
+    for path in &columns {
+        assert!(
+            registered.contains(path),
+            "V1_MATRIX has a column for {path}, which serve_v1::router() no longer registers"
+        );
+    }
+}
+
+/// The v1 privacy headers are a v1-router layer only: legacy responses stay
+/// byte-for-byte what they were, refusals and fallback included, and legacy
+/// mode has no `/robots.txt`.
+#[tokio::test]
+async fn legacy_responses_carry_none_of_the_v1_headers() {
+    let (base, server, cleanup) = boot().await;
+    let http = reqwest::Client::new();
+    for (path, token, status) in [
+        ("/health", None, 200),
+        ("/v1/moments?as_of=0", None, 401),
+        ("/v1/moments?as_of=0", Some(READ), 200),
+        ("/v1/no-such-route", Some(FULL), 404),
+        ("/robots.txt", None, 401),
+    ] {
+        let mut req = http.get(format!("{base}{path}"));
+        if let Some(t) = token {
+            req = req.bearer_auth(t);
+        }
+        let response = req.send().await.expect("request");
+        assert_eq!(response.status().as_u16(), status, "{path}");
+        for (name, _) in V1_HEADERS {
+            assert!(
+                response.headers().get(name).is_none(),
+                "legacy {path} carries {name}"
+            );
+        }
+    }
+    server.abort();
+    cleanup.cleanup().await;
 }

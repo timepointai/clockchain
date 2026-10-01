@@ -17,7 +17,13 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+# Unversioned review reads and raw restore (STAGE-E N3). Off in every served
+# build; tests enable it through the dev-dependencies below.
+[features]
+review = []
+
 [dev-dependencies]
+cc-ledger = { path = ".", features = ["review"] }
 serde_json.workspace = true
 cc-testkit.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -165,7 +165,7 @@ async fn receipts_are_separate_untrusted_observations_and_cannot_install_authori
     ] {
         assert!(sqlx::query(sql).execute(&pool).await.is_err());
     }
-    assert!(store.readiness().is_err());
+    assert!(store.readiness().await.is_err());
     pool.close().await;
     cleanup.cleanup().await;
 }

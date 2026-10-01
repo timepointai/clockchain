@@ -51,6 +51,8 @@ png = "0.17"
 fs2 = "0.4"
 
 [dev-dependencies]
+# The unversioned review reads, for review-router and differential tests only.
+cc-ledger = { workspace = true, features = ["review"] }
 cc-authoring.workspace = true
 # Real Postgres, no mocks: every test in `tests/` provisions an ephemeral
 # database and runs the migrations against it.

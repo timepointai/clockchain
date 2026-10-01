@@ -1,5 +1,6 @@
-//! Review-only v1 ingress adapter. Deliberately not wired into the node binary.
-//! Full event, edge, media and prose review only; no runtime serving or verdicts.
+//! Review-only v1 ingress adapter, kept for tests. Not wired into the node
+//! binary: the served v1 surface is `serve_v1::router`. Its `/ready` stays
+//! `stage_e_non_serving`, and every read goes through the versioned snapshot.
 use crate::config::KeyDigest;
 use axum::{
     body::Bytes,
@@ -136,25 +137,13 @@ async fn prose(State(state): State<Ingress>, Path(revision): Path<String>) -> Re
         Some(id) => id,
         None => return (StatusCode::BAD_REQUEST, "invalid_revision_id").into_response(),
     };
-    let view = match state.store.review_projection().await {
-        Ok(v) => v,
+    // Through the versioned snapshot, never the unversioned review reads.
+    let snapshot = match state.store.snapshot(None).await {
+        Ok(s) => s,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "review_unavailable").into_response(),
     };
-    let Some(r) = view.revisions.iter().find(|r| r.id == id) else {
-        return (StatusCode::NOT_FOUND, "revision_unknown").into_response();
-    };
-    match state.store.body_bytes(r.body).await {
-        Ok(bytes) => {
-            let (availability, prose) = match bytes {
-                None => ("unavailable", None),
-                Some(b) => match String::from_utf8(b) {
-                    Ok(s) => ("available", Some(s)),
-                    Err(_) => ("not_utf8", None),
-                },
-            };
-            Json(serde_json::json!({"revision":r,"availability":availability,"prose":prose}))
-                .into_response()
-        }
-        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "body_verification_failed").into_response(),
+    match crate::serve_v1::prose_of(&state.store, &snapshot, id).await {
+        Ok(body) => Json(serde_json::Value::Object(body)).into_response(),
+        Err((status, error)) => (status, error).into_response(),
     }
 }

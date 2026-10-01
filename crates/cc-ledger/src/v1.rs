@@ -1,4 +1,5 @@
-//! Stage (e) admission, projection and versioned rule identity. Still non-serving.
+//! v1 admission, projection and versioned rule identity. Served by `cc-node` in
+//! explicit v1 mode only, and only through the versioned snapshot reads.
 //! HTTP, import and restore must all use `Store::admit`; SQL insertion is private.
 use cc_core::v1::{hash, root_grant, Hash, Kind, Payload, Selection, Signed, Value};
 use serde::{Deserialize, Serialize};
@@ -350,8 +351,8 @@ pub enum Error {
     Identity,
     #[error("stored_candidate_corrupt")]
     Corrupt,
-    #[error("stage_e_non_serving")]
-    NonServing,
+    #[error("v1_store_unprovisioned")]
+    Unprovisioned,
     #[error("unsupported_fold_version")]
     UnsupportedFoldVersion,
     #[error("incompatible_rule_identity")]
@@ -414,8 +415,66 @@ impl Store {
             rule: None,
         })
     }
-    pub fn readiness(&self) -> Result<(), Error> {
-        Err(Error::NonServing)
+    /// Reopen a store that `provision` and `bind` already set up, for serving.
+    /// Never creates the schema or records a rule identity, and runs read-only:
+    /// an unprovisioned, foreign, unbound or mismatched database is refused
+    /// before anything is written.
+    pub async fn open(
+        pool: PgPool,
+        instance: Hash,
+        filter: cc_filter::v1::FilterIdentity,
+    ) -> Result<Self, Error> {
+        if !cc_core::v1::rule::supported_fold(&filter.fold) {
+            return Err(Error::UnsupportedFoldVersion);
+        }
+        if !filter.is_governed() {
+            return Err(Error::RuleIdentity);
+        }
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        let foreign: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname NOT IN ('information_schema','cc_v1') AND c.relkind IN ('r','p','v','m','S','f')").fetch_one(&mut *tx).await?;
+        if foreign != 0 {
+            return Err(Error::NotEmpty);
+        }
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass('cc_v1.identity') IS NOT NULL")
+            .fetch_one(&mut *tx)
+            .await?;
+        if !exists {
+            return Err(Error::Unprovisioned);
+        }
+        let row = sqlx::query(
+            "SELECT instance,encoding,schema_hash FROM cc_v1.identity WHERE singleton=true",
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::Unprovisioned)?;
+        if row.get::<Vec<u8>, _>("instance") != instance
+            || row.get::<i16, _>("encoding") != 1
+            || row.get::<Vec<u8>, _>("schema_hash") != hash(SCHEMA.as_bytes())
+        {
+            return Err(Error::Identity);
+        }
+        tx.commit().await?;
+        let store = Self {
+            pool,
+            instance,
+            rule: Some(filter),
+        };
+        store.readiness().await?;
+        Ok(store)
+    }
+    /// Serving readiness: the bound identity is recorded, supported and equal
+    /// to the stored one. Anything else is the refusal that names why.
+    pub async fn readiness(&self) -> Result<RuleId, Error> {
+        let r = self.semantic_readiness().await?;
+        match r.semantic.as_str() {
+            "ready" => r.rule.ok_or(Error::Unbound),
+            "rule_identity_unbound" | "rule_identity_unrecorded" => Err(Error::Unbound),
+            "unsupported_fold_version" => Err(Error::UnsupportedFoldVersion),
+            _ => Err(Error::RuleIdentity),
+        }
     }
     /// The sole v1 semantic write entry point, including import and restore.
     pub async fn admit(&self, bytes: &[u8]) -> Result<Outcome, Error> {
@@ -497,15 +556,24 @@ impl Store {
             .bind(hash(bytes).to_vec()).bind(r.event.to_vec()).bind(bytes).execute(&self.pool).await?;
         Ok(())
     }
-    pub async fn import(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
+    /// Admit each envelope in order. Private: the served path to bulk
+    /// admission is [`Store::restore_export`], which verifies the root first.
+    async fn admit_all(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
         let mut out = Vec::new();
         for bytes in envelopes {
             out.push(self.admit(bytes).await?);
         }
         Ok(out)
     }
+    /// Raw bulk import and restore without a verified root. Operator review
+    /// and tests only (`review` feature).
+    #[cfg(feature = "review")]
+    pub async fn import(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
+        self.admit_all(envelopes).await
+    }
+    #[cfg(feature = "review")]
     pub async fn restore(&self, envelopes: &[Vec<u8>]) -> Result<Vec<Outcome>, Error> {
-        self.import(envelopes).await
+        self.admit_all(envelopes).await
     }
     /// Recompute classifications from verified retained bytes, never a cached verdict.
     async fn verified_candidates(&self) -> Result<BTreeMap<Hash, Signed>, Error> {
@@ -524,28 +592,35 @@ impl Store {
         }
         Ok(candidates)
     }
+    // Unversioned review reads (STAGE-E N3). Compiled only with the `review`
+    // feature, which tests enable; the served binary has only versioned reads.
+    #[cfg(feature = "review")]
     pub async fn review(&self) -> Result<BTreeMap<Hash, Status>, Error> {
         Ok(classify(&self.verified_candidates().await?))
     }
+    #[cfg(feature = "review")]
     pub async fn review_authority(&self) -> Result<Analysis, Error> {
         Ok(analyze(&self.verified_candidates().await?))
     }
+    #[cfg(feature = "review")]
     pub async fn review_projection(&self) -> Result<Projection, Error> {
         Ok(project(&self.verified_candidates().await?))
     }
     /// Optional content-addressed bytes. Availability cannot change the fold.
-    pub async fn retain_body(&self, expected: Hash, bytes: &[u8]) -> Result<(), Error> {
+    /// Returns whether these bytes were newly retained.
+    pub async fn retain_body(&self, expected: Hash, bytes: &[u8]) -> Result<bool, Error> {
         if hash(bytes) != expected {
             return Err(Error::BodyHash);
         }
-        sqlx::query(
+        let inserted = sqlx::query(
             "INSERT INTO cc_v1.bodies(body_hash,bytes) VALUES($1,$2) ON CONFLICT DO NOTHING",
         )
         .bind(expected.to_vec())
         .bind(bytes)
         .execute(&self.pool)
-        .await?;
-        Ok(())
+        .await?
+        .rows_affected();
+        Ok(inserted == 1)
     }
     pub async fn body_bytes(&self, expected: Hash) -> Result<Option<Vec<u8>>, Error> {
         let bytes: Option<Vec<u8>> =

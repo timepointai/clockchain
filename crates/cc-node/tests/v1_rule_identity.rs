@@ -128,8 +128,7 @@ async fn i8_versioned_commitments_and_unknown_refusal() {
     };
     let health: Json = parse(get("/health".into()).await.unwrap().bytes().await.unwrap());
     assert_eq!(health["readiness"]["semantic"], "ready");
-    assert_eq!(health["readiness"]["serving"], false);
-    assert_eq!(health["readiness"]["boundary"], "stage_e_non_serving");
+    assert_eq!(health["readiness"]["serving"], true);
     assert_eq!(health["commitment"], hex::encode(s.commitment));
     let manifest = |f: &FoldRef| {
         format!(
@@ -159,7 +158,8 @@ async fn i8_versioned_commitments_and_unknown_refusal() {
         .unwrap();
     assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(ready.text().await.unwrap(), "stage_e_non_serving");
-    assert!(matches!(store.readiness(), Err(Error::NonServing)));
+    // The store itself is serving-ready; only the review router stays closed.
+    assert_eq!(store.readiness().await.unwrap(), stored.rule);
 
     // Export/restore: unknown versions, tampered roots and another rule's
     // roots are refused before any admission; the exact root restores.
@@ -208,6 +208,8 @@ async fn i8_versioned_commitments_and_unknown_refusal() {
         store.semantic_readiness().await.unwrap().semantic,
         "incompatible_rule_identity"
     );
+    assert!(!store.semantic_readiness().await.unwrap().serving);
+    assert!(matches!(store.readiness().await, Err(Error::RuleIdentity)));
     assert!(matches!(
         store.snapshot(None).await,
         Err(Error::RuleIdentity)

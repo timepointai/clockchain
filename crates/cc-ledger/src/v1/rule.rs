@@ -1,6 +1,6 @@
-//! Stage (e) versioned rule identity: binding, semantic readiness, committed
-//! snapshots, `as_of` reads, verdicts, cache keys, export and restore. Every
-//! read names `(fold_version, filter_version, corpus_digest)`. Still non-serving.
+//! Versioned rule identity: binding, semantic readiness, committed snapshots,
+//! `as_of` reads, verdicts, cache keys, export and restore. Every read names
+//! `(fold_version, filter_version, corpus_digest)`.
 use super::*;
 use cc_core::v1::receipt::FoldRef;
 use cc_core::v1::rule::{cache_key, corpus_digest, supported_fold, view_commitment};
@@ -27,11 +27,10 @@ impl RuleId {
         }
     }
 }
-/// Liveness diagnostic. `semantic` is `ready` or the refusal reason; serving
-/// is never enabled by this stage.
+/// `semantic` is `ready` or the refusal reason. `serving` is true only for a
+/// bound, recorded, supported and matching rule identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Readiness {
-    pub boundary: &'static str,
     pub serving: bool,
     pub semantic: String,
     pub rule: Option<RuleId>,
@@ -274,8 +273,7 @@ impl Store {
             }
         };
         Ok(Readiness {
-            boundary: "stage_e_non_serving",
-            serving: false,
+            serving: semantic == "ready",
             semantic: semantic.into(),
             rule: self.rule.as_ref().map(RuleId::of),
         })
@@ -333,6 +331,6 @@ impl Store {
         if s.corpus_digest != m.corpus_digest || s.commitment != m.commitment {
             return Err(Error::RootMismatch);
         }
-        self.restore(&m.envelopes).await
+        self.admit_all(&m.envelopes).await
     }
 }
