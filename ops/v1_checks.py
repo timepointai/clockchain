@@ -156,11 +156,15 @@ def load_entry(directory):
     def field(*names):
         for name in names:
             if name in preview:
-                return hexbytes(preview[name], name)
+                value = preview[name]
+                # `cc-publisher v1 genesis` writes body as {sha256, bytes}.
+                if isinstance(value, dict):
+                    value = value.get('sha256')
+                return hexbytes(value, name)
         raise ValueError('preview.json lacks ' + '/'.join(names))
     entry = {'event': field('event', 'event_id'), 'subject': field('subject', 'subject_id'),
              'revision': field('revision', 'revision_id'),
-             'body_hash': field('body_hash', 'body_sha256', 'body'),
+             'body_hash': field('body', 'body_hash', 'body_sha256'),
              'author': field('author'), 'instance': field('instance'),
              'envelope': envelope, 'body': body}
     if hashlib.sha256(body).hexdigest() != entry['body_hash']:
@@ -219,14 +223,29 @@ def check_v1_populated(base, revision, key, read_key, expected, entry, *, postur
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('zero', 'populated'))
-    parser.add_argument('--sha', required=True, help='full source SHA the node must report')
+    parser.add_argument('mode', choices=('zero', 'populated', 'export'))
+    parser.add_argument('--sha', help='full source SHA the node must report')
     parser.add_argument('--entry', type=Path, help='genesis output directory (populated mode)')
     parser.add_argument('--posture', default='live', choices=('live', 'frozen'))
+    parser.add_argument('--out', type=Path, help='export mode: new file for the /v1/export JSON')
     args = parser.parse_args()
     # URL and credentials come from the operator environment, never argv.
-    base = os.environ['CC_NODE_URL']
+    base = os.environ['CC_NODE_URL'].rstrip('/')
     key, read_key = os.environ['CC_NODE_API_KEY'], os.environ['CC_NODE_READ_KEY']
+    if args.mode == 'export':
+        if not args.out:
+            parser.error('--out is required in export mode')
+        status, raw = http(base, 'GET', '/v1/export', key)
+        if status != 200:
+            raise SystemExit(f'export failed: HTTP {status}')
+        json.loads(raw)
+        fd = os.open(args.out, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(raw)
+        print(json.dumps({'export': str(args.out), 'sha256': hashlib.sha256(raw).hexdigest()}))
+        return
+    if not args.sha:
+        parser.error('--sha is required')
     expected = Expected.from_env()
     if args.mode == 'zero':
         result = check_v1_zero(base, args.sha, key, read_key, expected, posture=args.posture)

@@ -67,4 +67,7 @@ def verify_v1(machines, expected=None):
 
 
 if __name__ == '__main__':
-    print(json.dumps(verify(json.load(sys.stdin), sys.argv[1] if len(sys.argv) > 1 else None)))
+    # `fly machines list --json | verify_fly_machines.py [--v1] [sha256:<digest>]`
+    v1 = '--v1' in sys.argv[1:]
+    rest = [a for a in sys.argv[1:] if a != '--v1']
+    print(json.dumps((verify_v1 if v1 else verify)(json.load(sys.stdin), rest[0] if rest else None)))

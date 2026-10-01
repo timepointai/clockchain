@@ -5,11 +5,14 @@ credentials and never deploys. Keep operator evidence and credentials outside th
 
 | Tool | Purpose |
 |---|---|
-| `release.py` / `deploy-fly.sh` | Owner release: exact main/CI, temporary acceptance, backup, promotion and verification |
+| `release.py` / `deploy-fly.sh` | Owner release: exact main/CI, temporary acceptance, backup, promotion and verification; `--v1-fresh` per [FIRST-ENTRY](../docs/FIRST-ENTRY.md) |
 | `local_acceptance.py` | Disposable Docker + PG18 checks against the exact image with realistic-size synthetic media |
 | `deploy_digest.py` | Immutable-image promotion, app/tick reconciliation and schema-aware recovery |
 | `backup_fly.py` | Database/media capture with independent restore and append-only guard verification |
 | `deployed_checks.py` | Auth, evidence and media checks; production replays existing signed media |
+| `v1_acceptance.py` | `--v1-fresh` exact-image acceptance: Docker + PG18, synthetic curator and Genesis, dump/restore commitment equality |
+| `v1_checks.py` | v1 `/health` identity, `/ready`, read-only zero and populated checks, private export capture |
+| `v1_identity.py`, `v1_backup.py` | Expected v1 identity recomputed from the checkout; v1 store inspection, trigger proof and export match for backups |
 | `capture_evidence.py`, `evidence_eval.py`, `validate.py` | Capture and evaluate evidence without confusing integrity with truth |
 | `corpus_audit.py` | [Read-only corpus/source audit](../docs/evaluation/corpus-audit.md): aggregates, private capture, API crawl and evidence review queue |
 | `tt-differential.py` | Compare pinned upstream classification vectors |

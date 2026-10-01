@@ -229,9 +229,11 @@ def accept_v1(image, sha, evidence):
         # 5. Synthetic Genesis, signed offline and submitted to this run's node only.
         (work / 'body.txt').write_bytes(SYNTHETIC_BODY)
         node = synthetic_node(app)
-        info = publisher('node-info', '--node', node, network=ident)
-        if expected.fold['manifest'] not in info:
-            raise AssertionError('node-info did not report this build\'s fold')
+        info = json.loads(publisher('node-info', '--node', node, network=ident))
+        if not (info.get('fold_matches_build') is True and info.get('filter_version_consistent') is True
+                and info.get('health', {}).get('instance') == instance
+                and info.get('health', {}).get('filter_version') == expected.filter_version):
+            raise AssertionError('node-info does not match the provisioned identity')
         publisher('genesis', '--key', '/work/curator.seed', '--instance', instance,
                   '--kind', SYNTHETIC_KIND, '--namespace', SYNTHETIC_NAMESPACE,
                   '--value', ident, '--body', '/work/body.txt', '--asserted-time', SYNTHETIC_TIME,
@@ -243,8 +245,8 @@ def accept_v1(image, sha, evidence):
         publisher('submit', '--node', node, '--dir', '/work/genesis', network=ident, env=submit_env)
         if not (work / 'genesis' / 'receipt.json').is_file():
             raise AssertionError('submit wrote no receipt')
-        publisher('verify', '--node', node, '--subject', entry['subject'], network=ident,
-                  env=read_env)
+        publisher('verify', '--node', node, '--subject', entry['subject'], '--dir',
+                  '/work/genesis', network=ident, env=read_env)
 
         # 6. Populated check.
         populated = check_v1_populated(url, sha, key, read_key, expected, entry,
