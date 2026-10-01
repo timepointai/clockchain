@@ -1,0 +1,5 @@
+# Bytes below feed rule-identity digests or pinned vectors: never normalize.
+crates/cc-core/src/v1/fold-manifest-v1.txt text eol=lf
+crates/cc-core/tests/vectors/*.txt text eol=lf
+crates/cc-ledger/tests/vectors/*.txt text eol=lf
+crates/cc-ledger/tests/vectors/v1-view-rows.json -text

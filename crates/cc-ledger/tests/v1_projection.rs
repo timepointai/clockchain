@@ -241,11 +241,12 @@ fn deep_authority_only_selection_is_iterative() {
 }
 
 #[tokio::test]
-async fn earlier_stage_stores_refuse_silent_stage_d_reinterpretation() {
-    // Stage (b) and Stage (c) interim schema hashes.
+async fn earlier_stage_stores_refuse_silent_stage_e_reinterpretation() {
+    // Stage (b), (c) and (d) interim schema hashes.
     for old in [
         "512ac326efd97b6c27b6a2ff6fb37d3a5cb4be6bf13a36fd08f0d445a719d9d4",
         "3bd85f59908a58175af6f5d675d2539b6259fca20dd42d62192a7be2d3f727f0",
+        "01e03b64df9c36fed05cc77c3a71c9293fc1afbd0cf945a0828b4d27b5f2b540",
     ] {
         let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
         sqlx::raw_sql("CREATE SCHEMA cc_v1; CREATE TABLE cc_v1.identity(singleton boolean,instance bytea,encoding smallint,schema_hash bytea)").execute(&pool).await.unwrap();

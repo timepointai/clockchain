@@ -31,12 +31,13 @@ pub fn review_router(store: Store, writer: KeyDigest, reader: KeyDigest) -> Rout
     Router::new()
         .route("/v1/candidates", post(submit))
         .route("/v1/review", get(review))
+        .route("/health", get(health))
         .route("/v1/revisions/:revision/prose", get(prose))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize))
         .layer(DefaultBodyLimit::max(MAX_ENVELOPE))
         .route(
             "/ready",
-            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "stage_d_non_serving") }),
+            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "stage_e_non_serving") }),
         )
         .with_state(state)
 }
@@ -67,18 +68,67 @@ async fn submit(State(state): State<Ingress>, body: Bytes) -> Response {
     }
 }
 
-async fn review(State(state): State<Ingress>) -> Response {
-    match state.store.review_projection().await {
-        Ok(v) => Json(serde_json::json!({
-            "boundary":"stage_d_non_serving", "rows":v.rows, "subjects":v.subjects,
-            "revisions":v.revisions, "edges":v.edges, "media":v.media, "authority":{
-                "grants":v.authority.grants.into_iter().collect::<Vec<_>>(),
-                "active":v.authority.active,"tombstones":v.authority.tombstones,
-                "effective_revokes":v.authority.effective_revokes,"canceled":v.authority.canceled
+#[derive(serde::Deserialize)]
+struct Requested {
+    fold_version: Option<u16>,
+    fold_manifest: Option<String>,
+}
+/// A requested rule identity this build cannot implement is refused, never
+/// answered under the current fold. `None` means a malformed request.
+fn requested(q: &Requested) -> Option<Option<cc_core::v1::receipt::FoldRef>> {
+    match (q.fold_version, &q.fold_manifest) {
+        (None, None) => Some(None),
+        (Some(version), Some(m)) => {
+            let manifest = hex::decode(m).ok()?.try_into().ok()?;
+            Some(Some(cc_core::v1::receipt::FoldRef { version, manifest }))
+        }
+        _ => None,
+    }
+}
+fn refusal(e: cc_ledger::v1::Error) -> Response {
+    use cc_ledger::v1::Error::*;
+    let code = match e {
+        UnsupportedFoldVersion | RuleIdentity => StatusCode::CONFLICT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    (code, e.to_string()).into_response()
+}
+async fn health(State(state): State<Ingress>) -> Response {
+    match state.store.semantic_readiness().await {
+        Ok(r) => {
+            let snapshot = state.store.snapshot(None).await.ok();
+            Json(serde_json::json!({"readiness":r,
+                "corpus_digest":snapshot.as_ref().map(|s| hex::encode(s.corpus_digest)),
+                "commitment":snapshot.map(|s| hex::encode(s.commitment))}))
+            .into_response()
+        }
+        Err(e) => refusal(e),
+    }
+}
+async fn review(
+    State(state): State<Ingress>,
+    axum::extract::Query(q): axum::extract::Query<Requested>,
+) -> Response {
+    let Some(fold) = requested(&q) else {
+        return (StatusCode::CONFLICT, "unsupported_fold_version").into_response();
+    };
+    match state.store.snapshot(fold.as_ref()).await {
+        Ok(s) => Json(serde_json::json!({
+            "boundary":"stage_e_non_serving", "rule":s.rule,
+            "corpus_digest":hex::encode(s.corpus_digest), "commitment":hex::encode(s.commitment),
+            "rows":s.projection.rows,
+            "subjects":s.projection.subjects,
+            "revisions":s.projection.revisions, "edges":s.projection.edges,
+            "media":s.projection.media, "authority":{
+                "grants":s.projection.authority.grants.into_iter().collect::<Vec<_>>(),
+                "active":s.projection.authority.active,
+                "tombstones":s.projection.authority.tombstones,
+                "effective_revokes":s.projection.authority.effective_revokes,
+                "canceled":s.projection.authority.canceled
             }
         }))
         .into_response(),
-        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "review_unavailable").into_response(),
+        Err(e) => refusal(e),
     }
 }
 async fn prose(State(state): State<Ingress>, Path(revision): Path<String>) -> Response {

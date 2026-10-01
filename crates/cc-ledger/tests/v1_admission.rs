@@ -208,7 +208,7 @@ async fn resolve_and_media_are_checked_while_stage_e_cannot_grant_readiness() {
     ));
     assert_eq!(
         cc_ledger::v1::Error::NonServing.to_string(),
-        "stage_d_non_serving"
+        "stage_e_non_serving"
     );
     let media: bool = sqlx::query_scalar("SELECT to_regclass('public.media') IS NOT NULL")
         .fetch_one(&pool)

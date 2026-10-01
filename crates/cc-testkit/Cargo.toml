@@ -9,6 +9,7 @@ description = "Real-DB test harness: an ephemeral Postgres database per test run
 [dependencies]
 cc-core.workspace = true
 cc-ledger.workspace = true
+cc-filter.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 uuid.workspace = true

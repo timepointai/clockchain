@@ -531,8 +531,9 @@ pub enum Support {
         reasons: Vec<Reason>,
     },
 }
-/// Only current, trusted, non-dispute edges enter `neighbors`. Not yet the
-/// governed Stage (e) filter identity, `as_of` query or verdict commitment.
+/// Only current, trusted, non-dispute edges enter `neighbors`. The governed
+/// Stage (e) path is `Snapshot::support`/`verdict`, which supplies the bound
+/// curator set and hop bound, applies `as_of` and names the rule identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SupportGraph {
     pub neighbors: BTreeMap<Hash, BTreeSet<Neighbor>>,

@@ -55,6 +55,7 @@ pub mod ids;
 pub mod phi;
 pub mod reach;
 pub mod snapshot;
+pub mod v1;
 pub mod verdict;
 pub mod version;
 pub mod view;

@@ -1,4 +1,4 @@
-//! Stage (d) admission and projection review. No serving fold identity or readiness.
+//! Stage (e) admission, projection and versioned rule identity. Still non-serving.
 //! HTTP, import and restore must all use `Store::admit`; SQL insertion is private.
 use cc_core::v1::{hash, root_grant, Hash, Kind, Payload, Selection, Signed, Value};
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod authority;
 mod edges;
 mod projection;
+mod rule;
 pub use authority::{Authority, Effect, Grant};
 pub use edges::{
     support_graph, EdgeReading, Exclusion, MediaReading, Neighbor, Reason, Support, SupportGraph,
@@ -15,6 +16,7 @@ pub use edges::{
 pub use projection::{
     project, EventReading, Projection, ProjectionState, Revision, SubjectReading,
 };
+pub use rule::{canonical_rows, EntityRead, ExportManifest, Readiness, RuleId, Snapshot, Verdict};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -348,8 +350,16 @@ pub enum Error {
     Identity,
     #[error("stored_candidate_corrupt")]
     Corrupt,
-    #[error("stage_d_non_serving")]
+    #[error("stage_e_non_serving")]
     NonServing,
+    #[error("unsupported_fold_version")]
+    UnsupportedFoldVersion,
+    #[error("incompatible_rule_identity")]
+    RuleIdentity,
+    #[error("rule_identity_unbound")]
+    Unbound,
+    #[error("root_mismatch")]
+    RootMismatch,
     #[error("invalid_node_receipt")]
     Receipt,
     #[error("body_hash_mismatch")]
@@ -359,6 +369,8 @@ pub enum Error {
 pub struct Store {
     pool: PgPool,
     instance: Hash,
+    /// Boot-pinned filter identity; configuration, never a ledger event.
+    rule: Option<cc_filter::v1::FilterIdentity>,
 }
 const SCHEMA: &str = include_str!("v1.sql");
 impl Store {
@@ -396,7 +408,11 @@ impl Store {
             return Err(Error::Identity);
         }
         tx.commit().await?;
-        Ok(Self { pool, instance })
+        Ok(Self {
+            pool,
+            instance,
+            rule: None,
+        })
     }
     pub fn readiness(&self) -> Result<(), Error> {
         Err(Error::NonServing)

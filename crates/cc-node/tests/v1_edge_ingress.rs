@@ -12,7 +12,12 @@ async fn i7_edge_http_import_restore_admission_parity() {
     let (a_pool, ca) = cc_testkit::ephemeral_empty_db().await;
     let (b_pool, cb) = cc_testkit::ephemeral_empty_db().await;
     let (c_pool, cc) = cc_testkit::ephemeral_empty_db().await;
-    let http = Store::provision(a_pool.clone(), INSTANCE).await.unwrap();
+    let http = Store::provision(a_pool.clone(), INSTANCE)
+        .await
+        .unwrap()
+        .bind(filter())
+        .await
+        .unwrap();
     let import = Store::provision(b_pool.clone(), INSTANCE).await.unwrap();
     let restore = Store::provision(c_pool.clone(), INSTANCE).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -174,12 +179,12 @@ async fn i7_edge_http_import_restore_admission_parity() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(review["boundary"], "stage_d_non_serving");
+    assert_eq!(review["boundary"], "stage_e_non_serving");
     assert_eq!(review["edges"].as_array().unwrap().len(), 2);
     assert_eq!(review["media"].as_array().unwrap().len(), 2);
     let ready = client.get(format!("{base}/ready")).send().await.unwrap();
     assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(ready.text().await.unwrap(), "stage_d_non_serving");
+    assert_eq!(ready.text().await.unwrap(), "stage_e_non_serving");
     assert!(http.readiness().is_err());
     server.abort();
     let _ = server.await;

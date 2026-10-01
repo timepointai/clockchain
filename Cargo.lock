@@ -378,10 +378,20 @@ name = "cc-testkit"
 version = "0.0.0"
 dependencies = [
  "cc-core",
+ "cc-filter",
  "cc-ledger",
  "sqlx",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "cc-wasm-vectors"
+version = "0.0.0"
+dependencies = [
+ "cc-core",
+ "cc-filter",
+ "hex",
 ]
 
 [[package]]
