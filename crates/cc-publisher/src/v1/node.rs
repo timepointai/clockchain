@@ -674,7 +674,10 @@ pub async fn verify(node: &Node, subject: Hash, dir: Option<&Path>) -> Result<(b
                         })),
                     });
                     if let (Some(id), Some(body)) = (id, body) {
-                        let prose = node.prose(id).await?;
+                        let prose = match node.prose(id).await {
+                            Ok(p) => p,
+                            Err(e) => json!({"availability": format!("read failed: {e:#}")}),
+                        };
                         let availability = text(&prose, "availability");
                         match text(&prose, "prose").filter(|_| availability == Some("available")) {
                             None => {
