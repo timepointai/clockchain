@@ -54,7 +54,12 @@ class FakeDocker:
               '-e', '--env')
 
     def __init__(self, *, migrate_rc=78, seed_mode=0o600, provision_drift=False,
-                 accept_mismatch=(), fail_rm=lambda name: False, fold_matches_build=True):
+                 accept_mismatch=(), fail_rm=lambda name: False, fold_matches_build=True,
+                 guard_hole=None, probe_residue=False, extra_rows=False):
+        # guard_hole: a statement prefix the restored copy wrongly accepts.
+        # probe_residue: the zero-check probes leave a rejection row behind.
+        # extra_rows: the synthetic submit stores more rows than one Genesis.
+        self.guard_hole, self.probe_residue, self.extra_rows = guard_hole, probe_residue, extra_rows
         self.migrate_rc, self.seed_mode, self.provision_drift = migrate_rc, seed_mode, provision_drift
         self.fold_matches_build = fold_matches_build
         self.accept_mismatch, self.fail_rm = set(accept_mismatch), fail_rm
@@ -233,6 +238,8 @@ class FakeDocker:
             (directory / 'receipt.json').write_text(json.dumps({'event': preview['event']}))
             database = urlsplit(node['env']['DATABASE_URL']).path.lstrip('/')
             self.databases[database]['counts'].update(bodies=1, candidates=1)
+            if self.extra_rows:
+                self.databases[database]['counts']['bodies'] += 1
             return 0, 'admitted\n', ''
         if sub == 'verify':
             if env.get('CC_NODE_READ_KEY') != node['env']['CC_NODE_READ_KEY']:
@@ -256,6 +263,8 @@ class FakeDocker:
         elif database['identity'] is None:
             database['identity'] = identity
             database['counts'].update(identity=1, rule_identity=1)
+            if self.probe_residue:
+                database['counts']['rejections'] = 1
             rc = 0
         elif database['identity'] == identity or env_name in self.accept_mismatch:
             rc = 0
@@ -322,6 +331,8 @@ class FakeDocker:
                 return (0, f'{db["counts"][t]}\n', '') if provisioned else (1, '', 'no relation')
         if query.startswith('BEGIN; ') and query.endswith('; ROLLBACK;'):
             self.event('guard')
+            if self.guard_hole and query.startswith('BEGIN; ' + self.guard_hole):
+                return 0, 'BEGIN\nROLLBACK\n', ''
             return 1, '', 'ERROR:  v1 append-only evidence: cc_v1 refuses mutation\n'
         # prove_guards' catalog half: receipts references candidates; one guard trigger each.
         if query.startswith("SELECT count(*) FROM pg_constraint WHERE contype='f'"):
@@ -544,6 +555,28 @@ class V1AcceptanceTests(unittest.TestCase):
         self.assertEqual(wrong_curators['CC_V1_INSTANCE'], node['CC_V1_INSTANCE'])
         self.assertIn(node['CC_V1_CURATORS'], wrong_curators['CC_V1_CURATORS'].split(','))
         self.assertEqual(len(wrong_curators['CC_V1_CURATORS'].split(',')), 2)
+
+    def test_restored_copy_without_a_guard_fails(self):
+        for hole in ('TRUNCATE cc_v1.bodies', 'UPDATE cc_v1.identity', 'DELETE FROM cc_v1.receipts'):
+            with self.subTest(hole):
+                fake, evidence = FakeDocker(guard_hole=hole), self.root / ('guard-' + hole.split()[0])
+                with self.assertRaisesRegex(ValueError, 'append-only guard missing: ' + hole):
+                    self.accept(fake, evidence=evidence)
+                self.assertFalse((evidence / 'acceptance.json').exists())
+
+    def test_denial_probes_leaving_rows_fail(self):
+        with self.assertRaisesRegex(AssertionError, 'denial probes left rows'):
+            self.accept(FakeDocker(probe_residue=True))
+
+    def test_more_than_one_genesis_worth_of_rows_fails(self):
+        with self.assertRaisesRegex(AssertionError, 'unexpected stored rows'):
+            self.accept(FakeDocker(extra_rows=True))
+
+    def test_acceptance_runs_the_candidate_probes_production_skips(self):
+        self.accept(FakeDocker())
+        kinds = {(kind, kw.get('probe_candidates')) for kind, _, _, _, _, kw in self.checked}
+        # Zero and the first populated check probe candidates; the restored node is read only.
+        self.assertEqual(kinds, {('zero', True), ('populated', True), ('populated', None)})
 
     def test_mismatch_refused_with_the_wrong_status_fails(self):
         fake = FakeDocker()

@@ -24,7 +24,7 @@ import subprocess
 import time
 from urllib.parse import quote
 
-from v1_backup import compare_export, inspect_v1, prove_guards, verify_contents
+from v1_backup import RELATIONS, compare_export, inspect_v1, prove_guards, verify_contents
 from v1_identity import Expected
 
 
@@ -178,8 +178,9 @@ def main():
         version = subprocess.check_output([tool, '--version'], text=True)
         if ' 18.' not in version:
             p.error(tool + ' must be version 18')
-    if sql(restore, "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN "
-                    "('pg_catalog','information_schema')") != '0':
+    # pg_class, not information_schema: the latter hides relations the
+    # connecting role cannot read. Guard proofs mutate (and roll back) only here.
+    if sql(restore, RELATIONS) != '0':
         p.error('restore database must be empty; nothing is dropped automatically')
     if args.v1:
         return main_v1(args, source, restore)

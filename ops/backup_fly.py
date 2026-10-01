@@ -180,10 +180,14 @@ def capture(app, db_app, database, user, bundle, *, allow_zero=False):
 
 
 def remote_sql(db_app, database, user):
-    """Read-only psql on the Fly database machine; the query travels base64-encoded."""
+    """Read-only psql on the Fly database machine; the query travels base64-encoded.
+
+    The session is read-only too, so even a mistaken query cannot write.
+    """
     def sql(query):
         encoded = base64.b64encode(query.encode()).decode()
-        return ssh(db_app, f'echo {encoded} | base64 -d | PGPASSWORD="$OPERATOR_PASSWORD" psql '
+        return ssh(db_app, f'echo {encoded} | base64 -d | PGOPTIONS="-c default_transaction_read_only=on" '
+                   'PGPASSWORD="$OPERATOR_PASSWORD" psql '
                    f'--host 127.0.0.1 --username {shlex.quote(user)} -X -At -v ON_ERROR_STOP=1 '
                    f'-f - {shlex.quote(database)}').strip()
     return sql

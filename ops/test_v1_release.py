@@ -141,7 +141,7 @@ class PromoteV1Tests(unittest.TestCase):
         self.tmp, self.runs = Path(tmp.name), 0
 
     def promote(self, before=None, raises=None, *, fail_checks=False, backup=None, env=None, drop=(),
-                extra=(), config=FLY):
+                extra=(), config=FLY, after_digest=NEW_DIGEST):
         self.runs += 1
         self.evidence, self.log = self.tmp / f'evidence-{self.runs}', []
 
@@ -171,7 +171,7 @@ class PromoteV1Tests(unittest.TestCase):
             stack.enter_context(patch('sys.argv', argv))
             stack.enter_context(patch.object(subject.time, 'sleep'))
             stack.enter_context(contextlib.redirect_stderr(self.stderr))
-            for name, effect in (('fly', fly), ('machines', [before or [app()]] + [[app(digest=NEW_DIGEST)]] * 12),
+            for name, effect in (('fly', fly), ('machines', [before or [app()]] + [[app(digest=after_digest)]] * 12),
                                  ('capture_v1', capture_v1), ('check_v1_zero', check), ('http', http),
                                  ('seed', None), ('capture', None), ('wake', None), ('request', None)):
                 setattr(m, name, stack.enter_context(patch.object(subject, name, side_effect=effect)))
@@ -243,6 +243,14 @@ class PromoteV1Tests(unittest.TestCase):
         self.assertEqual([args[0] for args in self.fly_calls()].count('deploy'), 1)
         self.assertFalse(any('--skip-release-command' in args for args in self.fly_calls()))
         self.assertEqual(m.capture_v1.call_count, 1)
+
+    def test_app_left_on_the_old_digest_fails_after_retries(self):
+        # The deploy "succeeded" but the app still runs the previous image.
+        m = self.promote(raises=ValueError, after_digest=OLD)
+        self.assertEqual(str(self.error.exception), 'app release digest differs')
+        self.assertEqual(m.machines.call_count, 13)
+        self.assertTrue((self.evidence / 'FAILED').exists())
+        self.assertFalse((self.evidence / 'acceptance.json').exists())
 
     def test_post_deploy_backup_must_hold_checked_commitment(self):
         for backup in ({'commitment': OTHER_COMMITMENT}, {'commitment': None}, {'state': 'provisioned_unbound'}):

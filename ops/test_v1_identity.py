@@ -56,6 +56,8 @@ class PinnedVectorTests(unittest.TestCase):
         # Cross-language vector produced by Rust
         # `Snapshot::of(&cc_testkit::v1::filter(), &BTreeMap::new())` (the 4 testkit
         # curators, max_hops 4) in the v1 release-ops session; not recomputed by cargo here.
+        # test_v1_e2e and the Docker acceptance re-check the recomputation against a
+        # real node's empty /v1/snapshot commitment on every run.
         self.assertEqual(expected().empty_commitment,
                          '5f57b5f03b940d42ef92df4802a750c63adf4a7a871c8a4eac4559fe29cdbcb1')
         self.assertEqual(v.EMPTY_ROWS, b'{"schema":"cc.view-rows.json.v1","rows":[],"revisions":[],'

@@ -514,6 +514,17 @@ class BackupRestoreV1Tests(PgCase):
         source.execute('CREATE TABLE public.events(id int)')
         self.refused(source, 'relations outside cc_v1')
 
+    def test_nonempty_restore_target_is_refused_before_any_dump(self):
+        # The guard proofs mutate (and roll back) only an empty restore target.
+        # Any relation counts, in any schema (pg_class, not information_schema).
+        source, restore = self.store(), self.database()
+        restore.execute('CREATE SCHEMA hidden; CREATE TABLE hidden.kept(id int); '
+                        'INSERT INTO hidden.kept VALUES (1); REVOKE ALL ON hidden.kept FROM PUBLIC')
+        result, output = self.run_tool(source, restore)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('restore database must be empty', result.stderr)
+        self.assertFalse(output.exists())
+
     def test_wrong_instance_is_refused(self):
         self.refused(self.store(), 'stored instance differs', CC_V1_INSTANCE='22' * 32)
 
@@ -554,9 +565,11 @@ class RemoteSqlTests(unittest.TestCase):
         shell = shlex.split(argv[6])
         self.assertEqual(shell[:2], ['sh', '-lc'])
         command = shell[2]
-        # The only quotes the remote shell sees are around the machine's own password variable.
-        self.assertEqual((command.count("'"), command.count('"')), (0, 2))
-        match = re.fullmatch(r'echo ([A-Za-z0-9+/]+=*) \| base64 -d \| PGPASSWORD="\$OPERATOR_PASSWORD" '
+        # The only quotes the remote shell sees: the read-only session option
+        # and the machine's own password variable.
+        self.assertEqual((command.count("'"), command.count('"')), (0, 4))
+        match = re.fullmatch(r'echo ([A-Za-z0-9+/]+=*) \| base64 -d \| '
+                             r'PGOPTIONS="-c default_transaction_read_only=on" PGPASSWORD="\$OPERATOR_PASSWORD" '
                              r'psql --host 127\.0\.0\.1 --username operator -X -At -v ON_ERROR_STOP=1 '
                              r'-f - clockchain', command)
         self.assertIsNotNone(match, command)
@@ -677,7 +690,8 @@ class RestoreVerifyV1Tests(unittest.TestCase):
                          ('uninitialized', 'not_run_uninitialized', None, 'not_applicable_uninitialized'))
         self.assertEqual(report['dump_sha256'], 'ab' * 32)
 
-    def test_bound_empty_restore_proves_guards_and_recomputes_the_empty_commitment(self):
+    def test_bound_empty_restore_wires_guards_and_the_recomputed_empty_commitment(self):
+        # Plumbing only: prove_guards and verify_contents run for real in GuardTests/ContentTests.
         state = {'state': 'bound', 'counts': dict(ZEROS, identity=1, rule_identity=1)}
         guards = {t: 'proven' for t in TABLES}
         empty = {'events': [], 'envelopes': [], 'corpus_digest': corpus_digest([]).hex()}

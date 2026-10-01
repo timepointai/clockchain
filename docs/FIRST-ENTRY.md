@@ -30,6 +30,10 @@ environment file loaded with `set -a; . <PRIVATE_DIR>/release.env; set +a`.
 `DATABASE_URL` reaches any machine. Section 4 stages secrets anyway, so nothing
 restarts until the deploy in section 6.
 
+Run every command in **bash** (`bash` first; macOS defaults to zsh, which does
+not split words or treat `#` as a comment the same way). Comments sit on their
+own lines so a pasted line never passes them as arguments.
+
 Prerequisites: a clean checkout of current `main` with a green exact-SHA CI run
 (the same commit for every step), Docker, `flyctl` and `gh` authenticated as the
 owner, `jq`, `openssl`, Python 3.11+ with `ops/requirements.txt`, and a Rust
@@ -51,7 +55,8 @@ uses it. Disconnect from the network for this section.
 umask 077
 mkdir -p <PRIVATE_DIR>
 "$PUB" v1 keygen --out <PRIVATE_DIR>/curator.seed > <PRIVATE_DIR>/curator.pub
-"$PUB" v1 pubkey --key <PRIVATE_DIR>/curator.seed     # must print the same key
+# Must print the same key:
+"$PUB" v1 pubkey --key <PRIVATE_DIR>/curator.seed
 cat <PRIVATE_DIR>/curator.pub
 ```
 
@@ -78,7 +83,8 @@ cannot be changed in place.
 ```sh
 umask 077
 openssl rand -hex 32 > <PRIVATE_DIR>/instance.hex
-wc -c < <PRIVATE_DIR>/instance.hex    # 65: 64 lowercase hex characters plus newline
+# 65: 64 lowercase hex characters plus a newline.
+wc -c < <PRIVATE_DIR>/instance.hex
 ```
 
 Record the value privately with the key ceremony record. Every v1 event signs
@@ -131,47 +137,64 @@ undo this section. Nothing else depends on it yet.
 
 ## 4. Fly secrets (staged)
 
-Do section 5 first. Stage the secrets so that nothing restarts now. Values go
-through stdin as `NAME=VALUE` lines built with the shell's `printf` builtin, so
-they never appear in history or in a process argument list:
+Do section 5 first. Then remove any stale secret named `CC_NODE_LEDGER`,
+`CC_V1_MAX_HOPS` or `CC_NODE_POSTURE`, staged so nothing restarts. `fly.toml`
+sets those, and a secret overrides `[env]`, so `/health` would report a
+different identity or posture and the release checks would fail:
 
 ```sh
-fly secrets import --help | grep -- --stage    # confirm this flyctl supports staging
+fly secrets list -a <APP>
+# Only for names the list shows; plain `unset` would restart machines now.
+fly secrets unset --stage CC_NODE_LEDGER CC_V1_MAX_HOPS CC_NODE_POSTURE -a <APP>
+```
+
+Stage the v1 secrets. Values go through stdin as `NAME=VALUE` lines built with
+the shell's `printf` builtin, so they never appear in history or in a process
+argument list:
+
+```sh
+# Confirm this flyctl supports staging:
+fly secrets import --help | grep -- --stage
 {
   printf 'DATABASE_URL=%s\n'   "$(cat <PRIVATE_DIR>/v1-database-url)"
   printf 'CC_V1_INSTANCE=%s\n' "$(cat <PRIVATE_DIR>/instance.hex)"
   printf 'CC_V1_CURATORS=%s\n' "$(cat <PRIVATE_DIR>/curator.pub)"
 } | fly secrets import --stage -a <APP>
-fly secrets list -a <APP>    # names and digests only
+# Names and digests only:
+fly secrets list -a <APP>
 ```
 
 - `CC_NODE_API_KEY` (write) and `CC_NODE_READ_KEY` (read) keep their meaning.
   Rotate them now only if you want fresh v1 credentials.
 - Do **not** create secrets named `CC_NODE_LEDGER`, `CC_V1_MAX_HOPS` or
-  `CC_NODE_POSTURE` (until the posture decision in section 8). `fly.toml` sets
-  those, and a secret overrides `[env]`.
-  `/health` would then report a different identity or posture and the release
-  checks would fail. Unset any such stale secret now.
-- Never use plain `fly secrets set` here. It restarts the v0 app immediately
-  against the v1 database.
+  `CC_NODE_POSTURE` (until the posture decision in section 8).
+- Never use plain `fly secrets set` or `fly secrets unset` here. Either deploys
+  every staged secret at once and restarts the v0 app against the v1 database.
 
-Create the operator environment file the release reads (mode 0600, edited in an
-editor):
+Create the operator environment file the release reads. Its `CC_V1_*` lines
+come from the same private files the secrets were staged from, so the expected
+identity cannot drift from what `provision-v1` will bind. Put the two node
+credentials in `<PRIVATE_DIR>/node-keys.env` first, with an editor
+(`CC_NODE_API_KEY=…` and `CC_NODE_READ_KEY=…` lines):
 
 ```sh
-# <PRIVATE_DIR>/release.env
-CC_NODE_API_KEY=<write key>
-CC_NODE_READ_KEY=<read key>
-CC_BACKUP_DB_APP=<PG_APP>
-CC_BACKUP_DATABASE=<V1_DB>
-CC_BACKUP_USER=<OPERATOR_USER>
-CC_V1_INSTANCE=<contents of instance.hex>
-CC_V1_CURATORS=<contents of curator.pub>
-CC_V1_MAX_HOPS=4
+umask 077
+{
+  cat <PRIVATE_DIR>/node-keys.env
+  printf 'CC_BACKUP_DB_APP=%s\n'   '<PG_APP>'
+  printf 'CC_BACKUP_DATABASE=%s\n' '<V1_DB>'
+  printf 'CC_BACKUP_USER=%s\n'     '<OPERATOR_USER>'
+  printf 'CC_V1_INSTANCE=%s\n'     "$(cat <PRIVATE_DIR>/instance.hex)"
+  printf 'CC_V1_CURATORS=%s\n'     "$(cat <PRIVATE_DIR>/curator.pub)"
+  printf 'CC_V1_MAX_HOPS=4\n'
+} > <PRIVATE_DIR>/release.env
 ```
 
-The release checks the identity in this file against both the database and
-`/health`. The node does not get to decide what is expected.
+The release checks this identity against both the database and `/health`; the
+node does not get to decide what is expected. The secrets cannot be read back
+from Fly, so this shared source is the only pre-deploy guard: the release
+command binds whatever identity the secrets carry, permanently, and a mismatch
+shows up only in the post-deploy checks (section 9 has the recovery).
 
 Success: `fly secrets list` shows the three names as staged or updated, and the
 running v0 app has not restarted. Abort point: run
@@ -208,7 +231,8 @@ flyctl auth docker
 docker buildx build --platform linux/amd64 --provenance=false \
   --build-arg CC_BUILD_REV="$SHA" \
   -t "registry.fly.io/<APP>:git-$SHA" --push .
-docker buildx imagetools inspect "registry.fly.io/<APP>:git-$SHA"   # note the manifest Digest
+# Note the manifest Digest:
+docker buildx imagetools inspect "registry.fly.io/<APP>:git-$SHA"
 ```
 
 Release from the same checkout, with the operator environment loaded and a new
@@ -303,9 +327,11 @@ node.
 **Namespace and value.** These are not taxonomy terms, and the repo defines no
 convention for them. Together with the kind they form the subject key.
 
-- The bytes are used exactly as given. There is no normalization, so trailing
-  spaces or newlines count.
-- Each field is 1 to 1024 bytes of UTF-8.
+- The bytes are used exactly as given; nothing normalizes case or Unicode
+  form.
+- Each field is 1 to 1024 bytes of UTF-8 with no control or invisible
+  characters and no leading or trailing whitespace; `genesis` refuses
+  anything else.
 - Every later revision of the subject must carry the identical key, so the key
   cannot change after Genesis.
 - Pick a namespace that names who mints the value, and a stable, lowercase,
@@ -321,7 +347,8 @@ to the captures without publishing them:
 
 ```sh
 shasum -a 256 <CAPTURES_DIR>/* | tee <PRIVATE_DIR>/evidence-sha256.txt
-EVIDENCE=$(awk '{printf " --evidence %s", $1}' <PRIVATE_DIR>/evidence-sha256.txt)
+EVIDENCE=()
+while read -r hash _; do EVIDENCE+=(--evidence "$hash"); done < <PRIVATE_DIR>/evidence-sha256.txt
 ```
 
 **Sign.** The output directory must not exist yet. The seed is read from its
@@ -331,7 +358,7 @@ file and never passed as an argument:
 "$PUB" v1 genesis --key <PRIVATE_DIR>/curator.seed \
   --instance "$(cat <PRIVATE_DIR>/instance.hex)" \
   --kind <KIND> --namespace <NAMESPACE> --value <VALUE> \
-  --body <BODY_FILE> --asserted-time 1968-12-09 $EVIDENCE \
+  --body <BODY_FILE> --asserted-time 1968-12-09 "${EVIDENCE[@]}" \
   --out <PRIVATE_DIR>/genesis-1968
 ```
 
@@ -365,10 +392,18 @@ If any check fails, delete the directory and re-author. Nothing has been sent.
 flyctl proxy 18080:80 <APP>.flycast -a <APP> --bind-addr 127.0.0.1
 ```
 
+Every envelope the node accepts for decoding is kept for good: an admitted or
+refused (422) candidate stays in `cc_v1.candidates` and changes the commitment,
+and undecodable input leaves a `cc_v1.rejections` row. Both tables are
+append-only. So submit exactly once: confirm the store is still empty right
+before, never pass `--allow-untrusted`, and do not retry or re-sign after any
+non-201 answer. Stop and decide as the owner instead.
+
 ```sh
 set -a; . <PRIVATE_DIR>/release.env; set +a
 export CC_NODE_URL=http://127.0.0.1:18080
 "$PUB" v1 node-info --node "$CC_NODE_URL"
+python3 ops/v1_checks.py zero --sha "$SHA" > <EVIDENCE_DIR>/release-$SHA/pre-entry-zero.json
 "$PUB" v1 submit --node "$CC_NODE_URL" --dir <PRIVATE_DIR>/genesis-1968
 "$PUB" v1 verify --node "$CC_NODE_URL" --subject <SUBJECT> --dir <PRIVATE_DIR>/genesis-1968
 python3 ops/v1_checks.py populated --sha "$SHA" --entry <PRIVATE_DIR>/genesis-1968 \
@@ -431,9 +466,9 @@ key, instance and rule identity are bound and cannot be changed in place.
 | 6 Acceptance | `acceptance/acceptance.json` reads `pass`; cleanup `removed: true` | Nothing in production changed. Fix the cause and build a new image |
 | 6 Pre-deploy inspection or backup | `backup-before` is `uninitialized` (or bound and empty) | Nothing deployed. Investigate any foreign relation, other instance or rows before retrying |
 | 6 `fly deploy` / `provision-v1` | Release command exits 0 | Fly aborts the deploy and the old machine keeps its image. Read the release command's exit status: 78 configuration (a missing or malformed secret), 73 the database holds non-v1 tables, 65 the stored identity differs from the secrets, 69 database unreachable |
-| 6 Post-deploy checks or backup | `production/acceptance.json` and `backup-after` are written | `FAILED` and `recovery.json` record the error and the previous image. Either fix forward with a new release, or return to v0: re-stage the v0 `DATABASE_URL`, then deploy the previous image (from `rollback.json`) with a v0 `fly.toml` from git history and `--skip-release-command`. The v1 database stays as it is (bound, no entry) |
+| 6 Post-deploy checks or backup | `production/acceptance.json` and `backup-after` are written | `FAILED` and `recovery.json` record the error and the previous image. Either fix forward with a new release, or return to v0: re-stage the v0 `DATABASE_URL`, then deploy the previous image (from `rollback.json`) with a v0 `fly.toml` from git history and `--skip-release-command`. The v1 database stays as it is (bound, no entry). If the bound identity is wrong (instance or curators), it cannot be rebound: use a new fresh database (section 3) as an owner decision |
 | 7 Genesis | `preview.json` reviewed and correct | Delete the output directory and re-author. Nothing has been sent |
-| 8 Submit | 201 and `receipt.json`; `verify` and `populated` pass | A refused submit (4xx) stores nothing semantic. A partial upload (body without envelope) is harmless: bodies are outside the fold. Do not re-sign with a new nonce until you have inspected `/v1/export`. A second Genesis is a second subject |
+| 8 Submit | `zero` passes just before; 201 and `receipt.json`; `verify` and `populated` pass | Any decodable envelope the node received is permanent, including a 422: it stays a candidate and changes the commitment. Do not retry or re-sign; capture `/v1/export` and decide as the owner. A body uploaded without its envelope stays too but is outside the fold. A second Genesis would be a second subject |
 | 8 Backup | `bound`, candidates 1, commitment equal | Retry the backup. The ledger is unaffected |
 
 ## 10. Evidence to retain privately
