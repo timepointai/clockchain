@@ -89,8 +89,10 @@ pub struct GenesisArgs {
 }
 
 impl GenesisArgs {
-    /// Parse and check every argument before anything is written.
+    /// Parse and check every argument, `--out` included, before the key is
+    /// loaded or anything is written.
     pub fn input(&self) -> Result<GenesisInput> {
+        genesis::check_out_dir(&self.out)?;
         let instance = hex32(&self.instance).context("--instance must be 64 hex characters")?;
         genesis::validate_kind(&self.kind)?;
         genesis::validate_key_field("namespace", &self.namespace)?;

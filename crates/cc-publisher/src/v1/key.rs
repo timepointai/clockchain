@@ -87,14 +87,19 @@ fn create_private(out: &Path, bytes: &[u8]) -> Result<()> {
 /// Read a seed file: exactly 64 hex characters and an optional final newline.
 /// A file whose mode is wider than 0600 is refused before it is read.
 pub fn load_key(path: &Path) -> Result<SecretKey> {
-    // Refuse a FIFO or device before opening it: opening one can block.
+    // Refuse a FIFO or device before opening it, and open without blocking
+    // in case one is swapped in meanwhile; the handle is checked again below.
     let named = fs::metadata(path).with_context(|| format!("open key file {}", path.display()))?;
     ensure!(
         named.is_file(),
         "key file {} is not a regular file",
         path.display()
     );
-    let f = File::open(path).with_context(|| format!("open key file {}", path.display()))?;
+    let f = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .with_context(|| format!("open key file {}", path.display()))?;
     // Checked on the opened handle, so the file read is the file checked.
     let meta = f.metadata()?;
     ensure!(

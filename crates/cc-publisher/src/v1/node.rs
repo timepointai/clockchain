@@ -1,6 +1,7 @@
 //! The v1 node client: `/health`, the body and candidate writes, and the
 //! subject/prose readback. Tokens are passed in by the caller, which reads
-//! them from the environment; they are never logged or echoed.
+//! them from the environment; they go only to authenticated routes and are
+//! redacted from every error that quotes a response.
 use super::genesis::{write_new, Genesis};
 use super::{hash_json, time};
 use anyhow::{bail, ensure, Context, Result};
@@ -19,27 +20,17 @@ const MAX_RESPONSE: usize = 16 * 1024 * 1024;
 pub const RECEIPT_FILE: &str = "receipt.json";
 pub const RECEIPT_SCHEMA: &str = "cc.publisher.v1.receipt";
 
-/// One v1 node at a base URL: `https://`, or `http://` to a loopback host.
+/// One v1 node at a base URL: `https://`, or plain `http://` to a local host
+/// (see [`plain_http_allowed`]).
 pub struct Node {
     base: Url,
     http: reqwest::Client,
-    auth: Option<HeaderValue>,
+    /// Sent only to authenticated routes, and redacted from every error.
+    token: Option<String>,
 }
 struct Reply {
     status: StatusCode,
     body: Vec<u8>,
-}
-impl Reply {
-    fn json(&self, what: &str) -> Result<Value> {
-        serde_json::from_slice(&self.body)
-            .with_context(|| format!("{what}: response is not JSON: {}", snippet(&self.body)))
-    }
-}
-fn snippet(body: &[u8]) -> String {
-    String::from_utf8_lossy(&body[..body.len().min(300)])
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
 }
 /// Plain http only where a bearer token cannot cross the public internet:
 /// loopback addresses, `localhost`, and single-label host names such as a
@@ -61,7 +52,8 @@ fn plain_http_allowed(url: &Url) -> bool {
 
 impl Node {
     pub fn new(url: &str, token: Option<&str>) -> Result<Self> {
-        let mut base = Url::parse(url).with_context(|| format!("invalid node URL {url:?}"))?;
+        // The input is not echoed: it could carry credentials.
+        let mut base = Url::parse(url).map_err(|e| anyhow::anyhow!("invalid node URL: {e}"))?;
         ensure!(
             base.username().is_empty() && base.password().is_none(),
             "node URL must not carry credentials"
@@ -83,21 +75,16 @@ impl Node {
             let path = format!("{}/", base.path());
             base.set_path(&path);
         }
-        let auth = match token {
-            None => None,
-            Some(t) => {
-                ensure!(!t.trim().is_empty(), "node token is empty");
-                ensure!(
-                    t.trim() == t,
-                    "node token must not start or end with whitespace"
-                );
-                let mut v = HeaderValue::from_str(&format!("Bearer {t}")).map_err(|_| {
-                    anyhow::anyhow!("node token contains characters not allowed in a header")
-                })?;
-                v.set_sensitive(true);
-                Some(v)
-            }
-        };
+        if let Some(t) = token {
+            ensure!(!t.trim().is_empty(), "node token is empty");
+            ensure!(
+                t.trim() == t,
+                "node token must not start or end with whitespace"
+            );
+            HeaderValue::from_str(&format!("Bearer {t}")).map_err(|_| {
+                anyhow::anyhow!("node token contains characters not allowed in a header")
+            })?;
+        }
         let mut http = reqwest::Client::builder();
         if base.scheme() == "http" {
             // A proxy would see a plain-http bearer token; https is tunneled.
@@ -110,17 +97,58 @@ impl Node {
             .timeout(Duration::from_secs(120))
             .user_agent(concat!("cc-publisher/", env!("CARGO_PKG_VERSION")))
             .build()?;
-        Ok(Self { base, http, auth })
+        Ok(Self {
+            base,
+            http,
+            token: token.map(str::to_owned),
+        })
     }
     pub fn url(&self) -> &str {
         self.base.as_str()
     }
 
-    async fn send(&self, method: Method, path: &str, body: Option<&[u8]>) -> Result<Reply> {
+    /// A response body for an error message: at most 300 characters, control
+    /// characters blanked, and the token redacted in case the node echoes it.
+    fn snippet(&self, body: &[u8]) -> String {
+        let mut text = String::from_utf8_lossy(body).into_owned();
+        if let Some(t) = &self.token {
+            text = text.replace(t.as_str(), "<redacted>");
+        }
+        text.chars()
+            .take(300)
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect()
+    }
+    fn json(&self, reply: &Reply, what: &str) -> Result<Value> {
+        serde_json::from_slice(&reply.body).with_context(|| {
+            format!(
+                "{what}: response is not JSON: {}",
+                self.snippet(&reply.body)
+            )
+        })
+    }
+    fn unexpected(&self, what: &str, reply: &Reply) -> anyhow::Error {
+        anyhow::anyhow!(
+            "{what}: HTTP {}: {}",
+            reply.status,
+            self.snippet(&reply.body)
+        )
+    }
+
+    /// `authenticated` sends the bearer token; public routes never get it.
+    async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&[u8]>,
+        authenticated: bool,
+    ) -> Result<Reply> {
         let url = self.base.join(path)?;
         let mut request = self.http.request(method.clone(), url);
-        if let Some(auth) = &self.auth {
-            request = request.header(AUTHORIZATION, auth.clone());
+        if let (true, Some(t)) = (authenticated, &self.token) {
+            let mut v = HeaderValue::from_str(&format!("Bearer {t}"))?;
+            v.set_sensitive(true);
+            request = request.header(AUTHORIZATION, v);
         }
         if let Some(body) = body {
             request = request
@@ -142,63 +170,59 @@ impl Node {
         }
         Ok(Reply { status, body: out })
     }
-    fn unexpected(what: &str, reply: &Reply) -> anyhow::Error {
-        anyhow::anyhow!("{what}: HTTP {}: {}", reply.status, snippet(&reply.body))
-    }
-
-    /// `GET /health` (public).
+    /// `GET /health`: public, so no token is sent.
     pub async fn health(&self) -> Result<Health> {
-        let reply = self.send(Method::GET, "health", None).await?;
+        let reply = self.send(Method::GET, "health", None, false).await?;
         if reply.status != StatusCode::OK {
-            return Err(Self::unexpected("GET /health", &reply));
+            return Err(self.unexpected("GET /health", &reply));
         }
-        Health::parse(&reply.json("GET /health")?)
+        Health::parse(&self.json(&reply, "GET /health")?)
     }
     /// `PUT /v1/bodies/{sha256}`: 201 when stored, 200 when already present.
     pub async fn put_body(&self, body: &[u8]) -> Result<StatusCode> {
         let path = format!("v1/bodies/{}", hex::encode(hash(body)));
-        let reply = self.send(Method::PUT, &path, Some(body)).await?;
+        let reply = self.send(Method::PUT, &path, Some(body), true).await?;
         match reply.status {
             StatusCode::CREATED | StatusCode::OK => Ok(reply.status),
-            _ => Err(Self::unexpected(&format!("PUT /{path}"), &reply)),
+            _ => Err(self.unexpected(&format!("PUT /{path}"), &reply)),
         }
     }
     /// `POST /v1/candidates`: the HTTP status and the node's admission outcome.
     pub async fn post_candidate(&self, envelope: &[u8]) -> Result<(StatusCode, Admission)> {
         let reply = self
-            .send(Method::POST, "v1/candidates", Some(envelope))
+            .send(Method::POST, "v1/candidates", Some(envelope), true)
             .await?;
         match reply.status {
             StatusCode::CREATED | StatusCode::ACCEPTED | StatusCode::UNPROCESSABLE_ENTITY => Ok((
                 reply.status,
-                Admission::parse(&reply.json("POST /v1/candidates")?)?,
+                Admission::parse(&self.json(&reply, "POST /v1/candidates")?)?,
             )),
-            _ => Err(Self::unexpected("POST /v1/candidates", &reply)),
+            _ => Err(self.unexpected("POST /v1/candidates", &reply)),
         }
     }
     /// `GET /v1/subjects/{id}`; `None` when the node does not know the subject.
     pub async fn subject(&self, id: Hash) -> Result<Option<Value>> {
         let path = format!("v1/subjects/{}", hex::encode(id));
-        let reply = self.send(Method::GET, &path, None).await?;
+        let reply = self.send(Method::GET, &path, None, true).await?;
         match reply.status {
             StatusCode::NOT_FOUND => Ok(None),
             StatusCode::OK => {
-                let v = reply.json(&format!("GET /{path}"))?;
+                let v = self.json(&reply, &format!("GET /{path}"))?;
                 let unknown =
                     v.get("visibility").and_then(Value::as_str) == Some("subject_unknown");
                 Ok((!unknown).then_some(v))
             }
-            _ => Err(Self::unexpected(&format!("GET /{path}"), &reply)),
+            _ => Err(self.unexpected(&format!("GET /{path}"), &reply)),
         }
     }
     /// `GET /v1/revisions/{revision}/prose`.
     pub async fn prose(&self, revision: Hash) -> Result<Value> {
         let path = format!("v1/revisions/{}/prose", hex::encode(revision));
-        let reply = self.send(Method::GET, &path, None).await?;
+        let reply = self.send(Method::GET, &path, None, true).await?;
         if reply.status != StatusCode::OK {
-            return Err(Self::unexpected(&format!("GET /{path}"), &reply));
+            return Err(self.unexpected(&format!("GET /{path}"), &reply));
         }
-        reply.json(&format!("GET /{path}"))
+        self.json(&reply, &format!("GET /{path}"))
     }
 }
 

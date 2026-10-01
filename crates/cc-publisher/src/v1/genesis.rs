@@ -316,18 +316,7 @@ impl Genesis {
     /// Write `envelope.bin`, `body.bin` and `preview.json` into `dir`, which
     /// must be absent or empty. No existing file is replaced.
     pub fn write_dir(&self, dir: &Path) -> Result<()> {
-        if dir.exists() {
-            ensure!(
-                dir.is_dir(),
-                "{} exists and is not a directory",
-                dir.display()
-            );
-            ensure!(
-                fs::read_dir(dir)?.next().is_none(),
-                "refusing to write into non-empty {}",
-                dir.display()
-            );
-        } else {
+        if !check_out_dir(dir)? {
             DirBuilder::new()
                 .recursive(true)
                 .mode(0o700)
@@ -375,6 +364,24 @@ impl Genesis {
     }
 }
 
+/// An output directory must be absent or empty. Returns whether it exists.
+pub fn check_out_dir(dir: &Path) -> Result<bool> {
+    if fs::symlink_metadata(dir).is_err() {
+        return Ok(false);
+    }
+    ensure!(
+        dir.is_dir(),
+        "{} exists and is not a directory",
+        dir.display()
+    );
+    ensure!(
+        fs::read_dir(dir)?.next().is_none(),
+        "refusing to write into non-empty {}",
+        dir.display()
+    );
+    Ok(true)
+}
+
 /// Create a new file; never replace one.
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut f = OpenOptions::new()
@@ -398,7 +405,16 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
 pub(crate) fn read_capped(path: &Path, cap: usize) -> Result<Vec<u8>> {
     let meta = fs::metadata(path).with_context(|| format!("open {}", path.display()))?;
     ensure!(meta.is_file(), "{} is not a regular file", path.display());
-    let f = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let f = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .with_context(|| format!("open {}", path.display()))?;
+    ensure!(
+        f.metadata()?.is_file(),
+        "{} is not a regular file",
+        path.display()
+    );
     let mut out = Vec::new();
     f.take(cap as u64 + 1).read_to_end(&mut out)?;
     ensure!(out.len() <= cap, "{} exceeds {cap} bytes", path.display());

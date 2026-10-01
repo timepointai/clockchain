@@ -19,6 +19,8 @@ clap.workspace = true
 # operating-system RNG.
 reqwest.workspace = true
 getrandom = "0.2"
+# O_NONBLOCK, so opening a FIFO swapped in for an input file cannot block.
+libc = "0.2"
 [dev-dependencies]
 cc-testkit.workspace = true
 # In-process v1 node for online tests over real PostgreSQL.
