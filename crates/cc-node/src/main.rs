@@ -103,14 +103,14 @@ async fn run_server_v1() {
             std::process::exit(EX_CONFIG);
         }
     };
-    let store = match serve_v1::open_store(&v1).await {
-        Ok(s) => s,
+    let (store, readiness) = match serve_v1::open_store(&v1).await {
+        Ok(opened) => opened,
         Err(e) => {
             eprintln!("cc-node: refusing to serve v1 — {e}");
             std::process::exit(e.exit_code());
         }
     };
-    let state = serve_v1::V1State::build(store, &config, &v1);
+    let state = serve_v1::V1State::build(store, &readiness, &config, &v1);
 
     tracing::info!(
         bind = %config.bind,

@@ -29,7 +29,7 @@ use axum::{
     Json, Router,
 };
 use cc_core::v1::{receipt::FoldRef, Hash, MAX_ENVELOPE};
-use cc_ledger::v1::{Error, RuleId, Snapshot, State as Admission, Store};
+use cc_ledger::v1::{Error, Readiness, RuleId, Snapshot, State as Admission, Store};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -45,6 +45,8 @@ pub struct V1State {
     pub posture: Posture,
     /// The frozen `/health` bytes; no clock, no database, no fold.
     pub health_body: Bytes,
+    /// One `/ready` store query at a time for this router.
+    pub ready_gate: ReadyGate,
     pub api_key: KeyDigest,
     pub read_key: Option<KeyDigest>,
     /// Legacy scoped credentials. No v1 route accepts them; the write guard
@@ -72,10 +74,18 @@ impl Credentials for V1State {
     }
 }
 
+/// `/ready` is public, so at most one of its store queries runs at a time; a
+/// caller that finds one in flight is answered `busy` at once rather than
+/// queued, and a flood of it can neither hold the pool nor pile up waiters.
+#[derive(Clone, Default)]
+pub struct ReadyGate(std::sync::Arc<tokio::sync::Mutex<()>>);
+
 impl V1State {
-    pub fn build(store: Store, config: &Config, v1: &V1Config) -> V1State {
+    /// `readiness` is what [`open_store`] verified; `/health` publishes it.
+    pub fn build(store: Store, readiness: &Readiness, config: &Config, v1: &V1Config) -> V1State {
         V1State {
-            health_body: health_body(v1, config.posture),
+            health_body: health_body(v1, config.posture, &readiness.semantic),
+            ready_gate: ReadyGate::default(),
             store,
             posture: config.posture,
             api_key: config.api_key,
@@ -104,11 +114,13 @@ impl BootError {
     /// `sysexits.h` codes, so a supervisor can tell the cases apart:
     /// 78 configuration, 73 a non-empty (foreign) database, 65 a store whose
     /// identity differs from the configuration or is not provisioned and bound,
-    /// 69 the database is unreachable, 70 anything else.
+    /// including a missing identity row or table, 69 the database is
+    /// unreachable or refused the operation, 70 anything else.
     pub fn exit_code(&self) -> i32 {
         match self {
             BootError::Config(_) | BootError::Url(_) => 78,
             BootError::Store(Error::NotEmpty) => 73,
+            BootError::Store(Error::Database(e)) if partial_identity(e) => 65,
             BootError::Store(Error::Database(_)) => 69,
             BootError::Store(
                 Error::Identity
@@ -122,6 +134,15 @@ impl BootError {
     }
 }
 
+/// A `cc_v1` schema without its identity row, table or column: the store is
+/// not this identity, which is not a connectivity problem.
+fn partial_identity(e: &sqlx::Error) -> bool {
+    matches!(e, sqlx::Error::RowNotFound)
+        || e.as_database_error()
+            .and_then(|d| d.code())
+            .is_some_and(|c| c == "42P01" || c == "42703")
+}
+
 fn pool(v1: &V1Config) -> Result<sqlx::PgPool, BootError> {
     sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_secs(5))
@@ -129,9 +150,15 @@ fn pool(v1: &V1Config) -> Result<sqlx::PgPool, BootError> {
         .map_err(BootError::Url)
 }
 
-/// `serve`: reopen and verify, never initialize.
-pub async fn open_store(v1: &V1Config) -> Result<Store, BootError> {
-    Ok(Store::open(pool(v1)?, v1.instance, v1.filter.clone()).await?)
+/// `serve`: reopen and verify, never initialize. Returns the readiness that
+/// was verified, which is what `/health` then publishes.
+pub async fn open_store(v1: &V1Config) -> Result<(Store, Readiness), BootError> {
+    let store = Store::open(pool(v1)?, v1.instance, v1.filter.clone()).await?;
+    let readiness = store.semantic_readiness().await?;
+    if !readiness.serving {
+        return Err(BootError::NotReady(readiness.semantic));
+    }
+    Ok((store, readiness))
 }
 
 /// What `cc-node provision-v1` prints on success.
@@ -182,12 +209,13 @@ struct Health {
     filter_version: String,
     curators: Vec<String>,
     max_hops: u16,
-    semantic: &'static str,
+    semantic: String,
 }
 
 /// The `/health` document, assembled once. `semantic` is the readiness
-/// [`open_store`] verified at boot; `/ready` re-checks the store per request.
-pub fn health_body(v1: &V1Config, posture: Posture) -> Bytes {
+/// [`open_store`] verified at boot and does not track later changes;
+/// `/ready` re-checks the store per request.
+pub fn health_body(v1: &V1Config, posture: Posture, semantic: &str) -> Bytes {
     let f = &v1.filter;
     let doc = Health {
         ledger: "v1",
@@ -201,7 +229,7 @@ pub fn health_body(v1: &V1Config, posture: Posture) -> Bytes {
         filter_version: hex::encode(f.version()),
         curators: f.curators.iter().map(hex::encode).collect(),
         max_hops: f.max_hops,
-        semantic: "ready",
+        semantic: semantic.to_string(),
     };
     Bytes::from(serde_json::to_vec(&doc).expect("the health document is plain JSON"))
 }
@@ -309,14 +337,15 @@ async fn health(State(state): State<V1State>) -> Response {
         .into_response()
 }
 
-/// At most one `/ready` store query in flight per process: the route is
-/// public, and a flood of it must not take the pool from authenticated reads
-/// and writes. Waiters queue here, never on the pool.
-static READY_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 async fn ready(State(state): State<V1State>) -> Response {
     let posture = state.posture.as_str();
-    let _gate = READY_GATE.lock().await;
+    let Ok(_gate) = state.ready_gate.0.try_lock() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "serving": false, "posture": posture, "reason": "busy" })),
+        )
+            .into_response();
+    };
     match state.store.semantic_readiness().await {
         Ok(r) if r.serving => Json(json!({ "serving": true, "posture": posture })).into_response(),
         Ok(r) => (

@@ -496,10 +496,12 @@ async fn boot_v1(
         instance: cc_testkit::v1::INSTANCE,
         filter,
     };
+    let readiness = store.semantic_readiness().await.expect("readiness");
     let state = cc_node::serve_v1::V1State {
         store,
         posture,
-        health_body: cc_node::serve_v1::health_body(&v1, posture),
+        health_body: cc_node::serve_v1::health_body(&v1, posture, &readiness.semantic),
+        ready_gate: Default::default(),
         api_key: KeyDigest::of(FULL),
         read_key: Some(KeyDigest::of(READ)),
         gallery_key: Some(KeyDigest::of(GALLERY)),
@@ -636,4 +638,35 @@ fn every_v1_route_appears_in_the_v1_matrix() {
             "V1_MATRIX has a column for {path}, which serve_v1::router() no longer registers"
         );
     }
+}
+
+/// The v1 privacy headers are a v1-router layer only: legacy responses stay
+/// byte-for-byte what they were, refusals and fallback included, and legacy
+/// mode has no `/robots.txt`.
+#[tokio::test]
+async fn legacy_responses_carry_none_of_the_v1_headers() {
+    let (base, server, cleanup) = boot().await;
+    let http = reqwest::Client::new();
+    for (path, token, status) in [
+        ("/health", None, 200),
+        ("/v1/moments?as_of=0", None, 401),
+        ("/v1/moments?as_of=0", Some(READ), 200),
+        ("/v1/no-such-route", Some(FULL), 404),
+        ("/robots.txt", None, 401),
+    ] {
+        let mut req = http.get(format!("{base}{path}"));
+        if let Some(t) = token {
+            req = req.bearer_auth(t);
+        }
+        let response = req.send().await.expect("request");
+        assert_eq!(response.status().as_u16(), status, "{path}");
+        for (name, _) in V1_HEADERS {
+            assert!(
+                response.headers().get(name).is_none(),
+                "legacy {path} carries {name}"
+            );
+        }
+    }
+    server.abort();
+    cleanup.cleanup().await;
 }

@@ -61,23 +61,26 @@ fn run(args: &[&str], env: &HashMap<&'static str, String>) -> Output {
 }
 
 /// `serve` must exit on its own, before binding; a server still running after
-/// the deadline has accepted a store it should have refused.
+/// the deadline has accepted a store it should have refused. Returns the exit
+/// code and everything it printed, stdout and stderr.
 fn serve_exit(env: &HashMap<&'static str, String>) -> (i32, String) {
     let mut env = env.clone();
     env.insert("CC_NODE_API_KEY", WRITE.into());
+    env.insert("CC_NODE_READ_KEY", READ.into());
     env.insert("CC_NODE_POSTURE", "live".into());
     env.insert("PORT", "0".into());
     let mut child = cc_node(&["serve"], &env)
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
-            let mut err = String::new();
-            std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut err).unwrap();
-            return (status.code().unwrap(), err);
+            let mut out = String::new();
+            std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut out).unwrap();
+            std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut out).unwrap();
+            return (status.code().unwrap(), out);
         }
         if Instant::now() > deadline {
             child.kill().unwrap();
@@ -92,6 +95,16 @@ async fn rule_rows(pool: &PgPool) -> Vec<Vec<u8>> {
         .fetch_all(pool)
         .await
         .unwrap()
+}
+
+/// Every stored identity byte: instance, encoding and schema hash, and the
+/// full rule identity row.
+async fn stored_identity(pool: &PgPool) -> Vec<String> {
+    let sql = "SELECT concat_ws('|', encode(instance,'hex'), encoding, encode(schema_hash,'hex')) \
+               FROM cc_v1.identity UNION ALL \
+               SELECT concat_ws('|', fold_version, encode(fold_manifest,'hex'), \
+               encode(filter_identity,'hex')) FROM cc_v1.rule_identity";
+    sqlx::query_scalar(sql).fetch_all(pool).await.unwrap()
 }
 
 async fn has_v1_schema(pool: &PgPool) -> bool {
@@ -133,7 +146,8 @@ async fn provision_v1_is_idempotent_and_prints_the_identity() {
     assert_eq!(again.semantic, "ready");
     assert_eq!(rule_rows(&pool).await.len(), 1);
     // What serve opens is exactly what was provisioned.
-    let store = serve_v1::open_store(&config(&env).unwrap()).await.unwrap();
+    let (store, readiness) = serve_v1::open_store(&config(&env).unwrap()).await.unwrap();
+    assert_eq!(readiness.semantic, "ready");
     assert_eq!(store.readiness().await.unwrap().filter_version, f.version());
     pool.close().await;
     cleanup.cleanup().await;
@@ -144,7 +158,8 @@ async fn identity_mismatch_fails_closed_in_provision_and_serve() {
     let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
     let env = v1_env(&url_of(&pool).await);
     assert_eq!(run(&["provision-v1"], &env).status.code(), Some(0));
-    let bound = rule_rows(&pool).await;
+    let bound = stored_identity(&pool).await;
+    assert_eq!(bound.len(), 2);
 
     let mut fewer_curators = env.clone();
     fewer_curators.insert("CC_V1_CURATORS", curators(0..3));
@@ -174,8 +189,8 @@ async fn identity_mismatch_fails_closed_in_provision_and_serve() {
         let (code, err) = serve_exit(bad);
         assert_eq!(code, 65, "{label}: {err}");
         assert!(err.contains(expected), "{label}: {err}");
-        // Nothing was rebound.
-        assert_eq!(rule_rows(&pool).await, bound, "{label}");
+        // Nothing was rebound: every stored identity byte is unchanged.
+        assert_eq!(stored_identity(&pool).await, bound, "{label}");
     }
     assert!(matches!(
         Store::open(pool.clone(), [8; 32], filter()).await,
@@ -454,4 +469,66 @@ fn v1_configuration_is_strict() {
         "postgres://synthetic:synthetic@127.0.0.1:9/none".into(),
     );
     assert_eq!(run(&["provision-v1"], &unreachable).status.code(), Some(69));
+}
+
+#[tokio::test]
+async fn a_partial_identity_is_an_identity_refusal() {
+    // Identity row missing.
+    let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
+    let env = v1_env(&url_of(&pool).await);
+    assert_eq!(run(&["provision-v1"], &env).status.code(), Some(0));
+    let gut = "ALTER TABLE cc_v1.identity DISABLE TRIGGER immutable_identity; \
+               DELETE FROM cc_v1.identity;";
+    sqlx::raw_sql(gut).execute(&pool).await.unwrap();
+    assert_eq!(run(&["provision-v1"], &env).status.code(), Some(65));
+    assert_eq!(serve_exit(&env).0, 65);
+    pool.close().await;
+    cleanup.cleanup().await;
+
+    // Rule identity table missing.
+    let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
+    let env = v1_env(&url_of(&pool).await);
+    assert_eq!(run(&["provision-v1"], &env).status.code(), Some(0));
+    sqlx::raw_sql("DROP TABLE cc_v1.rule_identity")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(run(&["provision-v1"], &env).status.code(), Some(65));
+    assert_eq!(serve_exit(&env).0, 65);
+    pool.close().await;
+    cleanup.cleanup().await;
+}
+
+#[tokio::test]
+async fn boot_failures_print_no_credentials() {
+    const PASSWORD: &str = "SyntheticDatabasePassw0rdXq7";
+    let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
+    let real = url_of(&pool).await;
+    let (head, tail) = real.split_once('@').unwrap();
+    let user = head.rsplit_once(':').unwrap().0;
+    let unreachable = format!("postgres://synthetic:{PASSWORD}@127.0.0.1:9/none");
+    let wrong_password = format!("{user}:{PASSWORD}@{tail}");
+    let mut bad_config = v1_env(&unreachable);
+    bad_config.insert("CC_V1_CURATORS", "not-a-key".into());
+    let leaked = |label: &str, out: &str| {
+        for secret in [PASSWORD, WRITE, READ] {
+            assert!(!out.contains(secret), "{label} printed a credential: {out}");
+        }
+    };
+    for (label, env, expected) in [
+        ("unreachable", v1_env(&unreachable), 69),
+        ("wrong password", v1_env(&wrong_password), 69),
+        ("bad config", bad_config, 78),
+    ] {
+        let out = run(&["provision-v1"], &env);
+        assert_eq!(out.status.code(), Some(expected), "provision {label}");
+        let printed = String::from_utf8_lossy(&out.stdout).to_string()
+            + &String::from_utf8_lossy(&out.stderr);
+        leaked(label, &printed);
+        let (code, printed) = serve_exit(&env);
+        assert_eq!(code, expected, "serve {label}: {printed}");
+        leaked(label, &printed);
+    }
+    pool.close().await;
+    cleanup.cleanup().await;
 }

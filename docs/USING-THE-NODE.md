@@ -153,14 +153,14 @@ accepts a database already provisioned with exactly this identity. It needs only
 | 0 | Provisioned and `ready` |
 | 78 | Configuration error, or `migrate` in v1 mode |
 | 73 | The database holds non-v1 tables |
-| 65 | Stored instance or rule identity differs, or the store is not provisioned and bound (`serve`) |
-| 69 | Database error: unreachable, refused or failing SQL |
+| 65 | Stored instance or rule identity differs, is missing or partial (no identity row or table), or the store is not provisioned and bound (`serve`) |
+| 69 | Database unreachable, or it refused the operation (for example credentials or permissions) |
 | 70 | Any other refusal, such as a corrupt stored candidate |
 
 | Route | Scope | Answer |
 |---|---|---|
-| `GET /health` | public | Identity fixed at boot: `ledger`, `build`, `posture`, `instance`, `fold_version`, `filter_version`, `curators`, `max_hops`, `semantic`. No database access |
-| `GET /ready` | public | Re-checks the store: 200 `{serving:true, posture}`, or 503 with `reason` |
+| `GET /health` | public | Identity fixed at boot: `ledger`, `build`, `posture`, `instance`, `fold_version`, `filter_version`, `curators`, `max_hops`, and `semantic`, the readiness `serve` verified before listening. No database access, so it does not track later changes |
+| `GET /ready` | public | The live check: 200 `{serving:true, posture}`, or 503 with `reason`; `busy` while another `/ready` check is running |
 | `GET /robots.txt` | public | Deny all |
 | `POST /v1/candidates` | write | Signed envelope bytes, at most 1 MiB; 201 valid, 202 pending, 422 invalid |
 | `PUT /v1/bodies/{sha256}` | write | Body bytes, at most 1 MiB; 201 new, 200 existing, 422 hash mismatch |

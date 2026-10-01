@@ -85,8 +85,10 @@ struct Node {
 }
 
 async fn boot(store: &Store, posture: Posture) -> Node {
+    let semantic = store.semantic_readiness().await.unwrap().semantic;
     let state = V1State {
-        health_body: health_body(&v1(), posture),
+        health_body: health_body(&v1(), posture, &semantic),
+        ready_gate: Default::default(),
         store: store.clone(),
         posture,
         api_key: KeyDigest::of(WRITE),
@@ -280,7 +282,10 @@ async fn frozen_posture_refuses_writes_and_keeps_serving_reads() {
     assert_eq!(node.submit(&g).await.0, S::CREATED);
     let frozen = boot(&store, Posture::Frozen).await;
     let health = frozen.fetch("/health", None).await.2;
-    assert_eq!(health, health_body(&v1(), Posture::Frozen).to_vec());
+    assert_eq!(
+        health,
+        health_body(&v1(), Posture::Frozen, "ready").to_vec()
+    );
     let health: Json = serde_json::from_slice(&health).unwrap();
     assert_eq!(health["posture"], "frozen");
     let ready = json!({ "serving": true, "posture": "frozen" });
@@ -301,6 +306,11 @@ async fn frozen_posture_refuses_writes_and_keeps_serving_reads() {
     }
     assert_eq!(frozen.ok("/v1/snapshot", READ).await, before);
     assert_eq!(store.body_bytes(body).await.unwrap(), None);
+    for table in ["bodies", "rejections"] {
+        let sql = format!("SELECT count(*) FROM cc_v1.{table}");
+        let n: i64 = sqlx::query_scalar(&sql).fetch_one(&pool).await.unwrap();
+        assert_eq!(n, 0, "{table}");
+    }
     let prose = frozen.ok(&prose_path(&g), READ).await;
     assert_eq!(prose["availability"], "unavailable");
     assert!(prose["prose"].is_null());
@@ -484,7 +494,7 @@ async fn health_is_static_and_ready_tracks_the_store() {
     let (status, headers, health) = node.fetch("/health", None).await;
     assert_eq!(status, S::OK);
     assert_eq!(headers["content-type"], "application/json");
-    assert_eq!(health, health_body(&v1(), Posture::Live).to_vec());
+    assert_eq!(health, health_body(&v1(), Posture::Live, "ready").to_vec());
     let mut curators: Vec<_> = (0..4).map(|k| key(k).author().to_bytes()).collect();
     curators.sort();
     let fold = fold_v1();
@@ -500,6 +510,10 @@ async fn health_is_static_and_ready_tracks_the_store() {
         "semantic": "ready",
     });
     assert_eq!(serde_json::from_slice::<Json>(&health).unwrap(), expected);
+    // /health publishes the readiness it was built from, not a constant.
+    let other = health_body(&v1(), Posture::Live, "incompatible_rule_identity");
+    let other: Json = serde_json::from_slice(&other).unwrap();
+    assert_eq!(other["semantic"], "incompatible_rule_identity");
     // Public routes ignore whatever credential is presented.
     let (status, _, bytes) = node.fetch("/health", Some(STRANGER)).await;
     assert_eq!((status, &bytes), (S::OK, &health));
@@ -644,5 +658,41 @@ async fn admission_answers_201_valid_202_pending_and_422_invalid() {
     );
     let rows = node.ok("/v1/snapshot", READ).await["rows"].clone();
     assert_eq!(rows.as_array().unwrap().len(), 2);
+    done(node, pool, cleanup).await;
+}
+
+#[tokio::test]
+async fn a_busy_ready_check_is_refused_at_once_not_queued() {
+    let (pool, cleanup, _, node) = live().await;
+    // Hold the rule identity table so the first readiness query blocks.
+    let mut held = pool.begin().await.unwrap();
+    let lock = "LOCK TABLE cc_v1.rule_identity IN ACCESS EXCLUSIVE MODE";
+    sqlx::query(lock).execute(&mut *held).await.unwrap();
+    let url = format!("{}/ready", node.base);
+    let http = node.http.clone();
+    let first = tokio::spawn(async move { http.get(url).send().await.unwrap().status() });
+    let waiting = "SELECT count(*) FROM pg_locks \
+                   WHERE NOT granted AND relation = 'cc_v1.rule_identity'::regclass";
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while sqlx::query_scalar::<_, i64>(waiting)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        == 0
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "first /ready never blocked"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let busy = tokio::time::timeout(std::time::Duration::from_secs(5), node.public("/ready"));
+    let busy = busy.await.expect("a busy /ready answers at once");
+    let reason = json!({ "serving": false, "posture": "live", "reason": "busy" });
+    assert_eq!(busy, (S::SERVICE_UNAVAILABLE, reason));
+    held.rollback().await.unwrap();
+    assert_eq!(first.await.unwrap(), S::OK);
+    let ready = json!({ "serving": true, "posture": "live" });
+    assert_eq!(node.public("/ready").await, (S::OK, ready));
     done(node, pool, cleanup).await;
 }
