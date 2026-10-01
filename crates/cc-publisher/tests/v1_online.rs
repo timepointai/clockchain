@@ -531,11 +531,14 @@ fn node_url_rules() {
         "http://127.0.0.1:8080",
         "http://[::1]:8080",
         "http://localhost:8080",
+        "http://cc-accept-v1-0123456789ab-app:8080",
     ] {
         assert!(Node::new(ok, Some("t")).is_ok(), "{ok}");
     }
     for (bad, why) in [
         ("http://node.example", "plain http"),
+        ("http://10.0.0.8:8080", "plain http"),
+        ("http://[2001:db8::1]:8080", "plain http"),
         ("ftp://node.example", "scheme"),
         ("https://user:pw@node.example", "credentials"),
         ("https://node.example/?q=1", "query"),

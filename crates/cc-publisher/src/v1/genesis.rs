@@ -231,9 +231,11 @@ impl Genesis {
                 "precision": f.asserted_time.precision,
                 "coordinate": hex::encode(f.asserted_time.coordinate),
             },
-            "body": {"sha256": hex::encode(f.body), "bytes": self.body.len()},
+            "body_sha256": hex::encode(f.body),
+            "body_bytes": self.body.len(),
             "evidence": f.evidence.iter().map(hex::encode).collect::<Vec<_>>(),
-            "envelope": {"sha256": hex::encode(hash(bytes)), "bytes": bytes.len()},
+            "envelope_sha256": hex::encode(hash(bytes)),
+            "envelope_bytes": bytes.len(),
             "taxonomy": {
                 "version": cc_filter::version::TT_VERSION_STRING,
                 "sha256": cc_filter::version::TT_BUNDLE_SHA256,

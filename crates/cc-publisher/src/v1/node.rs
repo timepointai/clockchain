@@ -41,15 +41,21 @@ fn snippet(body: &[u8]) -> String {
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
-fn is_loopback(url: &Url) -> bool {
-    match url.host_str() {
-        Some("localhost") => true,
-        Some(h) => h
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback()),
-        None => false,
+/// Plain http only where a bearer token cannot cross the public internet:
+/// loopback addresses, `localhost`, and single-label host names such as a
+/// container name on a private network. Any other host needs https.
+fn plain_http_allowed(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if let Some(v6) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return v6
+            .parse::<std::net::Ipv6Addr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    }
+    match host.parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => host == "localhost" || !host.contains('.'),
     }
 }
 
@@ -66,8 +72,11 @@ impl Node {
         );
         match base.scheme() {
             "https" => {}
-            "http" if is_loopback(&base) => {}
-            "http" => bail!("refusing plain http to a non-loopback node; use https"),
+            "http" if plain_http_allowed(&base) => {}
+            "http" => bail!(
+                "refusing plain http to {}; use https (plain http is only for loopback and single-label local hosts)",
+                base.host_str().unwrap_or_default()
+            ),
             other => bail!("unsupported node URL scheme {other:?}"),
         }
         if !base.path().ends_with('/') {
