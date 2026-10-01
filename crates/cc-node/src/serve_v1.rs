@@ -375,9 +375,8 @@ async fn retain_body(
 /// 400, never a read answered as if it were absent.
 type Strict<T> = Result<Query<T>, QueryRejection>;
 
-fn query<T>(q: Strict<T>) -> Result<T, Response> {
-    q.map(|Query(q)| q)
-        .map_err(|_| refusal(StatusCode::BAD_REQUEST, "invalid_query"))
+fn query<T>(q: Strict<T>) -> Option<T> {
+    q.ok().map(|Query(q)| q)
 }
 
 #[derive(serde::Deserialize)]
@@ -388,9 +387,8 @@ struct FoldQuery {
 }
 
 async fn snapshot(State(state): State<V1State>, q: Strict<FoldQuery>) -> Response {
-    let q = match query(q) {
-        Ok(q) => q,
-        Err(r) => return r,
+    let Some(q) = query(q) else {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
     };
     let requested = match (q.fold_version, q.fold_manifest) {
         (None, None) => None,
@@ -447,9 +445,8 @@ async fn subject(
     Path(subject_id): Path<String>,
     q: Strict<AsOfQuery>,
 ) -> Response {
-    let q = match query(q) {
-        Ok(q) => q,
-        Err(r) => return r,
+    let Some(q) = query(q) else {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
     };
     let Some(id) = hex32(&subject_id) else {
         return refusal(StatusCode::BAD_REQUEST, "invalid_subject_id");
@@ -540,9 +537,8 @@ struct SupportQuery {
 }
 
 async fn support(State(state): State<V1State>, q: Strict<SupportQuery>) -> Response {
-    let q = match query(q) {
-        Ok(q) => q,
-        Err(r) => return r,
+    let Some(q) = query(q) else {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
     };
     let (Some(from), Some(to)) = (
         q.from.as_deref().and_then(hex32),
