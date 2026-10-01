@@ -59,3 +59,73 @@ pub fn correction(g: &Signed, p: &Signed, signer: u8, body: u8) -> Signed {
     )
     .unwrap()
 }
+
+pub fn transition(g: &Signed, p: &Signed, signer: u8, grant: Hash, payload: Payload) -> Signed {
+    Signed::sign(
+        &key(signer),
+        Envelope {
+            instance: INSTANCE,
+            author: [0; 32],
+            subject: Some(g.id()),
+            subject_key: g.envelope().subject_key.clone(),
+            grant: Some(grant),
+            parents: Set(vec![p.id()]),
+            asserted_time: None,
+            payload,
+        },
+    )
+    .unwrap()
+}
+pub fn delegate(g: &Signed, p: &Signed, signer: u8, issuer: Hash, grantee: u8) -> Signed {
+    let grantee = key(grantee).author().to_bytes();
+    let decision = Decision {
+        kind: Kind::Delegate,
+        rationale: "Synthetic delegation".into(),
+        evidence: Set(vec![[4; 32]]),
+        parents: Set(vec![p.id()]),
+        old: Value::None,
+        new: Value::Grant { issuer, grantee },
+    };
+    transition(
+        g,
+        p,
+        signer,
+        issuer,
+        Payload::Delegate {
+            grantee,
+            issuer,
+            decision,
+        },
+    )
+}
+pub fn revoke(
+    g: &Signed,
+    p: &Signed,
+    signer: u8,
+    grant: Hash,
+    target: Hash,
+    cascade: bool,
+) -> Signed {
+    let decision = Decision {
+        kind: Kind::Revoke,
+        rationale: "Synthetic revocation".into(),
+        evidence: Set(vec![[4; 32]]),
+        parents: Set(vec![p.id()]),
+        old: Value::ActiveGrant(target),
+        new: Value::RevokedGrant {
+            grant: target,
+            cascade,
+        },
+    };
+    transition(
+        g,
+        p,
+        signer,
+        grant,
+        Payload::Revoke {
+            target,
+            cascade,
+            decision,
+        },
+    )
+}

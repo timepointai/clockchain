@@ -33,7 +33,13 @@ async fn i7_http_import_admission_differential() {
     let mut foreign = g.envelope().clone();
     foreign.instance = [44; 32];
     let foreign = Signed::sign(&key(0), foreign).unwrap();
+    let d = delegate(&g, &g, 0, root_grant(g.id()), 1);
+    let sub = delegate(&g, &d, 1, d.id(), 2);
+    let inner = revoke(&g, &sub, 1, d.id(), sub.id(), true);
+    let outer = revoke(&g, &sub, 0, root_grant(g.id()), d.id(), false);
     let inputs = vec![
+        inner.bytes().to_vec(),
+        sub.bytes().to_vec(),
         correction.bytes().to_vec(),
         vec![0; 200],
         g.bytes().to_vec(),
@@ -43,6 +49,10 @@ async fn i7_http_import_admission_differential() {
         changed.bytes().to_vec(),
         foreign.bytes().to_vec(),
         g.bytes().to_vec(),
+        d.bytes().to_vec(),
+        outer.bytes().to_vec(),
+        inner.bytes().to_vec(),
+        sub.bytes().to_vec(),
     ];
     // Transport authentication is checked before decoding and adds no candidate.
     for token in [None, Some("synthetic-read")] {
@@ -81,6 +91,14 @@ async fn i7_http_import_admission_differential() {
             cc_ledger::v1::State::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
         };
         assert_eq!(code, expected_code);
+        assert_eq!(
+            http.review_authority().await.unwrap(),
+            import.review_authority().await.unwrap()
+        );
+        assert_eq!(
+            http.review_authority().await.unwrap(),
+            restore.review_authority().await.unwrap()
+        );
         assert_eq!(http.review().await.unwrap(), import.review().await.unwrap());
         assert_eq!(
             http.review().await.unwrap(),

@@ -169,16 +169,21 @@ async fn later_stages_are_pending_and_cannot_grant_readiness() {
     store.admit(g.bytes()).await.unwrap();
     let mut e = correction(&g, &g, 0, 5).envelope().clone();
     let mut d = e.payload.decision().unwrap().clone();
-    d.kind = Kind::Delegate;
-    e.payload = Payload::Delegate {
-        grantee: key(1).author().to_bytes(),
-        issuer: root_grant(g.id()),
+    let c = correction(&g, &g, 0, 6);
+    store.admit(c.bytes()).await.unwrap();
+    e.parents = Set(vec![g.id(), c.id()]);
+    e.parents.0.sort();
+    d.parents = e.parents.clone();
+    d.kind = Kind::Resolve;
+    e.payload = Payload::Resolve {
+        selection: Selection::MergedBody([5; 32]),
+        dispositions: Set(vec![]),
         decision: d,
     };
     let event = Signed::sign(&key(0), e).unwrap();
     let result = store.admit(event.bytes()).await.unwrap();
     assert_eq!(result.status.state, State::Pending);
-    assert_eq!(result.status.reason, "stage_b_not_implemented");
+    assert_eq!(result.status.reason, "stage_c_not_implemented");
     assert!(store.readiness().is_err());
     let media: bool = sqlx::query_scalar("SELECT to_regclass('public.media') IS NOT NULL")
         .fetch_one(&pool)

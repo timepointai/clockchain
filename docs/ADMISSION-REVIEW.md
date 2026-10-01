@@ -3,9 +3,12 @@
 This describes source behavior, not a deployment receipt. Standing owner
 constraints are in [HOLD.md](../HOLD.md).
 
-The [multi-signer v1 design](design/MULTI-SIGNER.md) proposes the implementation
-contract for #6, including a new canonical encoding version. It is pending owner
-approval and does not change the implemented behavior described here.
+The [multi-signer v1 design](design/MULTI-SIGNER.md) is accepted and merged in
+PR #7. PR #8 delivered the non-serving [Stage (a)](design/STAGE-A.md) foundation;
+[Stage (b)](design/STAGE-B.md) implements authority in the separate v1 store.
+The normal node still runs the legacy behavior below. Issue #6 remains the open
+launch-gate tracker; model evidence, intermediate software and green CI do not
+pass its remaining runtime or publication gates.
 
 ## Owner decision — 2026-09-28: immutable HTTP body bindings
 
@@ -138,13 +141,13 @@ sibling submission, but does **not** enforce subject-owner authority or the
 recorded-decision obligation for coordinate movement. Bearer authorization is not
 correction authority. This is a characterization, not approval of that behavior.
 
-## B is a design candidate, not a ready recommendation
+## Legacy gaps and the accepted replacement
 
-The previous recommendation of B is withdrawn pending the following decisions.
-Keeping contradictory events stored is not the same as making the losing
-corrections visible: the present canonical-child rule hides siblings. A design
-limited to rebinding with incident edges would miss that ordinary conflict case.
-No A/B implementation or correction-authorization policy is added here.
+The accepted v1 design chooses B: explicit conflict projection with immutable
+revision entities. The sections below retain the legacy gaps that motivated it;
+they do not reopen accepted design decisions. The legacy canonical-child rule
+still hides siblings. The intermediate v1 stages have not yet implemented the
+complete conflict projection or integrated it into normal node runtime.
 
 ### Protocol identity and replay compatibility
 
@@ -195,8 +198,9 @@ target; its envelope identifies a signer and time. It has no owner role, approva
 verdict, rationale or old/new bindings, and `project_attestation` only stores it
 and updates counts. The attestation test confirms that it does not resolve a
 sibling. Treating it as an owner approval would require new governed semantics,
-not an inference from its signature. These remain design questions for the ruling
-process; the present PR does not create that mechanism.
+not an inference from its signature. The accepted v1 design answers these
+questions; complete resolution semantics and normal-runtime integration remain
+implementation gates.
 
 ## Correction path under #5
 

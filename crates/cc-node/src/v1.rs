@@ -1,5 +1,5 @@
 //! Review-only v1 ingress adapter. Deliberately not wired into the node binary.
-//! No entity/filter/media read or serving readiness exists in Stage (a).
+//! No entity/filter/media read or serving readiness exists in Stage (b).
 use crate::config::KeyDigest;
 use axum::{
     body::Bytes,
@@ -29,7 +29,7 @@ pub fn review_router(store: Store, writer: KeyDigest) -> Router {
         .layer(DefaultBodyLimit::max(MAX_ENVELOPE))
         .route(
             "/ready",
-            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "stage_a_non_serving") }),
+            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "stage_b_non_serving") }),
         )
         .with_state(state)
 }
