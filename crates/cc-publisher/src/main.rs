@@ -67,6 +67,9 @@ enum Cmd {
         reason: String,
     },
     Status,
+    /// v1 signing and submission over HTTP; never touches a database.
+    #[command(subcommand)]
+    V1(cc_publisher::v1::cli::Command),
 }
 fn file(path: &str) -> Result<Value> {
     Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
@@ -74,6 +77,17 @@ fn file(path: &str) -> Result<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let cli = match cli.cmd {
+        Cmd::V1(cmd) => {
+            // The error chain without a backtrace; exit status 1.
+            if let Err(e) = cc_publisher::v1::cli::run(cmd).await {
+                eprintln!("cc-publisher v1: {e:#}");
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        cmd => Cli { cmd },
+    };
     if let Cmd::Validate { path } = &cli.cmd {
         let candidate = file(path)?;
         cc_publisher::validate_candidate(&candidate)?;
@@ -86,7 +100,7 @@ async fn main() -> Result<()> {
     let pool = cc_ledger::connect(&std::env::var("DATABASE_URL").context("DATABASE_URL required")?)
         .await?;
     let result = match cli.cmd {
-        Cmd::Validate { .. } => unreachable!("handled before database connection"),
+        Cmd::Validate { .. } | Cmd::V1(_) => unreachable!("handled before database connection"),
         Cmd::BriefStage { id, path } => {
             cc_publisher::stage_brief(&pool, &id, &file(&path)?).await?
         }

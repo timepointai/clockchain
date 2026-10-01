@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use std::collections::{BTreeMap, HashSet};
 
+pub mod v1;
+
 pub fn digest(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
 }
