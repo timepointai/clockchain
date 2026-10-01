@@ -1,5 +1,5 @@
 //! Review-only v1 ingress adapter. Deliberately not wired into the node binary.
-//! Full event and prose review only; no runtime serving or filter/media verdicts.
+//! Full event, edge, media and prose review only; no runtime serving or verdicts.
 use crate::config::KeyDigest;
 use axum::{
     body::Bytes,
@@ -36,7 +36,7 @@ pub fn review_router(store: Store, writer: KeyDigest, reader: KeyDigest) -> Rout
         .layer(DefaultBodyLimit::max(MAX_ENVELOPE))
         .route(
             "/ready",
-            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "stage_c_non_serving") }),
+            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "stage_d_non_serving") }),
         )
         .with_state(state)
 }
@@ -70,8 +70,8 @@ async fn submit(State(state): State<Ingress>, body: Bytes) -> Response {
 async fn review(State(state): State<Ingress>) -> Response {
     match state.store.review_projection().await {
         Ok(v) => Json(serde_json::json!({
-            "boundary":"stage_c_non_serving", "rows":v.rows, "subjects":v.subjects,
-            "revisions":v.revisions, "authority":{
+            "boundary":"stage_d_non_serving", "rows":v.rows, "subjects":v.subjects,
+            "revisions":v.revisions, "edges":v.edges, "media":v.media, "authority":{
                 "grants":v.authority.grants.into_iter().collect::<Vec<_>>(),
                 "active":v.authority.active,"tombstones":v.authority.tombstones,
                 "effective_revokes":v.authority.effective_revokes,"canceled":v.authority.canceled

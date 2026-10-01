@@ -241,22 +241,25 @@ fn deep_authority_only_selection_is_iterative() {
 }
 
 #[tokio::test]
-async fn stage_b_store_refuses_silent_stage_c_reinterpretation() {
-    let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
-    sqlx::raw_sql("CREATE SCHEMA cc_v1; CREATE TABLE cc_v1.identity(singleton boolean,instance bytea,encoding smallint,schema_hash bytea)").execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO cc_v1.identity VALUES(true,$1,1,$2)")
-        .bind(INSTANCE.to_vec())
-        .bind(
-            hex::decode("512ac326efd97b6c27b6a2ff6fb37d3a5cb4be6bf13a36fd08f0d445a719d9d4")
-                .unwrap(),
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(matches!(
-        cc_ledger::v1::Store::provision(pool.clone(), INSTANCE).await,
-        Err(cc_ledger::v1::Error::Identity)
-    ));
-    pool.close().await;
-    cleanup.cleanup().await;
+async fn earlier_stage_stores_refuse_silent_stage_d_reinterpretation() {
+    // Stage (b) and Stage (c) interim schema hashes.
+    for old in [
+        "512ac326efd97b6c27b6a2ff6fb37d3a5cb4be6bf13a36fd08f0d445a719d9d4",
+        "3bd85f59908a58175af6f5d675d2539b6259fca20dd42d62192a7be2d3f727f0",
+    ] {
+        let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
+        sqlx::raw_sql("CREATE SCHEMA cc_v1; CREATE TABLE cc_v1.identity(singleton boolean,instance bytea,encoding smallint,schema_hash bytea)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO cc_v1.identity VALUES(true,$1,1,$2)")
+            .bind(INSTANCE.to_vec())
+            .bind(hex::decode(old).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            cc_ledger::v1::Store::provision(pool.clone(), INSTANCE).await,
+            Err(cc_ledger::v1::Error::Identity)
+        ));
+        pool.close().await;
+        cleanup.cleanup().await;
+    }
 }

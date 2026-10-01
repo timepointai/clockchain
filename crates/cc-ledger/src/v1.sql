@@ -40,3 +40,7 @@ CREATE TABLE cc_v1.bodies (
 );
 CREATE TRIGGER immutable_bodies BEFORE UPDATE OR DELETE OR TRUNCATE ON cc_v1.bodies
 FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();
+
+-- Stage (d): edges and attestations are reclassified from retained candidates;
+-- no derived edge or media table is trusted. This contract marker changes the
+-- interim schema hash so a Stage (c) store refuses silent reinterpretation.

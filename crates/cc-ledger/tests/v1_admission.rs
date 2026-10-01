@@ -162,7 +162,7 @@ async fn v1_fresh_store_refuses_even_empty_v0_projection() {
 }
 
 #[tokio::test]
-async fn resolve_is_checked_while_later_stages_cannot_grant_readiness() {
+async fn resolve_and_media_are_checked_while_stage_e_cannot_grant_readiness() {
     let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
     let store = Store::provision(pool.clone(), INSTANCE).await.unwrap();
     let g = genesis();
@@ -193,10 +193,23 @@ async fn resolve_is_checked_while_later_stages_cannot_grant_readiness() {
         artifact: [44; 32],
     };
     let attestation = Signed::sign(&key(0), attestation).unwrap();
+    // Stage (d) binds media to the exact target; Stage (e) readiness still refuses.
     let result = store.admit(attestation.bytes()).await.unwrap();
-    assert_eq!(result.status.state, State::Pending);
-    assert_eq!(result.status.reason, "stage_d_not_implemented");
-    assert!(store.readiness().is_err());
+    assert_eq!(result.status.state, State::Valid);
+    assert!(result.authority.is_none());
+    let mut header = attestation.envelope().clone();
+    header.grant = Some(root_grant(g.id()));
+    let header = Signed::sign(&key(0), header).unwrap();
+    let result = store.admit(header.bytes()).await.unwrap();
+    assert_eq!(result.status.reason, "non_subject_header");
+    assert!(matches!(
+        store.readiness(),
+        Err(cc_ledger::v1::Error::NonServing)
+    ));
+    assert_eq!(
+        cc_ledger::v1::Error::NonServing.to_string(),
+        "stage_d_non_serving"
+    );
     let media: bool = sqlx::query_scalar("SELECT to_regclass('public.media') IS NOT NULL")
         .fetch_one(&pool)
         .await

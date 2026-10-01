@@ -1,5 +1,8 @@
 # Stage (c): fork and resolution projection
 
+This records the merged Stage (c) boundary; pinned edges and media are in
+[Stage (d)](STAGE-D.md).
+
 Owner authorized this boundary after approving Stage (b) PR #9. The ship sequence
 is decided: full (a)–(e). Refs #6. Its final disposition belongs to the owner after
 Stage (e) and operational evidence. This PR stops at first review.
