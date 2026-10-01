@@ -9,6 +9,10 @@ first PR review. Owner decision, 2026-09-30: PR #10 (Stage (c)) merged and Stage
 (d) is authorized through its first PR review. Owner decision, 2026-10-01: PR #11
 (Stage (d)) merged and Stage (e) is authorized through its PR review; runtime
 integration and operational evidence still require separate authorization.
+Owner decision, 2026-10-01: PR #12 (Stage (e)) merged; the governed defaults in
+STAGE-E.md are accepted as pinned; Stage (f) runtime integration
+([STAGE-F.md](STAGE-F.md)) and an owner-operated release onto a fresh v1 database
+are authorized, with the Engelbart 1968 subject as the inaugural entry.
 [HOLD.md](../../HOLD.md) remains the operating boundary.
 This specifies every gate in [#6](https://github.com/timepointai/clockchain/issues/6).
 Decided below means a concrete choice in this proposal, not a completed gate or

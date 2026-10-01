@@ -156,6 +156,9 @@ This is bounded implementation evidence, not exhaustive production correctness.
 
 ## Owner questions (governed defaults pinned in the manifest)
 
+Owner decision, 2026-10-01: all defaults below are accepted as pinned for
+`fold_version` 1, including `max_hops = 4` for production.
+
 The owner adopted the Stage (d) conservative readings as governed defaults.
 Each remains open for change only through a new fold version.
 
