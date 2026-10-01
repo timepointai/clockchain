@@ -34,10 +34,11 @@ A variable that is set but blank is refused; it does not fall back. A token
 with leading or trailing whitespace is refused. The token is sent as
 `Authorization: Bearer <token>` exactly as set, so it must not contain a
 newline or other control character. It goes only to the authenticated routes:
-never to `/health`, which is public. Tokens and seeds are never printed. An
-error that quotes a response body (at most 300 characters) replaces the token
-with `<redacted>` in case the node echoes it, and a key-file error does not
-quote the file.
+never to `/health`, which is public. Tokens and seeds are never printed. A node
+could echo the token back, so everything that can quote a node answer (errors,
+including response bodies cut to 300 characters, `receipt.json`, the `submit`
+output and warnings, and the `verify` report) has the token replaced by
+`<redacted>`. A key-file error does not quote the file.
 
 ### Key files
 

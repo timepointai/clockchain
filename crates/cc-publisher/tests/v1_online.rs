@@ -365,7 +365,14 @@ async fn submit_refuses_curator_mismatch_before_any_write() {
     assert_eq!(n.writes(&g.body).await, (0, 0, false));
 
     // Overridden: admitted (Genesis validity does not depend on curators),
-    // and the receipt records the failed check and the override.
+    // and the receipt records the failed check and the override. This node
+    // answers an unknown subject 200 with `subject_unknown` instead of 404,
+    // which must also read as not yet admitted.
+    n.rewrite("/v1/subjects/", |status, _, v| {
+        if *status == StatusCode::NOT_FOUND && v["visibility"] == "subject_unknown" {
+            *status = StatusCode::OK;
+        }
+    });
     let done = node::submit(&n.client(WRITE), &dir, true).await.unwrap();
     assert_eq!(done.warnings.len(), 1, "{:?}", done.warnings);
     assert_eq!(done.receipt["trust"]["author_is_curator"], false);
@@ -735,6 +742,77 @@ async fn readback_requires_this_revision_and_these_bytes() {
         );
         n.honest();
     }
+
+    // verify's own checks, without --dir.
+    let checks: [Differ; 8] = [
+        (
+            "/health",
+            |_, _, v| v["ledger"] = json!("v0"),
+            r#"node ledger is \"v0\", not \"v1\""#,
+        ),
+        (
+            "/health",
+            |_, _, v| v["fold_version"]["manifest"] = flipped(&v["fold_version"]["manifest"]),
+            "node fold_version differs from this build",
+        ),
+        (
+            "/v1/subjects/",
+            |_, _, v| v["subject"] = flipped(&v["subject"]),
+            "node answered for another subject",
+        ),
+        (
+            "/v1/subjects/",
+            |_, _, v| v["state"] = json!("contested"),
+            "subject is not resolved and visible",
+        ),
+        (
+            "/v1/subjects/",
+            |_, _, v| v["revision"] = Value::Null,
+            "subject has no current revision",
+        ),
+        (
+            "/prose",
+            |_, _, v| v["revision"]["id"] = flipped(&v["revision"]["id"]),
+            "prose answered for another revision",
+        ),
+        (
+            "/prose",
+            |_, _, v| v["availability"] = json!("unavailable"),
+            r#"prose availability is Some(\"unavailable\")"#,
+        ),
+        (
+            "/prose",
+            tampered_prose,
+            "served prose does not hash to the revision body",
+        ),
+    ];
+    for (route, lie, needle) in checks {
+        n.rewrite(route, lie);
+        let (ok, report) = node::verify(&n.client(READ), g.subject(), None)
+            .await
+            .unwrap();
+        assert!(!ok, "{needle}");
+        assert!(
+            report["failures"].to_string().contains(needle),
+            "{needle}: {report}"
+        );
+        n.honest();
+    }
+    // A subject the node does not hold, against a directory for another one.
+    let other = [0x42; 32];
+    let (ok, report) = node::verify(&n.client(READ), other, Some(&dir))
+        .await
+        .unwrap();
+    assert!(!ok);
+    let failures = report["failures"].to_string();
+    assert!(
+        failures.contains("node does not know the subject"),
+        "{report}"
+    );
+    assert!(
+        failures.contains("--dir holds a different subject"),
+        "{report}"
+    );
     n.cleanup.cleanup().await;
 }
 
@@ -798,6 +876,60 @@ async fn token_stays_on_authenticated_routes_and_redirects_are_refused() {
     let e = error_text(n.client(WRITE).health().await.err().unwrap());
     assert!(e.contains("GET /health: HTTP 302"), "{e}");
     assert_eq!(seen.lock().unwrap().len(), 2, "the redirect was followed");
+    n.honest();
+
+    // A node that reflects the token inside its JSON answers: an error, the
+    // receipt (stdout and file) and the verify report all redact it.
+    let dir = tmp.path().join("reflect");
+    let g = signed_genesis(&k, INSTANCE, "online-reflect", &dir);
+    n.rewrite("/v1/candidates", |status, _, v| {
+        *status = StatusCode::UNPROCESSABLE_ENTITY;
+        v["status"] = json!({"state": "invalid", "reason": format!("echo {WRITE}"), "missing": []});
+    });
+    let e = error_text(
+        node::submit(&n.client(WRITE), &dir, false)
+            .await
+            .err()
+            .unwrap(),
+    );
+    assert!(e.contains("echo <redacted>") && !e.contains(WRITE), "{e}");
+    n.honest();
+    n.rewrite("/v1/subjects/", |_, _, v| {
+        v["rule"]["note"] = json!(format!("echo {WRITE}"));
+        v["rule"][WRITE] = json!(1);
+    });
+    let out = publisher()
+        .args(["v1", "submit", "--node", &n.url, "--dir"])
+        .arg(&dir)
+        .env("CC_NODE_API_KEY", WRITE)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let file = std::fs::read_to_string(dir.join(RECEIPT_FILE)).unwrap();
+    for text in [&*stdout, &*file] {
+        assert!(
+            text.contains("echo <redacted>") && !text.contains(WRITE),
+            "{text}"
+        );
+    }
+    n.honest();
+    n.rewrite("/v1/subjects/", |_, _, v| {
+        v["state"] = json!(format!("echo {WRITE}"))
+    });
+    let (ok, report) = node::verify(&n.client(WRITE), g.subject(), None)
+        .await
+        .unwrap();
+    assert!(!ok);
+    let report = report.to_string();
+    assert!(
+        report.contains("echo <redacted>") && !report.contains(WRITE),
+        "{report}"
+    );
     n.cleanup.cleanup().await;
 }
 

@@ -843,6 +843,14 @@ fn key_file_wider_than_0600_is_refused() {
         "mode 0644 is wider than 0600",
     );
     assert_absent(&out);
+    // `--out` is checked before the key is loaded.
+    let full = fx.path("full");
+    fs::create_dir(&full).unwrap();
+    write_file(&full.join("keep"), b"keep\n", 0o600);
+    refused(
+        &run_genesis(with(fx.flags(&full), "--key", utf8(&wide))),
+        "refusing to write into non-empty",
+    );
 
     // Only a regular file that exists is a key file.
     let dir = fx.path("key-dir");

@@ -1,7 +1,7 @@
 //! The v1 node client: `/health`, the body and candidate writes, and the
 //! subject/prose readback. Tokens are passed in by the caller, which reads
 //! them from the environment; they go only to authenticated routes and are
-//! redacted from every error that quotes a response.
+//! redacted from every error, receipt and report, which can quote the node.
 use super::genesis::{write_new, Genesis};
 use super::{hash_json, time};
 use anyhow::{bail, ensure, Context, Result};
@@ -107,13 +107,34 @@ impl Node {
         self.base.as_str()
     }
 
-    /// A response body for an error message: at most 300 characters, control
-    /// characters blanked, and the token redacted in case the node echoes it.
-    fn snippet(&self, body: &[u8]) -> String {
-        let mut text = String::from_utf8_lossy(body).into_owned();
-        if let Some(t) = &self.token {
-            text = text.replace(t.as_str(), "<redacted>");
+    /// `text` with the token replaced by `<redacted>`, in case a node echoes it.
+    pub fn redact(&self, text: &str) -> String {
+        match &self.token {
+            Some(t) => text.replace(t.as_str(), "<redacted>"),
+            None => text.to_owned(),
         }
+    }
+    /// [`Node::redact`] applied to every string and key of a JSON value.
+    pub fn redact_json(&self, v: &mut Value) {
+        match v {
+            Value::String(s) => *s = self.redact(s),
+            Value::Array(a) => a.iter_mut().for_each(|x| self.redact_json(x)),
+            Value::Object(o) => {
+                *o = std::mem::take(o)
+                    .into_iter()
+                    .map(|(k, mut x)| {
+                        self.redact_json(&mut x);
+                        (self.redact(&k), x)
+                    })
+                    .collect();
+            }
+            _ => {}
+        }
+    }
+    /// A response body for an error message: at most 300 characters, control
+    /// characters blanked, and the token redacted.
+    fn snippet(&self, body: &[u8]) -> String {
+        let text = self.redact(&String::from_utf8_lossy(body));
         text.chars()
             .take(300)
             .map(|c| if c.is_control() { ' ' } else { c })
@@ -490,7 +511,16 @@ pub fn summary(done: &Submitted, dir: &Path) -> Vec<String> {
 }
 
 /// Check, write and read back one Genesis directory. See `docs/PUBLISHER-V1.md`.
+/// The token is redacted from the error, the receipt and the warnings, which
+/// can quote what the node sent.
 pub async fn submit(node: &Node, dir: &Path, allow_untrusted: bool) -> Result<Submitted> {
+    let mut done = submit_unredacted(node, dir, allow_untrusted)
+        .await
+        .map_err(|e| anyhow::anyhow!(node.redact(&format!("{e:#}"))))?;
+    done.warnings = done.warnings.iter().map(|w| node.redact(w)).collect();
+    Ok(done)
+}
+async fn submit_unredacted(node: &Node, dir: &Path, allow_untrusted: bool) -> Result<Submitted> {
     let g = Genesis::load_dir(dir)?;
     let health = node.health().await?;
     writable(&health)?;
@@ -546,6 +576,9 @@ pub async fn submit(node: &Node, dir: &Path, allow_untrusted: bool) -> Result<Su
         "admission": admission,
         "readback": readback,
     });
+    // Redacted before it is written or returned: it quotes node answers.
+    let mut receipt = receipt;
+    node.redact_json(&mut receipt);
     let path = dir.join(RECEIPT_FILE);
     let receipt_written = !path.exists();
     if receipt_written {
@@ -664,8 +697,20 @@ async fn readback(node: &Node, g: &Genesis) -> Result<Value> {
 }
 
 /// Read-only check of one subject. With a `genesis` directory, the node must
-/// also serve exactly that Genesis's revision and body bytes.
+/// also serve exactly that Genesis's revision and body bytes. The token is
+/// redacted from the error and the report.
 pub async fn verify(node: &Node, subject: Hash, dir: Option<&Path>) -> Result<(bool, Value)> {
+    let (ok, mut report) = verify_unredacted(node, subject, dir)
+        .await
+        .map_err(|e| anyhow::anyhow!(node.redact(&format!("{e:#}"))))?;
+    node.redact_json(&mut report);
+    Ok((ok, report))
+}
+async fn verify_unredacted(
+    node: &Node,
+    subject: Hash,
+    dir: Option<&Path>,
+) -> Result<(bool, Value)> {
     let local = dir.map(Genesis::load_dir).transpose()?;
     let health = node.health().await?;
     let mut failures = Vec::new();
