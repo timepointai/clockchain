@@ -32,9 +32,12 @@ from the environment. No flag takes a secret.
 
 A variable that is set but blank is refused; it does not fall back. A token
 with leading or trailing whitespace is refused. The token is sent as
-`Authorization: Bearer <token>` exactly as set, on every request, so it must
-not contain a newline or other control character. Tokens and seeds are never
-printed, and a key-file error does not quote the file.
+`Authorization: Bearer <token>` exactly as set, so it must not contain a
+newline or other control character. It goes only to the authenticated routes:
+never to `/health`, which is public. Tokens and seeds are never printed. An
+error that quotes a response body (at most 300 characters) replaces the token
+with `<redacted>` in case the node echoes it, and a key-file error does not
+quote the file.
 
 ### Key files
 
@@ -52,10 +55,11 @@ directory must exist and support hard links. An interrupted `keygen` may leave
 the temporary file, which holds a seed; delete it.
 
 Loading (`pubkey`, `genesis`) refuses anything but a regular file (a symlink
-is followed) before opening it, so a FIFO or device cannot block the command.
-It then checks the opened file before reading it: its mode must have none of
-setuid, setgid, sticky, owner execute, or any group or other bit (mask
-`07177`). Modes 0600 and 0400 pass; 0640, 0644 and 0700 are refused.
+is followed) and opens it non-blocking, so a FIFO or device cannot block the
+command. It then checks the opened file before reading it: its mode must have
+none of setuid, setgid, sticky, owner execute, or any group or other bit
+(mask `07177`). Modes 0600 and 0400 pass; 0640, 0644 and 0700 are refused.
+The body file and the files `submit` reloads get the same regular-file check.
 
 ### Node URL and transport
 
@@ -155,7 +159,8 @@ cc-publisher v1 genesis --key FILE --instance HEX --kind TT_NODE_ID \
   [--evidence SHA256 ...] [--nonce HEX] --out DIR
 ```
 
-Offline. Every argument is checked before the key is loaded.
+Offline. Every argument, `--out` included, is checked before the key is
+loaded; `--out` is checked again when the files are written.
 
 | Flag | Rule |
 |---|---|
@@ -279,9 +284,10 @@ Stdout is the receipt JSON either way. Stderr then has one line each for
 A rerun is safe: an admitted Genesis is not posted again, the body `PUT`
 returns 200 and the read-back runs again. If a step after the `POST` fails,
 the envelope may be admitted with no receipt; fix the cause and rerun. The
-file keeps the first successful result; redirect stdout to keep a later one.
-The read-back needs this Genesis's revision to be current; once a later event
-replaces it, use `verify`.
+file keeps the first successful result, even when a later run uses another
+node or no overrides; redirect stdout to keep a later one. The read-back
+needs this Genesis's revision to be current; once a later event replaces it,
+use `verify`.
 
 ### verify
 
@@ -290,9 +296,10 @@ cc-publisher v1 verify --node URL --subject HEX [--dir DIR]
 ```
 
 Read-only: it sends only `GET` requests. It needs `CC_NODE_READ_KEY`, or
-`CC_NODE_API_KEY` when that is unset; with neither set, the error names both. `--subject` is the subject id, which for
-a Genesis is its event id. With `--dir`, the directory is first reloaded with
-the checks of `submit` step 1. Each failed check adds an entry to `failures`:
+`CC_NODE_API_KEY` when that is unset; with neither set, the error names both.
+`--subject` is the subject id, which for a Genesis is its event id. With
+`--dir`, the directory is first reloaded with the checks of `submit` step 1.
+Each failed check adds an entry to `failures`:
 
 | Check | Failure entries |
 |---|---|
@@ -353,7 +360,10 @@ recompute it and refuse a mismatch.
 
 ### receipt.json
 
-Written by `submit` (step 10).
+Written by `submit` (step 10). It records what the node answered, checked
+against what was signed. Every value it checks can be derived from the bytes
+the publisher sent, so a node that answers dishonestly could pass; the receipt
+is the node's claim of retention, not a proof of it.
 
 | Field | Meaning |
 |---|---|
