@@ -1,11 +1,14 @@
 # Stage (b): authority and receipt separation
 
+This records the merged Stage (b) boundary; subsequent projection work is in
+[Stage (c)](STAGE-C.md).
+
 Owner authorized this bounded PR on 2026-09-30 after the post-Stage (a) launch
 audit. It implements the authority-chain boundary in
 [MULTI-SIGNER.md](MULTI-SIGNER.md). The normal node remains on its legacy runtime;
 the v1 review adapter and store refuse readiness. Resolve/frontier projection,
 pinned edges/media/support, and the final governed fold identity remain stages
-(c), (d), (e). This PR does not enable a production v1 runtime or close #6.
+(c), (d), (e). This PR does not enable a production v1 runtime. Refs #6.
 
 ## Authority contract
 
@@ -118,17 +121,20 @@ local outcomes are reported separately in the PR.
 
 ## Launch and next-stage boundary
 
-[Issue #6 was reopened](https://github.com/timepointai/clockchain/issues/6#issuecomment-5920400616)
-with owner approval because its closure after #8 was not evidence of passing
+[Refs #6](https://github.com/timepointai/clockchain/issues/6#issuecomment-5920400616)
+was reopened with owner approval because its closure after #8 was not evidence of passing
 launch gates. I2/I6 now receive authority-domain evidence; Resolve joins, complete
 I1/I3 projections, I5 support and I8 versioned commitments remain outstanding.
 The first PR review is the stopping point. No self-approval, merge or later-stage
 implementation follows from this authorization.
 
-Recommended continuation is (c), then (d), then (e), each separately scoped.
-The single-key alternative remains unselected: it requires rejecting Delegate/
+The owner subsequently selected the full (a)–(e) sequence and authorized (c)
+through first review. Later stages remain separately scoped.
+The rejected single-key alternative requires rejecting Delegate/
 Revoke before storage and a fold-version bump to enable them later, losing hot-key
 recovery, delegation and rotation in the initial release. Neither sequence
 recovers a compromised root. Completion still requires versioned runtime semantics,
 exact-image operational evidence and a separately authorized historical-content/
 human-publication session. Current live event counts remain unknown.
+
+Refs #6. Only the owner may resolve the issue after (e) and operational evidence.

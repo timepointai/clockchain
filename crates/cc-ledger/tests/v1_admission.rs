@@ -162,7 +162,7 @@ async fn v1_fresh_store_refuses_even_empty_v0_projection() {
 }
 
 #[tokio::test]
-async fn later_stages_are_pending_and_cannot_grant_readiness() {
+async fn resolve_is_checked_while_later_stages_cannot_grant_readiness() {
     let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
     let store = Store::provision(pool.clone(), INSTANCE).await.unwrap();
     let g = genesis();
@@ -182,8 +182,20 @@ async fn later_stages_are_pending_and_cannot_grant_readiness() {
     };
     let event = Signed::sign(&key(0), e).unwrap();
     let result = store.admit(event.bytes()).await.unwrap();
+    assert_eq!(result.status.state, State::Invalid);
+    assert_eq!(result.status.reason, "comparable_parents");
+    let mut attestation = g.envelope().clone();
+    attestation.subject_key = None;
+    attestation.payload = Payload::Attestation {
+        target_kind: TargetKind::Event,
+        target: g.id(),
+        artifact_kind: "synthetic".into(),
+        artifact: [44; 32],
+    };
+    let attestation = Signed::sign(&key(0), attestation).unwrap();
+    let result = store.admit(attestation.bytes()).await.unwrap();
     assert_eq!(result.status.state, State::Pending);
-    assert_eq!(result.status.reason, "stage_c_not_implemented");
+    assert_eq!(result.status.reason, "stage_d_not_implemented");
     assert!(store.readiness().is_err());
     let media: bool = sqlx::query_scalar("SELECT to_regclass('public.media') IS NOT NULL")
         .fetch_one(&pool)

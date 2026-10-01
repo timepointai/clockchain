@@ -1,11 +1,15 @@
-//! Stage (b) candidate admission and authority. No frontier, support or readiness.
+//! Stage (c) admission and projection review. No support verdict or readiness.
 //! HTTP, import and restore must all use `Store::admit`; SQL insertion is private.
-use cc_core::v1::{hash, root_grant, Hash, Kind, Payload, Signed, Value};
+use cc_core::v1::{hash, root_grant, Hash, Kind, Payload, Selection, Signed, Value};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::{BTreeMap, BTreeSet};
 mod authority;
+mod projection;
 pub use authority::{Authority, Effect, Grant};
+pub use projection::{
+    project, EventReading, Projection, ProjectionState, Revision, SubjectReading,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -148,14 +152,29 @@ pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
             if matches!(kind, Kind::Delegate | Kind::Revoke) && e.asserted_time.is_some() {
                 return Status::invalid("authority_time_edit");
             }
-            if kind == Kind::Resolve {
-                return Status::pending("stage_c_not_implemented", vec![]);
-            }
             let parent = e.parents.0[0];
-            let past = authority::cone(all, parent);
+            let cones: Vec<_> = e
+                .parents
+                .0
+                .iter()
+                .map(|p| authority::cone(all, *p))
+                .collect();
+            if kind == Kind::Resolve
+                && cones
+                    .iter()
+                    .any(|cone| e.parents.0.iter().filter(|p| cone.contains_key(*p)).count() > 1)
+            {
+                return Status::invalid("comparable_parents");
+            }
+            let past: BTreeMap<_, _> = cones.iter().flat_map(|c| c.clone()).collect();
             let view = authority::derive(&past);
             let grant = e.grant.unwrap();
-            if !view.active.contains(&grant) || view.grants[&grant].holder != e.author {
+            if !view.active.contains(&grant)
+                || view.grants[&grant].holder != e.author
+                || cones
+                    .iter()
+                    .any(|c| !authority::derive(c).active.contains(&grant))
+            {
                 return Status::invalid("parent_authority");
             }
             match &e.payload {
@@ -207,6 +226,56 @@ pub fn classify(candidates: &BTreeMap<Hash, Signed>) -> BTreeMap<Hash, Status> {
                             })
                     {
                         return Status::invalid("decision_mismatch");
+                    }
+                }
+                Payload::Resolve {
+                    selection,
+                    dispositions,
+                    decision,
+                } => {
+                    if decision.old != Value::Heads(e.parents.clone())
+                        || decision.new
+                            != match selection {
+                                Selection::MergedBody(b) => Value::Body(*b),
+                                Selection::Revision(r) => Value::Revision(*r),
+                            }
+                        || dispositions.0.iter().map(|d| d.parent).collect::<Vec<_>>()
+                            != e.parents.0
+                        || dispositions.0.iter().any(|d| d.rationale.is_empty())
+                    {
+                        return Status::invalid("decision_mismatch");
+                    }
+                    use cc_core::v1::DispositionKind::{Merged, Selected};
+                    match selection {
+                        Selection::MergedBody(_) => {
+                            if dispositions.0.iter().any(|d| d.action == Selected)
+                                || !dispositions.0.iter().any(|d| d.action == Merged)
+                            {
+                                return Status::invalid("disposition_mismatch");
+                            }
+                        }
+                        Selection::Revision(revision) => {
+                            let revisions = projection::revisions(&past);
+                            let Some(r) = revisions.get(revision) else {
+                                return Status::invalid("revision_unreachable");
+                            };
+                            if !view.effects[&r.creating_event].reason.is_empty() {
+                                return Status::invalid("revision_ineligible");
+                            }
+                            if e.asserted_time.is_some() {
+                                return Status::invalid("selection_time_edit");
+                            }
+                            if dispositions.0.iter().any(|d| d.action == Merged)
+                                || !dispositions.0.iter().any(|d| d.action == Selected)
+                                || dispositions.0.iter().any(|d| {
+                                    d.action == Selected
+                                        && !authority::cone(&past, d.parent)
+                                            .contains_key(&r.creating_event)
+                                })
+                            {
+                                return Status::invalid("disposition_mismatch");
+                            }
+                        }
                     }
                 }
                 _ => unreachable!(),
@@ -273,10 +342,12 @@ pub enum Error {
     Identity,
     #[error("stored_candidate_corrupt")]
     Corrupt,
-    #[error("stage_b_non_serving")]
+    #[error("stage_c_non_serving")]
     NonServing,
     #[error("invalid_node_receipt")]
     Receipt,
+    #[error("body_hash_mismatch")]
+    BodyHash,
 }
 #[derive(Clone)]
 pub struct Store {
@@ -436,5 +507,33 @@ impl Store {
     }
     pub async fn review_authority(&self) -> Result<Analysis, Error> {
         Ok(analyze(&self.verified_candidates().await?))
+    }
+    pub async fn review_projection(&self) -> Result<Projection, Error> {
+        Ok(project(&self.verified_candidates().await?))
+    }
+    /// Optional content-addressed bytes. Availability cannot change the fold.
+    pub async fn retain_body(&self, expected: Hash, bytes: &[u8]) -> Result<(), Error> {
+        if hash(bytes) != expected {
+            return Err(Error::BodyHash);
+        }
+        sqlx::query(
+            "INSERT INTO cc_v1.bodies(body_hash,bytes) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(expected.to_vec())
+        .bind(bytes)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+    pub async fn body_bytes(&self, expected: Hash) -> Result<Option<Vec<u8>>, Error> {
+        let bytes: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT bytes FROM cc_v1.bodies WHERE body_hash=$1")
+                .bind(expected.to_vec())
+                .fetch_optional(&self.pool)
+                .await?;
+        if bytes.as_ref().is_some_and(|b| hash(b) != expected) {
+            return Err(Error::Corrupt);
+        }
+        Ok(bytes)
     }
 }

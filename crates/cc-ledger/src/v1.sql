@@ -32,3 +32,11 @@ CREATE TABLE cc_v1.receipts (
 );
 CREATE TRIGGER immutable_receipts BEFORE UPDATE OR DELETE OR TRUNCATE ON cc_v1.receipts
 FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();
+
+-- Stage (c): local body availability, excluded from the semantic event fold.
+CREATE TABLE cc_v1.bodies (
+    body_hash bytea PRIMARY KEY CHECK(octet_length(body_hash)=32),
+    bytes bytea NOT NULL
+);
+CREATE TRIGGER immutable_bodies BEFORE UPDATE OR DELETE OR TRUNCATE ON cc_v1.bodies
+FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();
