@@ -1,5 +1,8 @@
 # Stage (d): pinned edges and revision-scoped media
 
+This records the merged Stage (d) boundary; the governed rule identity is in
+[Stage (e)](STAGE-E.md).
+
 The owner authorized this boundary on 2026-09-30, after merging Stage (c) PR #10
 (`1b6b9afd9c1b11df7e0465ff93b3337978356da7`). The ship sequence is the full
 (a)–(e). Refs #6. Its final disposition belongs to the owner after Stage (e) and

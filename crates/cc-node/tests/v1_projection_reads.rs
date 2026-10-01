@@ -7,7 +7,12 @@ use serde_json::Value as Json;
 #[tokio::test]
 async fn i3_all_event_review_and_verified_revision_prose_stay_non_serving() {
     let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
-    let store = Store::provision(pool.clone(), INSTANCE).await.unwrap();
+    let store = Store::provision(pool.clone(), INSTANCE)
+        .await
+        .unwrap()
+        .bind(filter())
+        .await
+        .unwrap();
     let text = b"Synthetic body for software tests.";
     let mut e = genesis().envelope().clone();
     if let Payload::Genesis { body, .. } = &mut e.payload {

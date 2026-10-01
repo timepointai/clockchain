@@ -44,3 +44,14 @@ FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();
 -- Stage (d): edges and attestations are reclassified from retained candidates;
 -- no derived edge or media table is trusted. This contract marker changes the
 -- interim schema hash so a Stage (c) store refuses silent reinterpretation.
+
+-- Stage (e): the boot-pinned rule identity this store was bound to. Reopening
+-- under another fold or filter identity fails semantic readiness.
+CREATE TABLE cc_v1.rule_identity (
+    singleton boolean PRIMARY KEY CHECK(singleton),
+    fold_version smallint NOT NULL,
+    fold_manifest bytea NOT NULL CHECK(octet_length(fold_manifest)=32),
+    filter_identity bytea NOT NULL
+);
+CREATE TRIGGER immutable_rule_identity BEFORE UPDATE OR DELETE OR TRUNCATE ON cc_v1.rule_identity
+FOR EACH STATEMENT EXECUTE FUNCTION cc_v1.append_only();

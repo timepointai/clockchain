@@ -63,6 +63,13 @@ jobs:
       - name: Wasm purity (cc-core + cc-filter compile to wasm32)
         run: cargo build -p cc-core -p cc-filter --target wasm32-unknown-unknown
 
+      # Stage (e): the shipped rule-identity code must reproduce the independent
+      # reference vectors inside wasm32 as well as natively (Cargo test).
+      - name: Wasm rule-vector agreement
+        run: |
+          cargo build -p cc-wasm-vectors --target wasm32-unknown-unknown
+          node crates/cc-wasm-vectors/check.mjs target/wasm32-unknown-unknown/debug/cc_wasm_vectors.wasm
+
       - name: Test (against the Postgres service)
         run: cargo test --all
 

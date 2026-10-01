@@ -277,3 +277,10 @@ pub fn attest(
     };
     Signed::sign(&key(signer), unbound(Set(vec![]), payload)).unwrap()
 }
+
+/// Synthetic boot-pinned curator set (keys 0..4) with a four-hop bound.
+pub fn filter() -> cc_filter::v1::FilterIdentity {
+    let mut curators: Vec<Hash> = (0..4).map(|k| key(k).author().to_bytes()).collect();
+    curators.sort();
+    cc_filter::v1::FilterIdentity::governed(curators, 4).unwrap()
+}
