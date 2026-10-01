@@ -1,19 +1,6 @@
-"""Graph rendering and the live walk, for browse-v4.py.
+"""Shared graph layout and feasibility reader used by evidence capture.
 
-Tables of nodes with a degree column do not show a graph. The point of v4 is
-that the filter WALKS causally, so the browser has to draw the walk.
-
-Two things here:
-
-  components() — connected components from the edge set, laid out left-to-right
-                 in time order and drawn as SVG boxes and arrows. Chains read
-                 the way causation reads: earlier on the left, arrow to later.
-
-  walk()       — the acceptance test as a button. Picks two connected entities,
-                 runs the REAL feasibility query against the live node, and
-                 renders the verdict with the events it consulted. This is the
-                 most convincing panel because it is not a diagram OF the
-                 mechanism, it IS the mechanism answering.
+This module has no HTTP listener; the application browser is browse.py.
 """
 
 import html

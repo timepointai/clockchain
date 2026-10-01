@@ -13,6 +13,13 @@ require separate review and are not authorized by this self-hosted profile.
 
 ## Generate one candidate
 
+For unpublished, source-bound proposals, use the Rust application's
+`generate --media-plan` and `image-generate` commands described in
+[model operations](../docs/MODEL-OPERATIONS.md#prepare-required-images-before-staging).
+The text model authors prompts and disclosures; the app preserves their bytes,
+enforces the shared budget, and prepares exact claim-body bindings. Visual review
+and human-operated attachment submission remain separate steps.
+
 Run `flux_image.py` on our own CUDA worker with Diffusers 0.40.0,
 Transformers 5.16.1 and Accelerate 1.14.0. The pilot uses a Hugging Face Job,
 PyTorch 2.6.0 CUDA 12.4, L4 hardware and a 1,200-second timeout. Review current

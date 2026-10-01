@@ -2,8 +2,12 @@
 
 A signed, append-only temporal evidence ledger in Rust and PostgreSQL. It records
 claims, source evidence, typed relationships and media provenance, with explicit
-query coordinates and cryptographic verification. Signatures prove integrity and
-authorship, not historical truth; feasibility is relative to recorded evidence.
+query coordinates and cryptographic verification. Its goal is historical truth:
+the best-supported account of what happened, refined as evidence improves.
+Historical judgments weigh sources, corroboration, alternatives and uncertainty;
+signatures make the authorship and integrity of those judgments verifiable.
+Feasibility is relative to recorded evidence. See the
+[historical evidence standard](docs/evaluation/design-boundaries.md).
 
 This repository contains the core implementation and reusable operator tooling.
 Production data, credentials, backups, approvals and private research are not part
@@ -44,11 +48,19 @@ The selected model supplies historical content; software validates structure and
 measured provenance. Review every claim against its sources. The human operator
 stages, approves, initializes if needed, signs and publishes the exact reviewed
 candidate. A Git commit, deployment or local draft is not ledger publication.
+Complete the [owner-only publication gate](docs/PUBLICATION-GATE.md) privately
+before preparing the exact publication handoff.
 
 The [model operating workflow](docs/MODEL-OPERATIONS.md) provides daily discovery,
 human model selection, bounded hosted evaluation and a configurable proposal-only
 runtime. [Generation boundaries](docs/ADAPTIVE-GENERATION.md) records implemented
 capabilities and limits. Deployment does not enable generation.
+
+## Browse records
+
+The [Clockchain browser](docs/BROWSER.md) provides one reusable local viewer for
+validated candidates and deployed node records, including images and provenance.
+It is read-only and supports a durable macOS login service.
 
 ## Private operation
 

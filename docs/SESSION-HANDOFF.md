@@ -6,7 +6,18 @@ Start with the first live brief and its source material. Read `AGENTS.md`,
 Private records hold exact paths, dated checks, budgets and operator commands.
 If unavailable, obtain their location from the owner; old plans are not orders.
 
+Historical truth is the goal. Follow the [historical evidence standard](evaluation/design-boundaries.md):
+weigh source support and competing explanations, make uncertainty explicit, and
+revise conclusions as evidence improves. Distinguish documented wording from
+inferred dialogue or other reconstructed details. Cryptographic verification
+preserves the evidence record; historical review assesses what it supports.
+
 ## Next action
+
+For an existing candidate, first obtain the owner's explicit choice under the
+[publication gate](PUBLICATION-GATE.md): prepare it for admission, retain it for
+source work, or leave production empty while hardening reads. Do not treat this
+kickoff sequence as authorization for another generation run or publication.
 
 1. Choose the historical event or question and a bounded scope with the owner.
 2. Assemble a source packet with reviewed commercial reuse/training rights,

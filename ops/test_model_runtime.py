@@ -129,6 +129,74 @@ class ModelTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'credentials'):r.run(self.root,Path('none'),Path('none'),self.root/'out')
         network.assert_not_called()
 
+    def test_extension_preserves_base_and_requires_supported_connection(self):
+        base=self.convert(); before=copy.deepcopy(base)
+        task=r.packet(self.brief,self.sources,base)
+        self.assertEqual(task['output_schema']['properties']['entries']['maxItems'],2)
+        self.assertNotIn('prov_measured',task['existing_candidate']['entries'][0])
+        raw=copy.deepcopy(self.raw);raw['entries'][0]['title']='Synthetic follow-up experiment'
+        raw['entries'][0]['year']=2002
+        evidence=[{'source_id':'s','passage_index':0,'supports':['relation']}]
+        # Synthetic schema/admission test only; does not assert this fixture's causality.
+        raw['edges']=[{'from':{'title':base['entries'][0]['title'],'year':2001},
+            'to':{'title':'Synthetic follow-up experiment','year':2002},
+            'relation':'influence','evidence_class':'SecondarySource','rationale':'Synthetic test rationale.',
+            'evidence':evidence}]
+        candidate=r.make_proposal(raw,self.sources,self.route,self.brief,'next',{},self.response,task['output_schema'],base)
+        self.assertEqual(candidate['entries'][0],before['entries'][0])
+        self.assertEqual(base,before)
+        self.assertEqual(candidate['edges'][0]['rationale'],raw['edges'][0]['rationale'])
+        for mutation in ('disconnected','rewrite','unknown','backwards'):
+            broken=copy.deepcopy(raw)
+            if mutation=='disconnected':broken['edges']=[]
+            if mutation=='rewrite':broken['entries']=copy.deepcopy(self.raw['entries'])
+            if mutation=='unknown':broken['edges'][0]['from']['title']='Invented existing node'
+            if mutation=='backwards':broken['edges'][0]['from'],broken['edges'][0]['to']=broken['edges'][0]['to'],broken['edges'][0]['from']
+            with self.assertRaises(ValueError):
+                r.make_proposal(broken,self.sources,self.route,self.brief,'next',{},self.response,task['output_schema'],base)
+        with self.assertRaisesRegex(ValueError,'no room'):
+            r.packet({**self.brief,'max_entries':1},self.sources,base)
+
+    def test_optional_classification_is_model_authored_not_repaired(self):
+        brief={**self.brief,'classification_details':True};task=r.packet(brief,self.sources)
+        raw=copy.deepcopy(self.raw)
+        fields={'claim_type_alternatives':[],'alternatives_cross_lens':False,'classification_source':'derived',
+            'classification':{'lens_a':{'scientific-discovery':1},'lens_b':{},'abstain':False,
+                              'bundle':'tt-ontology/1.0 v2.1.0'}}
+        raw['entries'][0].update(fields)
+        candidate=r.make_proposal(raw,self.sources,self.route,brief,'fixture',{},self.response,task['output_schema'])
+        for key,value in fields.items():self.assertEqual(candidate['entries'][0][key],value)
+        raw['entries'][0]['classification_source']='independent'
+        with self.assertRaises(r.jsonschema.ValidationError):
+            r.make_proposal(raw,self.sources,self.route,brief,'fixture',{},self.response,task['output_schema'])
+        del raw['entries'][0]['classification_source']
+        with self.assertRaises(r.jsonschema.ValidationError):
+            r.make_proposal(raw,self.sources,self.route,brief,'fixture',{},self.response,task['output_schema'])
+
+    def test_media_prompts_are_model_authored_and_bound_to_every_entry(self):
+        base=self.convert();before=copy.deepcopy(base)
+        task=r.media_packet(self.brief,self.sources,base)
+        raw={'status':'proposal','reason':'Synthetic illustration plan.', 'prompts':[
+            {'entry_index':0,'prompt':'A stylized synthetic test illustration.',
+             'reconstruction_disclosure':'Layout and color are reconstructed.',
+             'evidence':[{'source_id':'s','passage_index':0}]}]}
+        def convert(value):
+            return r.media_plan(value,task,self.sources,'a'*64,self.selection,{},self.response)
+        plan=convert(raw)
+        self.assertEqual(plan['prompts'],raw['prompts'])
+        self.assertEqual(plan['candidate_sha256'],'a'*64)
+        self.assertEqual(base,before)
+        self.assertNotIn('prov_measured',task['candidate_entries'][0])
+        for kind in ('missing','duplicate','span','rewrite'):
+            bad=copy.deepcopy(raw)
+            if kind=='missing':bad['prompts']=[]
+            if kind=='duplicate':bad['prompts']*=2
+            if kind=='span':bad['prompts'][0]['evidence'][0]['passage_index']=99
+            if kind=='rewrite':bad['entries']=base['entries']
+            with self.assertRaises((ValueError,r.jsonschema.ValidationError)):convert(bad)
+        self.assertIsNone(convert({'status':'needs_evidence','reason':'Missing visual evidence.','prompts':[]}))
+        with self.assertRaises(ValueError):r.media_packet(self.brief,self.sources,None)
+
     def test_evaluation_freezes_case_bytes_before_running(self):
         import model_evaluate
         p.save(self.root/'brief.json',self.brief);p.save(self.root/'sources.json',[self.source])
@@ -146,14 +214,6 @@ class ModelTests(unittest.TestCase):
         self.assertIn('required',report['semantic_review'])
         registered=p.read(self.root/'evaluation/registration.json')
         self.assertEqual(registered['frozen_cases'][0]['brief_sha256'],p.digest(p.canonical(self.brief)))
-    def test_viewer_escapes_content_and_has_no_write_action(self):
-        import proposal_view
-        candidate=self.convert();candidate['entries'][0]['title']='<script>alert(1)</script>'
-        page=proposal_view.render(candidate,{'status':'proposal'}).decode()
-        self.assertNotIn('<script>',page)
-        self.assertIn('&lt;script&gt;',page)
-        self.assertIn('Unpublished draft',page)
-        self.assertNotIn('<form',page)
     def test_daily_job_only_discovers_without_credentials(self):
         import model_daily
         config=model_daily.configuration(self.root,9)
@@ -184,5 +244,61 @@ class RuntimeReceiptTests(unittest.TestCase):
         self.assertTrue((self.root/'attempt/response-wire.json').exists())
         self.assertFalse((self.root/'attempt/proposal.json').exists());admission.assert_not_called()
         self.assertNotIn('synthetic-key',(self.root/'attempt/request.json').read_text())
+
+    def test_terminal_attempt_retry_never_calls_route_transport_or_budget(self):
+        out=self.root/'terminal';out.mkdir()
+        receipt={'schema':'cc.generation-result.v1','status':'needs_evidence','reason':'Synthetic unresolved destination','published':False}
+        p.save(out/'result.json',receipt)
+        (out/'image.png').write_bytes(b'private frozen PNG')
+        (out/'bindings.json').write_bytes(b'private frozen bindings')
+        before={f.name:f.read_bytes() for f in out.iterdir()}
+        with patch.object(r.policy,'selected',side_effect=AssertionError('route touched')), patch.object(r,'public_json',side_effect=AssertionError('network touched')), patch.object(r.policy,'Budget',side_effect=AssertionError('budget touched')):
+            for _ in range(2):
+                self.assertEqual(r.run(self.root,Path('missing'),Path('missing'),out),receipt)
+        self.assertEqual({f.name:f.read_bytes() for f in out.iterdir()},before)
+        self.assertFalse((out/'proposal.json').exists())
+
+    def test_new_attempt_after_evidence_gap_requires_new_evidence(self):
+        prior=self.root/'prior';prior.mkdir()
+        p.save(prior/'result.json',{'schema':'cc.generation-result.v1','status':'needs_evidence','reason':'Synthetic gap','published':False})
+        p.save(prior/'sources.json',[self.source])
+        p.save(self.root/'brief.json',self.brief)
+        renamed=copy.deepcopy(self.source)
+        renamed['locator']='Renamed metadata cannot fix missing evidence'
+        p.save(self.root/'sources-new-name.json',[renamed])
+        with patch.dict(os.environ,{'PATH':os.environ['PATH']},clear=True), patch.object(r,'public_json',side_effect=AssertionError('network touched')):
+            with self.assertRaisesRegex(ValueError,'new source evidence'):
+                r.run(self.root,self.root/'brief.json',self.root/'sources-new-name.json',self.root/'next',after_path=prior)
+        self.assertFalse((self.root/'next').exists())
+
+    def test_attempt_result_schema_refuses_unknown_status_and_nonempty_terminal_result(self):
+        receipt={'schema':'cc.generation-result.v1','status':'needs_evidence','reason':'Synthetic gap','published':False,'terminal':True,'retry_allowed':False}
+        r.jsonschema.validate(receipt,r.RESULT_SCHEMA)
+        for key,value in [('status','retrying'),('entries',1),('published',True),('retry_allowed',True)]:
+            with self.subTest(key=key):
+                with self.assertRaises(r.jsonschema.ValidationError):
+                    r.jsonschema.validate(receipt|{key:value},r.RESULT_SCHEMA)
+
+    def test_needs_evidence_completion_writes_terminal_receipt_and_stops(self):
+        from types import SimpleNamespace
+        raw={'status':'needs_evidence','reason':'Synthetic source cannot carry that edge.','entries':[],'edges':[]}
+        response=copy.deepcopy(self.response)
+        response['choices'][0]['message']['content']=json.dumps(raw)
+        p.save(self.root/'brief.json',self.brief);p.save(self.root/'sources.json',[self.source])
+        class Process:
+            returncode=0
+            def __init__(self,args,**kwargs):
+                Path(args[args.index('--response')+1]).write_text(json.dumps(response))
+            def poll(self):return 0
+        with patch.dict(os.environ,{'PATH':os.environ['PATH'],'OPENROUTER_API_KEY':'synthetic-key'},clear=True), patch.object(r,'public_json',return_value=self.endpoint), patch.object(r.subprocess,'Popen',Process), patch.object(r.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='{}',stderr='')) as admission:
+            result=r.run(self.root,self.root/'brief.json',self.root/'sources.json',self.root/'attempt')
+        self.assertEqual(result['status'],'needs_evidence')
+        self.assertTrue(result['terminal']);self.assertFalse(result['retry_allowed'])
+        self.assertEqual(p.read(self.root/'attempt/result.json'),result)
+        self.assertFalse((self.root/'attempt/proposal.json').exists());admission.assert_not_called()
+        with patch.dict(os.environ,{'PATH':os.environ['PATH']},clear=True), patch.object(r,'public_json',side_effect=AssertionError('network touched')):
+            with self.assertRaisesRegex(ValueError,'new source files'):
+                r.run(self.root,self.root/'brief.json',self.root/'sources.json',self.root/'renamed-attempt')
+        self.assertFalse((self.root/'renamed-attempt').exists())
 
 if __name__=='__main__':unittest.main()

@@ -17,7 +17,7 @@ credentials and never deploys. Keep operator evidence and credentials outside th
 | `local_generate.py` | [Local open-model pilot](../docs/LOCAL-GENERATION.md), at most three entries; no publication capability |
 | `model_catalog.py`, `model_daily.py` | Daily catalog discovery and explicit human selection; no paid inference or automatic model changes |
 | `model_runtime.py`, `model_evaluate.py` | [Reviewed hosted routes and bounded parallel evaluation](../docs/MODEL-OPERATIONS.md), private evidence and spend accounting |
-| `proposal_view.py` | One validated, unpublished proposal as a read-only loopback graph |
+| `browse.py` / `browser_service.py` | Unified local/deployed read-only browser with images and optional login service; see [configuration](../docs/BROWSER.md) |
 
 Content publication needs its own human approvals and execution. A deploy authorization
 is not a content approval. Do not edit approved artifact bytes, applied migrations,

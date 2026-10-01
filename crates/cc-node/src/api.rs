@@ -148,7 +148,10 @@ pub async fn get_entity(
     let readings_json: Vec<Value> = readings
         .iter()
         .zip(&reading_hashes)
-        .map(|((bh, _), ch)| json!({"body_hash": bh, "content_hash": ch}))
+        .map(|((bh, body), ch)| {
+            json!({"body_hash": bh, "content_hash": ch,
+            "body":body, "body_status":if body.is_some(){"retained"}else{"unavailable"}})
+        })
         .collect();
     let tt_layer = match view.claim_body_for(id, as_of).await? {
         None => json!({"present": false,

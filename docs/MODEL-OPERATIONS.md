@@ -6,6 +6,12 @@ makes paid inference calls, enables generation, or publishes content. An explici
 owner command activates a reviewed configuration; a model's own recommendation
 is not approval. Keep all real configuration and evidence outside this checkout.
 
+Historical truth is the quality objective. Apply the
+[historical evidence standard](evaluation/design-boundaries.md) to model outputs:
+evaluate supported conclusions, competing explanations and appropriate uncertainty,
+including the distinction between documented quotations and reconstructed dialogue.
+Strong evidence can justify a historical conclusion without deductive certainty.
+
 ## Daily cycle
 
 1. `python3 ops/model_catalog.py --registry /private/model-registry refresh`
@@ -19,7 +25,8 @@ is not approval. Keep all real configuration and evidence outside this checkout.
    evaluation cases with a finite budget. Compare source support, critical errors,
    useful coverage, abstention, cost including failures, and latency. Keep case
    labels out of prompts. Inspect every field and causal mechanism against the
-   retained sources; deterministic admission is not historical verification.
+   retained sources; historical assessment weighs that evidence, while deterministic
+   admission checks the software contract.
 4. A human selects an incumbent with an explicit reason and decision reference:
 
    ```sh
@@ -83,6 +90,89 @@ models to be configuration changes without pretending all new transports work.
 
 ## Generation, evaluation and local review
 
+The Rust application exposes proposal generation without a database connection:
+
+```sh
+cc-publisher generate --registry /private/model-registry \
+  --brief /private/brief.json --sources /private/sources.json \
+  --base /private/previous-attempt/proposal.json --output /private/next-attempt \
+  --python /private/runtime/bin/python
+```
+
+Omit `--base` for an initial proposal. With a base, the app validates it before
+spending, hashes it, and preserves its entries, edges and media exactly. The model
+returns only new entries and edges; the combined candidate must fit the brief's
+limits. Every new entry must be reachable from the base through new directed
+edges. Unsupported connections produce abstention or a rejected attempt, never
+an automatically invented edge. Historical fields and relationship rationales
+come from the selected model. Base context is not new source evidence.
+
+`classification_details: true` in the brief requests the optional classification
+profile, competing types and cross-lens flag from the model. Rust validates them
+against the pinned TT rules; software does not normalize or repair model output.
+The source is `derived` because this is the same generation call, not an
+independent classifier. Empty alternatives are legitimate. Classification mass
+is not historical confidence. Existing base fields remain unchanged.
+
+`cc-publisher source-window --sources /private/sources.json --source-id source-1
+--start 'unique literal beginning' --end 'unique literal ending'
+--output /private/expanded-sources.json` appends an exact slice of an already
+captured, rights-reviewed source. It verifies the original hash, requires unique
+markers and preserves the source attribution and license. It adds no historical
+prose and grants no additional rights. The operator must limit windows to material
+covered by the recorded rights review.
+
+### Prepare required images before staging
+
+`cc-publisher generate --media-plan --base /private/proposal.json` uses the
+selected text route to author one prompt and reconstruction disclosure per entry.
+It takes the same registry, brief, sources, output, and optional Python arguments
+as text generation. It emits `media-plan.json`, preserves every historical field,
+and charges the shared registry. Prompts are preparation artifacts, not images.
+
+`cc-publisher image-generate --registry /private/models --route /private/image-route.json
+--candidate /private/proposal.json --plan /private/media-attempt --output /private/images`
+executes the separately human-selected, pinned FLUX 4B profile on Hugging Face
+Jobs. The route pins the CUDA container digest, generator/profile/bootstrap hashes,
+hardware, timeout, price ceiling, private output repository, owner decision, and
+captured rights evidence with an expiry. See `ops/image_prepare.py` for the exact
+`cc.image-route.v1` contract. Install `ops/requirements-images.txt` in the operator
+Python environment, or use the shipped image's environment. No database,
+publication, or OpenRouter credentials reach the GPU worker; its HF credential
+is supplied as a job secret. Only prompts authored by the selected text model
+reach image inference.
+
+The app rechecks model-response and candidate hashes before spending, reserves
+the entire GPU timeout plus a billing unit, verifies downloaded weights/license
+and PNG provenance, and binds images using `cc-publisher image-bindings`. Those
+bindings use the same claim identity and body serialization as publication. The
+original generation manifests are retained beside the bound manifests. The
+output candidate changes only its image list. Visual review stays pending.
+
+GPU completion is not a billing receipt: the full reservation remains held until
+provider billing is reconciled. The shared budget must cover text and images;
+never reset its history or silently increase the owner's finite allowance.
+No command in this preparation path initializes, stages, approves, signs, or
+publishes content. Human publication must also submit the separately signed media
+attachments; an image listed in a publisher receipt is not an admitted attachment.
+Transferring capture paths changes claim-body hashes, so prepare or rebind media
+against the exact final candidate before human approval.
+
+Set `images_required: true` in the final human brief to enforce image coverage.
+The publisher checks it at staging, candidate approval, and publication: each
+entry needs an image marked `accepted_as_illustration` whose entity and body hash
+match that entry exactly. Missing, pending, or stale images fail the gate. This
+review flag is an operator assessment, not cryptographic evidence of accuracy.
+Use `cc-publisher validate --path /private/proposal.json --brief /private/brief.json`
+to check the same required-image gate without database access or staging.
+
+`generate` delegates transport and shared budget accounting to the bundled
+adapter with a cleared environment containing only the inference credential and
+basic process settings. It then independently validates the returned candidate
+and writes `application-admission.json`. It never stages, approves, signs or
+publishes. Images and signed media-absence decisions remain separate operations;
+their absence is not a completed media workflow.
+
 Supply `OPENROUTER_API_KEY` privately to the inference process only. Do not put keys
 in arguments, the checkout or reports. The runner refuses database, node and
 signing credentials. `CC_PUBLISHER_BIN` may point to a local built publisher.
@@ -93,7 +183,7 @@ python3 ops/model_runtime.py --registry /private/model-registry \
   --output /private/new-attempt
 python3 ops/model_evaluate.py --registry /private/model-registry \
   --suite /private/suite.json --output /private/new-evaluation --workers 2
-python3 ops/proposal_view.py --attempt /private/new-attempt --port 8766
+python3 ops/browse.py --config /private/browser.json --open
 ```
 
 The suite contract `cc.model-suite.v1` has `id`, `split` (`development`, `held_out`
@@ -130,3 +220,6 @@ actions. Model selection and software deployment grant none of those permissions
 The release can preserve a zero-event ledger with publication paused. Keep the
 exact production handoff and credentials privately; never copy local test history
 into production as a deployment step.
+
+The [shared browser configuration](BROWSER.md) selects the current attempt and
+any local or deployed node sources in one durable read-only viewer.

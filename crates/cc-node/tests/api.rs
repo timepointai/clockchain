@@ -2143,12 +2143,11 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
         400
     );
     let (_, no_records, _) = node.get(&path, Some(READ_KEY)).await;
-    assert_eq!(no_records["readings"].as_array().unwrap().len(), 2);
-    assert!(no_records["readings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|r| r["state"] == "no_generation_recorded"));
+    assert_eq!(
+        no_records["readings"],
+        json!([]),
+        "claims alone do not create media readings"
+    );
     let before: Vec<Vec<u8>> = sqlx::query_scalar("SELECT event_id FROM events ORDER BY event_id")
         .fetch_all(&node.pool)
         .await
@@ -2175,9 +2174,9 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
     assert_eq!(replay["appended"], "existing");
     let (_, typed, _) = node.get(&path, Some(READ_KEY)).await;
     assert_eq!(typed["projection_basis"], "current");
-    assert_eq!(typed["readings"][0]["state"], "no_generation_recorded");
-    assert_eq!(typed["readings"][1]["state"], "deliberately_unillustrated");
-    let decision = &typed["readings"][1]["absence_decisions"][0];
+    assert_eq!(typed["readings"].as_array().unwrap().len(), 1);
+    assert_eq!(typed["readings"][0]["state"], "deliberately_unillustrated");
+    let decision = &typed["readings"][0]["absence_decisions"][0];
     assert_eq!(decision["manifest"], payload["manifest"]);
     assert_eq!(decision["signature"], payload["signature"]);
     assert!(decision["admitted_coord"]
@@ -2191,13 +2190,13 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
             Some(READ_KEY),
         )
         .await;
-    assert_eq!(earlier["readings"][1]["state"], "no_generation_recorded");
+    assert_eq!(earlier["readings"], json!([]));
     let at_admission = format!(
         "/v2/media?entity_id={entity}&as_of={}",
         decision["admitted_coord"].as_str().unwrap()
     );
     assert_eq!(
-        node.get(&at_admission, Some(READ_KEY)).await.1["readings"][1]["state"],
+        node.get(&at_admission, Some(READ_KEY)).await.1["readings"][0]["state"],
         "deliberately_unillustrated"
     );
     let (_, sibling, _) = node
@@ -2206,7 +2205,7 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
             Some(READ_KEY),
         )
         .await;
-    assert_eq!(sibling["readings"][0]["state"], "no_generation_recorded");
+    assert_eq!(sibling["readings"], json!([]));
     let (_, legacy, _) = node
         .get(
             &format!("/v1/images?entity_id={entity}&as_of=9999999999"),
@@ -2314,16 +2313,12 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
         .unwrap();
     moment(&node.pool, &key, entity, t(3), 7).await;
     let (_, corrected, _) = node.get(&path, Some(READ_KEY)).await;
-    assert_eq!(corrected["readings"][0]["state"], "no_generation_recorded");
+    assert_eq!(corrected["readings"].as_array().unwrap().len(), 1);
     assert_eq!(
-        corrected["readings"][0]["source_binding"],
-        "currently_projected"
-    );
-    assert_eq!(
-        corrected["readings"][2]["state"],
+        corrected["readings"][0]["state"],
         "deliberately_unillustrated"
     );
-    assert_eq!(corrected["readings"][2]["source_binding"], "stale_source");
+    assert_eq!(corrected["readings"][0]["source_binding"], "stale_source");
     assert_eq!(
         node.post(
             "/v2/media/absence-decisions",
@@ -2348,4 +2343,30 @@ async fn absence_is_signed_body_scoped_visible_and_never_inferred() {
         403
     );
     frozen.done().await;
+}
+
+#[tokio::test]
+async fn reviewer_gets_exact_stored_claim_prose_or_explicit_unavailability() {
+    let node = Node::boot(Posture::Live).await;
+    seed(&node.pool).await;
+    let (_, missing, _) = node.get("/v1/entities/2?as_of=100", Some(READ_KEY)).await;
+    let reading = &missing["readings"]["all"][0];
+    assert_eq!(reading["body_status"], "unavailable");
+    assert!(reading["body"].is_null());
+    let hash = reading["body_hash"].as_str().unwrap();
+    let raw = "{\n  \"title\": \"Synthetic exact retained subject\", \"year\": 2001,\n  \"prov_asserted\": {\"historical_claim\": \"An exact synthetic claim <script>must stay text</script>.\"},\n  \"prov_measured\": {\"source_evidence\": [{\"excerpt\": \"Literal synthetic evidence.\"}]}\n}";
+    sqlx::query("INSERT INTO claim_bodies(body_hash,body) VALUES($1,$2)")
+        .bind(hex::decode(hash).unwrap())
+        .bind(raw)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    let (status, retained, _) = node.get("/v1/entities/2?as_of=100", Some(READ_KEY)).await;
+    assert_eq!(status, 200);
+    assert_eq!(retained["readings"]["all"][0]["body_hash"], hash);
+    assert_eq!(retained["readings"]["all"][0]["body_status"], "retained");
+    assert_eq!(retained["readings"]["all"][0]["body"], raw);
+    let (_, earlier, _) = node.get("/v1/entities/2?as_of=19", Some(READ_KEY)).await;
+    assert_eq!(earlier["readings"]["count"], 0);
+    node.done().await;
 }

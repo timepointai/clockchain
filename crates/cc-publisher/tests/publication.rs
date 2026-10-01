@@ -47,6 +47,57 @@ async fn prepared(pool: &sqlx::PgPool, id: &str) -> Vec<u8> {
     hash
 }
 #[test]
+fn required_images_refuse_missing_review_and_changed_claim_body() {
+    let mut v = candidate();
+    let brief = json!({"images_required":true});
+    assert!(require_images(&brief, &v).is_err());
+    let e = &v["entries"][0];
+    let id =
+        cc_authoring::claim_identity(e["title"].as_str().unwrap(), e["year"].as_i64().unwrap()).0;
+    let bh = hex::encode(cc_authoring::body_hash("claim_v4", &e.to_string()));
+    v["images"] = json!([{"entry_index":0,"manifest":{"source":{"entity_id":id.to_string(),"body_hash":bh},
+        "visual_review":"pending","synthetic":true,"historical_verification":"not_assessed"}}]);
+    assert!(require_images(&brief, &v).is_err());
+    v["images"][0]["manifest"]["visual_review"] = json!("accepted_as_illustration");
+    require_images(&brief, &v).unwrap();
+    v["entries"][0]["summary"] = json!("changed claim body");
+    assert!(require_images(&brief, &v).is_err());
+    require_images(&json!({"images_required":false}), &v).unwrap();
+    assert!(require_images(&json!({"images_required":"true"}), &v).is_err());
+}
+
+#[tokio::test]
+async fn required_images_gate_staging_before_any_candidate_write() {
+    let (pool, cleanup) = cc_testkit::ephemeral_db().await;
+    let brief = stage_brief(
+        &pool,
+        "with-images",
+        &json!({"max_entries":5,"images_required":true}),
+    )
+    .await
+    .unwrap();
+    approve(
+        &pool,
+        "brief",
+        "with-images",
+        &hex::decode(brief["digest"].as_str().unwrap()).unwrap(),
+        "test-human",
+    )
+    .await
+    .unwrap();
+    assert!(
+        stage_candidate(&pool, "missing-images", "with-images", &candidate())
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM generation_candidates")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    cleanup.cleanup().await;
+}
+#[test]
 fn rejects_uncaptured_support_and_unknown_edges() {
     let mut v = candidate();
     validate_candidate(&v).unwrap();
@@ -142,6 +193,9 @@ fn dated_candidate() -> Value {
     second["prov_asserted"]["event_date"] = json!("1970-04-14");
     v["entries"] = json!([first, second]);
     v["edges"] = json!([{"from":{"title":"Synthetic cause","year":1970},"to":{"title":"Synthetic effect","year":1970},"relation":"causation","evidence_class":"PrimaryDocument","rationale":std::str::from_utf8(raw).unwrap(),"evidence":[source]}]);
+    for (side, index) in [("from", 0), ("to", 1)] {
+        v["edges"][0][side]["binding"] = review::entry_binding(&v["entries"][index]).unwrap();
+    }
     v
 }
 #[test]
@@ -265,7 +319,148 @@ async fn precise_dates_reach_entities_moments_edges_and_vocabulary() {
         .await
         .unwrap();
     assert_eq!(band, at);
+    let retained: String = sqlx::query_scalar("SELECT evidence FROM edge_evidence")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let retained: Value = serde_json::from_str(&retained).unwrap();
+    assert_eq!(
+        retained["from_binding"],
+        candidate["edges"][0]["from"]["binding"]
+    );
+    assert_eq!(
+        retained["to_binding"],
+        candidate["edges"][0]["to"]["binding"]
+    );
     cc_ledger::rebuild(&pool).await.unwrap();
     pool.close().await;
+    cleanup.cleanup().await;
+}
+
+// Synthetic subject substitution: no real historical corpus is copied into tests.
+#[test]
+fn machine_edge_cannot_be_carried_to_a_retrospective_body() {
+    let mut original = dated_candidate();
+    original["entries"][1]["prov_asserted"]["subject_kind"] = json!("machine");
+    for (side, index) in [("from", 0), ("to", 1)] {
+        let entry = &original["entries"][index];
+        let binding = review::entry_binding(entry).unwrap();
+        original["edges"][0][side]["binding"] = binding;
+    }
+    validate_candidate(&original).unwrap();
+    let frozen = original.to_string();
+    let mut rewritten = original.clone();
+    rewritten["entries"][1]["prov_asserted"]["subject_kind"] = json!("document");
+    rewritten["entries"][1]["prov_asserted"]["historical_claim"] = json!("A later synthetic document describes a machine; the document is the subject of this claim.");
+    let error = validate_candidate(&rewritten)
+        .expect_err("a machine edge must not survive a document-subject rewrite");
+    assert!(
+        error.to_string().contains("destination_subject_changed"),
+        "{error}"
+    );
+    assert_eq!(original.to_string(), frozen);
+    assert_eq!(rewritten["edges"], original["edges"]);
+    assert_eq!(
+        error.downcast_ref::<review::AdmissionError>(),
+        Some(&review::AdmissionError::DestinationSubjectChanged)
+    );
+    // Recalculating hashes cannot authorize repurposing a frozen subject.
+    rewritten["edges"][0]["to"]["binding"] =
+        review::entry_binding(&rewritten["entries"][1]).unwrap();
+    assert!(review::validate_frozen_subjects(&original, &rewritten).is_err());
+    rewritten["entries"][1]["title"] = json!("Synthetic retrospective document");
+    assert_eq!(
+        validate_candidate(&rewritten)
+            .unwrap_err()
+            .downcast_ref::<review::AdmissionError>(),
+        Some(&review::AdmissionError::EdgeTargetMismatch)
+    );
+}
+
+#[test]
+fn unbound_edges_and_body_only_substitutions_are_refused() {
+    let mut v = dated_candidate();
+    v["edges"][0]["to"]
+        .as_object_mut()
+        .unwrap()
+        .remove("binding");
+    assert_eq!(
+        validate_candidate(&v)
+            .unwrap_err()
+            .downcast_ref::<review::AdmissionError>(),
+        Some(&review::AdmissionError::EdgeBindingMissing)
+    );
+    let mut v = dated_candidate();
+    v["entries"][1]["prov_asserted"]["historical_claim"] =
+        json!("A later document, not the original event.");
+    assert_eq!(
+        validate_candidate(&v)
+            .unwrap_err()
+            .downcast_ref::<review::AdmissionError>(),
+        Some(&review::AdmissionError::DestinationSubjectChanged)
+    );
+}
+
+#[test]
+fn dry_run_reports_exact_claims_only_set_and_blocks_evidence_gap() {
+    let v = dated_candidate();
+    let before = v.to_string();
+    let receipt = json!({"schema":"cc.generation-result.v1","status":"needs_evidence","reason":"Synthetic unresolved destination","published":false});
+    let report = review::dry_run(&v, &json!({"images_required":false}), &receipt).unwrap();
+    assert_eq!(report["status"], "blocked");
+    assert_eq!(report["blockers"][0]["code"], "needs_evidence");
+    assert_eq!(
+        report["entities"][1],
+        review::entry_binding(&v["entries"][1]).unwrap()
+    );
+    assert_eq!(report["edges"].as_array().unwrap().len(), 1);
+    assert_eq!(report["media"], json!({"kind":"none","records":[]}));
+    assert_eq!(report["writes_performed"], false);
+    assert_eq!(v.to_string(), before);
+}
+
+#[tokio::test]
+async fn existing_machine_identity_cannot_be_reused_for_document_even_with_new_bindings() {
+    let (pool, cleanup) = cc_testkit::ephemeral_db().await;
+    let hash = prepared(&pool, "original").await;
+    publish(
+        &pool,
+        "original",
+        &hash,
+        &cc_core::SecretKey::from_seed([83; 32]),
+    )
+    .await
+    .unwrap();
+    let mut next = candidate();
+    next["entries"][0]["prov_asserted"]["subject_kind"] = json!("document");
+    next["entries"][0]["prov_asserted"]["historical_claim"] =
+        json!("A synthetic retrospective document is the new subject.");
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let error = stage_candidate(&pool, "repurposed", "original", &next)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<review::AdmissionError>(),
+        Some(&review::AdmissionError::SubjectIdentityReused)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM events")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM generation_candidates WHERE id='repurposed'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
     cleanup.cleanup().await;
 }

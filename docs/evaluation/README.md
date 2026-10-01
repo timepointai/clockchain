@@ -1,5 +1,9 @@
 # Evidence audit and evaluation
 
+Historical truth is the objective. The [historical evidence standard](design-boundaries.md)
+describes how source review supports revisable historical conclusions. Technical
+checks make that work auditable and report their own scope explicitly.
+
 The [model operating workflow](../MODEL-OPERATIONS.md) describes the separate
 generation-quality evaluator and human route qualification. The tools below
 continue to evaluate recorded-graph evidence and externally graded consumer runs.
@@ -25,7 +29,8 @@ the current rule. The pre-existing golden digest remains pinned.
 
 Exit 0 means the API evidence contract checks passed; 1 means failure; 2 means
 NOT RUN. Quality and usefulness each retain their own status. A contract PASS
-never means historical accuracy, signature verification, or complete replay.
+reports only contract validation; historical accuracy, signature verification and
+complete replay each require their respective assessments.
 No command in this mode contacts a network, generates content, or writes records.
 The existing database validator remains available without `--fixture`.
 
@@ -96,5 +101,5 @@ The manifest hashes the local ontology artifact and labels that limited scope.
 
 [Corpus audit](corpus-audit.md) provides read-only production aggregates, a private
 snapshot/API crawler, bounded source retrieval, and an isolated canonical replay
-comparison. It distinguishes consistency and source availability from historical
-truth, and produces a review queue without publishing any content.
+comparison. It checks consistency and source availability, then produces a review
+queue for assessing historical accuracy without publishing any content.

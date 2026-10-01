@@ -17,7 +17,7 @@ for f in deploy-railway.sh deploy-fly.sh restore-verify.sh smoke.sh ci-local.sh;
     bash -n "$f" 2>/dev/null && ok "$f parses" || bad "$f has a syntax error"
 done
 
-for f in browse.py browse-v4.py graphview.py dup-report.py pg-proxy.py dedup.py tt-differential.py classify-run.py abstain-trace.py pilot-rule-coverage.py \
+for f in browse.py browser_local.py browser_service.py graphview.py dup-report.py pg-proxy.py dedup.py tt-differential.py classify-run.py abstain-trace.py pilot-rule-coverage.py \
          held-moments.py verify-triple.py check-anchors.py ccdb.py validate.py check-admission.py; do
     [[ -f $f ]] || { bad "$f missing"; continue; }
     python3 -m py_compile "$f" 2>/dev/null && ok "$f compiles" || bad "$f has a syntax error"

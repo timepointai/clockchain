@@ -10,7 +10,7 @@ It requires full/read credentials. Each exact entity/body reading reports:
 
 | Images | Absence decisions | State |
 |---|---|---|
-| None | None | `no_generation_recorded` |
+| None | None | No media reading (`readings: []` when no media records exist) |
 | None | Present | `deliberately_unillustrated` |
 | Present | None | `generated` |
 | Present | Present | `conflicting_media_records` |
@@ -21,9 +21,12 @@ media does not imply a queued job, failed attempt or a deliberate choice.
 Multiple readings and different entities sharing a body remain distinct.
 `/v1/images` keeps its existing `no_image`/`generated` contract unchanged.
 
-The reading set includes current moment bodies whose event coordinate is at or
-before `as_of`, plus bodies named by media records admitted by `as_of`. Before
-all applicable records, the array is empty. `projection_basis: current` and each
+The reading set includes only bodies named by media records admitted by `as_of`.
+Claims alone do not create media readings. Before all applicable records, the
+array is empty. This replaces the earlier inclusion of bare moment bodies as
+`no_generation_recorded`; it changes reads without deleting records or changing
+applied migrations. Verify the deployed revision before expecting this behavior.
+`projection_basis: current` and each
 reading's `source_binding` explicitly describe the current projection, not a
 reconstruction of the projection at `as_of`. Stale records stay visible; they
 do not transfer to a corrected or re-minted body. All media is outside historical
@@ -41,7 +44,8 @@ must be nonblank and at most 4096 UTF-8 bytes. Body hash is lowercase SHA-256 he
 
 The decision ID hashes the UTF-8 JCS manifest after the domain
 `cc.media-absence.v1` plus a NUL byte. Ed25519 signs this 32-byte digest. The
-signature authenticates the writer's choice, not consensus or historical truth.
+signature authenticates the writer's decision to leave that body unillustrated;
+consensus and historical accuracy are outside this media decision's scope.
 The server locks the source entity/body projection through admission, records
 its own admission coordinate and returns the decision ID. Duplicate submissions
 are idempotent. A replay after withdrawal is refused. There is no revocation,

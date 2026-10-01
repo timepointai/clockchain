@@ -241,6 +241,9 @@ def main():
     content = response['message']['content'] if args.think else response['response']
     model_output = decode_output(content);save(out/'model-output.json',model_output)
     candidate = proposal(model_output,sources,policy,brief,out.name,digest(canonical(payload)),digest(canonical(response)))
+    # Measured bindings come from the same Rust serializer used by admission.
+    from model_runtime import bind_new_edges
+    bind_new_edges(candidate, out)
     save(out/'proposal.json',candidate);save(out/'brief.json',brief);save(out/'policy.json',policy)
     save(out/'run.json',{'model':policy['model'],'model_digest':policy['model_digest'],'proposal_sha256':digest(canonical(candidate)),
                          'brief_sha256':digest(canonical(brief)),'entries':len(candidate['entries']),'edges':len(candidate['edges']),

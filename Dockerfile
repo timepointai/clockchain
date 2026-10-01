@@ -61,7 +61,7 @@ RUN CC_BUILD_REV="${CC_BUILD_REV:-${RAILWAY_GIT_COMMIT_SHA:-$(git rev-parse --sh
 # --- runtime ---------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates python3 python3-jsonschema python3-cryptography python3-psycopg \
+    && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv python3-jsonschema python3-cryptography python3-psycopg \
     && rm -rf /var/lib/apt/lists/*
 # Never root: the node's whole job is refusing unauthorized writes, and a
 # container that can rewrite its own filesystem weakens that for no benefit.
@@ -83,6 +83,10 @@ COPY --from=builder /build/target/release/cc-publisher /usr/local/bin/cc-publish
 # (e.g. `cc-node migrate` and manual inspection).
 COPY --from=builder /build/migrations /app/migrations
 COPY --from=builder /build/ops/model_policy.py /build/ops/model_runtime.py /build/ops/model_transport.py /build/ops/model_catalog.py /build/ops/model_evaluate.py /build/ops/local_generate.py /build/ops/corpus_audit.py /build/ops/generation_worker.py /app/ops/
+COPY --from=builder /build/ops/image_prepare.py /build/ops/flux_image.py /build/ops/flux_profile.json /build/ops/requirements-images.txt /build/ops/requirements-flux-worker.txt /app/ops/
+RUN python3 -m venv --system-site-packages /opt/clockchain-python \
+    && /opt/clockchain-python/bin/pip install --no-cache-dir -r /app/ops/requirements-images.txt
+ENV PATH="/opt/clockchain-python/bin:${PATH}"
 COPY --from=builder /build/vendor/tt /app/vendor/tt
 USER clockchain
 EXPOSE 8080

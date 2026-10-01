@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use std::collections::{BTreeMap, HashSet};
+pub mod review;
 
 pub fn digest(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
@@ -176,6 +177,11 @@ fn source_support(e: &Value) -> Result<()> {
     Ok(())
 }
 pub fn validate_candidate(v: &Value) -> Result<()> {
+    validate_candidate_bindings(v, false)
+}
+/// Used only to compute measured bindings for newly generated edges. Admission
+/// always calls validate_candidate; existing bindings are never ignored.
+pub fn validate_candidate_bindings(v: &Value, allow_unbound: bool) -> Result<()> {
     let obj = v.as_object().context("candidate must be object")?;
     ensure!(
         obj.keys()
@@ -191,6 +197,7 @@ pub fn validate_candidate(v: &Value) -> Result<()> {
     ensure!(rejections.is_empty(), "admission refused: {rejections:?}");
     let mut ids = HashSet::new();
     let mut coordinates = BTreeMap::new();
+    let mut subjects = BTreeMap::new();
     for e in entries {
         ensure!(
             e["prov_measured"]["source_evidence_schema"] == "cc.source-evidence.v1",
@@ -207,6 +214,8 @@ pub fn validate_candidate(v: &Value) -> Result<()> {
         }
         let id = claim_identity(string(e, "title")?, e["year"].as_i64().unwrap()).0;
         ids.insert(id);
+        review::entry_binding(e)?;
+        subjects.insert(id, e);
         coordinates.insert(id, at);
     }
     for e in v["edges"].as_array().context("edges array missing")? {
@@ -221,10 +230,11 @@ pub fn validate_candidate(v: &Value) -> Result<()> {
             ensure!(sy <= dy, "cause follows effect");
         }
         ensure!(src != dst, "self edge refused");
-        ensure!(
-            ids.contains(&src) && ids.contains(&dst),
-            "edge endpoints must exist in this candidate"
-        );
+        if !ids.contains(&src) || !ids.contains(&dst) {
+            return Err(review::AdmissionError::EdgeTargetMismatch.into());
+        }
+        review::check_endpoint(&e["from"], subjects[&src], false, allow_unbound)?;
+        review::check_endpoint(&e["to"], subjects[&dst], true, allow_unbound)?;
         if matches!(
             relation(e)?,
             EdgeRelation::Causation | EdgeRelation::Influence
@@ -265,10 +275,53 @@ fn verify_images(v: &Value) -> Result<()> {
     }
     Ok(())
 }
+/// A required illustration must cover every exact claim body before publication.
+/// Media attachment submission remains a separate, human-operated signed write.
+pub fn require_images(brief: &Value, candidate: &Value) -> Result<()> {
+    let required = brief
+        .get("images_required")
+        .map(|v| v.as_bool().context("images_required must be boolean"))
+        .transpose()?
+        .unwrap_or(false);
+    if !required {
+        return Ok(());
+    }
+    let images = candidate["images"].as_array().context("images missing")?;
+    for (index, entry) in candidate["entries"]
+        .as_array()
+        .context("entries missing")?
+        .iter()
+        .enumerate()
+    {
+        let (entity, _) = claim_identity(
+            string(entry, "title")?,
+            entry["year"].as_i64().context("year missing")?,
+        );
+        let expected = hex::encode(body_hash("claim_v4", &entry.to_string()));
+        let entity_text = entity.to_string();
+        ensure!(
+            images
+                .iter()
+                .any(|im| im["entry_index"].as_u64() == Some(index as u64)
+                    && im["manifest"]["source"]["entity_id"].as_str()
+                        == Some(entity_text.as_str())
+                    && im["manifest"]["source"]["body_hash"] == expected
+                    && im["manifest"]["visual_review"] == "accepted_as_illustration"
+                    && im["manifest"]["synthetic"] == true
+                    && im["manifest"]["historical_verification"] == "not_assessed"),
+            "required image missing, unreviewed, or stale for entry {index}"
+        );
+    }
+    Ok(())
+}
 pub async fn stage_brief(pool: &PgPool, id: &str, v: &Value) -> Result<Value> {
     ensure!(
         v.is_object() && !v.as_object().unwrap().is_empty(),
         "brief must be nonempty object"
+    );
+    ensure!(
+        v.get("images_required").is_none_or(Value::is_boolean),
+        "images_required must be boolean"
     );
     let payload = canonical(v);
     let hash = digest(payload.as_bytes());
@@ -296,12 +349,16 @@ pub async fn approved(pool: &PgPool, kind: &str, id: &str, hash: &[u8]) -> Resul
 pub async fn stage_candidate(pool: &PgPool, id: &str, brief: &str, v: &Value) -> Result<Value> {
     validate_candidate(v)?;
     verify_images(v)?;
+    let mut read = pool.begin().await?;
+    validate_existing_subjects(&mut read, v).await?;
+    read.rollback().await?;
     let brief_payload: String =
         sqlx::query_scalar("SELECT payload FROM generation_briefs WHERE id=$1")
             .bind(brief)
             .fetch_one(pool)
             .await?;
     let brief_value: Value = serde_json::from_str(&brief_payload)?;
+    require_images(&brief_value, v)?;
     let maximum = brief_value["max_entries"]
         .as_u64()
         .context("brief max_entries required")?;
@@ -327,6 +384,38 @@ pub async fn stage_candidate(pool: &PgPool, id: &str, brief: &str, v: &Value) ->
         "candidate id already binds different content or brief"
     );
     Ok(json!({"id":id,"brief":brief,"digest":hex::encode(hash)}))
+}
+/// Existing incident edges name an entity, not a replaceable prose slot. A new
+/// subject requires a new title/year identity and newly reviewed relationships.
+async fn validate_existing_subjects(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    v: &Value,
+) -> Result<()> {
+    for entry in v["entries"].as_array().context("entries missing")? {
+        let binding = review::entry_binding(entry)?;
+        let id: i64 = binding["entity_id"].as_str().unwrap().parse()?;
+        let incoming_edge = v["edges"].as_array().unwrap().iter().any(|e| {
+            ["from", "to"]
+                .iter()
+                .any(|side| e[side]["binding"]["entity_id"] == binding["entity_id"])
+        });
+        let rows = sqlx::query("SELECT encode(m.body_hash,'hex') AS hash, b.body, EXISTS(SELECT 1 FROM edges WHERE src_entity=$1 OR dst_entity=$1) AS incident FROM moments m LEFT JOIN claim_bodies b ON b.body_hash=m.body_hash WHERE m.subject=$1")
+            .bind(id).fetch_all(&mut **tx).await?;
+        for row in rows {
+            if let Some(body) = row.get::<Option<String>, _>("body") {
+                let old: Value = serde_json::from_str(&body)?;
+                if old["prov_asserted"]["subject_kind"] != entry["prov_asserted"]["subject_kind"] {
+                    return Err(review::AdmissionError::SubjectIdentityReused.into());
+                }
+            }
+            if (incoming_edge || row.get::<bool, _>("incident"))
+                && binding["body_hash"] != row.get::<String, _>("hash")
+            {
+                return Err(review::AdmissionError::EdgeTargetMismatch.into());
+            }
+        }
+    }
+    Ok(())
 }
 async fn heads(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, v: &Value) -> Result<Value> {
     let mut result = serde_json::Map::new();
@@ -377,6 +466,9 @@ pub async fn approve(
         let candidate: Value = serde_json::from_str(&payload)?;
         validate_candidate(&candidate)?;
         verify_images(&candidate)?;
+        let brief_payload: String = sqlx::query_scalar("SELECT b.payload FROM generation_briefs b JOIN generation_candidates c ON c.brief_id=b.id WHERE c.id=$1")
+            .bind(id).fetch_one(&mut *tx).await?;
+        require_images(&serde_json::from_str(&brief_payload)?, &candidate)?;
         Some(heads(&mut tx, &candidate).await?)
     } else {
         None
@@ -434,10 +526,17 @@ pub async fn publish(pool: &PgPool, id: &str, hash: &[u8], sk: &SecretKey) -> Re
     let v: Value = serde_json::from_str(&payload)?;
     validate_candidate(&v)?;
     verify_images(&v)?;
+    let brief_payload: String =
+        sqlx::query_scalar("SELECT payload FROM generation_briefs WHERE id=$1")
+            .bind(&brief)
+            .fetch_one(&mut *tx)
+            .await?;
+    require_images(&serde_json::from_str(&brief_payload)?, &v)?;
     // Stabilize projections through validation and commit, including insert races.
     sqlx::query("LOCK TABLE moments IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await?;
+    validate_existing_subjects(&mut tx, &v).await?;
     let expected:Option<Value>=sqlx::query_scalar("SELECT expected_heads FROM generation_approvals WHERE kind='candidate' AND target_id=$1 AND digest=$2").bind(id).bind(hash).fetch_one(&mut *tx).await?;
     ensure!(
         expected == Some(heads(&mut tx, &v).await?),
@@ -552,7 +651,8 @@ pub async fn publish(pool: &PgPool, id: &str, hash: &[u8], sk: &SecretKey) -> Re
         cc_ledger::commit_in_tx(&mut tx, &s, None).await?;
         events.push(s.id().to_hex());
         let evidence = canonical(
-            &json!({"schema":"cc.edge-evidence.v1","sources":e["evidence"],"rationale":e["rationale"],"evidence_class":e["evidence_class"]}),
+            &json!({"schema":"cc.edge-evidence.v1","sources":e["evidence"],"rationale":e["rationale"],"evidence_class":e["evidence_class"],
+                "from_binding":e["from"]["binding"],"to_binding":e["to"]["binding"]}),
         );
         let eh = digest(evidence.as_bytes());
         let mut commitment = b"cc.edge-evidence.v1\0".to_vec();

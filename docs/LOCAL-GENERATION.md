@@ -19,8 +19,11 @@ inference has no provider API charge; it still uses the owner's hardware.
 The model generates titles, summaries, historical claims, source selections and
 causal rationales. Software adds measured provenance and validates literal source
 excerpts; it does not repair historical prose. Requests and raw responses are saved
-privately, including rejected runs. A successful response is a proposal, not truth
-or permission to publish. Exact candidate admission and publication approvals
+privately, including rejected runs. A successful response is a proposal for
+historical review under the [evidence standard](evaluation/design-boundaries.md).
+Review aims to establish the best-supported account, with explicit uncertainty;
+generation success alone supplies neither that assessment nor permission to publish.
+Exact candidate admission and publication approvals
 remain in the publisher. Source-content rights are separate from model licenses.
 
 ```sh
@@ -61,20 +64,14 @@ The old projection-deletion SQL is disabled: deleting a projection does not remo
 its immutable events, and replay restores it. Corpus replacement uses a verified
 private archive and a fresh database. Preserve migrations and signing identity.
 
-## Inspect a populated local test
+## Inspect local and deployed records
 
-The existing `ops/browse-v4.py` viewer uses `CC_DATABASE_URL` for a read-only
-loopback PostgreSQL URI (without query parameters), `CC_NODE_URL` for the matching local node, and
-`CC_NODE_READ_KEY` for scoped API reads. Put `psql` on `PATH`, then run
-`python3 ops/browse-v4.py 8766` and open `http://127.0.0.1:8766`. The viewer binds
-only to loopback and does not discover credentials or retired hosting. Use a
-read-only database role and the node's frozen posture for retained rehearsals.
-
-The graph shows stored edge directions, evidence classes and attached mechanism
-evidence. Claim details retain source passages, model provenance and date precision.
-Year-based placement does not establish within-day chronology. The walk button
-checks undirected recorded-graph feasibility, not causal direction or historical
-truth; verify directed endpoints and source entailment separately.
+Use the single [Clockchain browser](BROWSER.md) for validated local candidates,
+local node APIs, and deployed node APIs. It displays recorded relationships and
+images with their source bindings and review states. It requires a private
+configuration and scoped read credentials for node sources; no database access
+or publication action is involved. The macOS login service keeps one durable
+instance available on loopback.
 
 Use `--think` on `ops/local_generate.py` to request native chat reasoning in a
 supporting local model. This path permits reasoning before final JSON instead of

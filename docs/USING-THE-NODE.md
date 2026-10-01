@@ -72,7 +72,9 @@ Every certificate carries:
 
 `Supported` additionally carries `phi_support: true`. `Unsupported` carries
 `vanished`; `Contradicted` carries `contradicted_by`. Missing evidence is not proof
-of impossibility, and a feasible path is not proof of a particular historical claim.
+of impossibility. A feasible path establishes the stated graph conditions;
+assess the historical claim through sources and reasoning under the
+[historical evidence standard](evaluation/design-boundaries.md).
 A `503` is a read/evaluation failure, never a verdict. Missing `as_of`, an invalid
 TT label, or a hop bound above the governed maximum is a `400`.
 
@@ -82,16 +84,22 @@ TT label, or a hop bound above the governed maximum is a `400`.
 by operational seals; a recent seal does not establish new historical coverage.
 Entity responses expose their stored readings and a computed relation. Matching
 entity identity does not by itself mean matching content hashes.
+Each reading includes its exact retained `body` string alongside `body_hash` and
+`body_status: retained`; a missing body is null with `body_status: unavailable`.
+See [admission and review](ADMISSION-REVIEW.md) for dry-run and endpoint binding
+contracts. Older deployed revisions may expose hashes only.
 
 `ops/verify-triple.py` checks served signatures with stock Ed25519. That verifies
-the signature on an event id, not the JSON-to-canonical-content mapping or historical
-truth. A page-level check is not a full-corpus audit.
+the signature on an event id. Canonical-content mapping and historical accuracy
+require separate checks and source review. A page-level check is not a full-corpus audit.
 
 ## Settlement and evaluation
 
 Authenticated `/health/deep` reports root, tree size, anchor status and block height.
 Pending is not confirmed Bitcoin inclusion. A confirmed timestamp would establish
-a commitment to bytes, not truth. The live check on 2026-09-07 reported Pending and
+a commitment to bytes, preserving a reference for subsequent evidence review.
+Historical accuracy is assessed through sources and reasoning. The live check on
+2026-09-07 reported Pending and
 no committed founding exhibit; re-read rather than assuming either has changed.
 
 Use the [evaluation guide](evaluation/README.md) to capture responses and validate

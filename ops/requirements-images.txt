@@ -1,0 +1,3 @@
+# Private CPU operator environment; CUDA dependencies are pinned in image_prepare.py.
+huggingface-hub==2.0.0
+pillow==12.3.0
