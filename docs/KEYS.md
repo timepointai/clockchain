@@ -165,8 +165,8 @@ output checks are those of `delegate`. In addition it refuses when:
 
 The summary states how many active grants below the target the cascade choice
 revokes. For `--no-cascade` it states how many stay active, and how many are
-canceled because they sit under a direct delegate of the target issued outside
-the revoke's past. It lists any events outside the revoke's past.
+canceled. A direct delegate of the target issued outside the revoke's past is
+canceled, with its subtree. It lists any events outside the revoke's past.
 
 ### submit
 
@@ -203,10 +203,12 @@ authority path. It needs `CC_NODE_API_KEY`.
    records it in the receipt. The node then decides, and keeps the envelope
    even if it is invalid.
 
-   Two refusals hold whatever the flags: a parent that is not an event of the
-   subject on the node, and a signing grant or Revoke target not issued in the
-   parent's past. The node would never admit such an event, and would keep
-   the envelope.
+   Two refusals hold whatever the flags:
+   - **A signing grant or Revoke target not issued in the parent's past.** The
+     node would never admit such an event, and would keep the envelope.
+   - **A parent that is not an event of the subject on the node.** The node
+     would keep that event pending until the parent arrived. The publisher
+     never posts it.
 5. `POST /v1/candidates`. It requires HTTP 201, state `valid`, this event id,
    and the envelope's SHA-256.
 6. Read back `GET /v1/snapshot`. The event must be valid (`head`,

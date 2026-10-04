@@ -859,8 +859,9 @@ impl AuthorityEvent {
                         )
                     } else {
                         format!(
-                            "{kept} active grant(s) below the target stay active; {} under a \
-                             direct delegate issued outside this revoke's past are canceled",
+                            "{kept} active grant(s) below the target stay active; {} are \
+                             canceled (a direct delegate issued outside this revoke's past, \
+                             with its subtree)",
                             active.len() - kept
                         )
                     },

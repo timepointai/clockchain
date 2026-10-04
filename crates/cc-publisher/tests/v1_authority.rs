@@ -609,6 +609,24 @@ async fn issuer_scope_is_enforced_offline_by_submit_and_by_the_node() {
     let ctx = n.grants(s).await;
     assert_eq!(status(&ctx, d2.id()), GrantStatus::Tombstoned);
     assert_eq!(status(&ctx, d1.id()), GrantStatus::Active);
+    // The root then revokes hot1 with cascade on the event before hot1's
+    // revoke, which leaves that revoke outside its past: suppressed. A rerun
+    // of hot1's revoke still succeeds and reports the effect.
+    let choice = RevokeChoice {
+        parent: Some(r.parent()),
+        ..revoke_choice(d1.id(), true)
+    };
+    let over = authority::revoke(&root, &ctx, choice, "Over", vec![[9; 32]]).unwrap();
+    submit(&n, &over, tmp.path(), "over", true).await.unwrap();
+    let rerun = node::submit(&n.writer(), &tmp.path().join("own"), false)
+        .await
+        .unwrap();
+    assert_eq!(rerun.receipt["admission"]["result"], "already_admitted");
+    assert_eq!(
+        rerun.receipt["readback"]["event_effect"],
+        "revoked_concurrent"
+    );
+    let ctx = n.grants(s).await;
     // A revoke failing two checks at once (tombstoned target, out of scope)
     // is refused with both, before anything is written.
     let both = unchecked_revoke(&sib, &ctx, d3.id(), d2.id());
@@ -1014,8 +1032,7 @@ async fn non_cascade_cancels_only_direct_delegates_issued_outside_its_past() {
     let r = authority::revoke(&root, &ctx, choice, "Partial", vec![[8; 32]]).unwrap();
     let summary = r.summary(&ctx);
     assert!(
-        summary
-            .contains("2 active grant(s) below the target stay active; 1 under a direct delegate"),
+        summary.contains("2 active grant(s) below the target stay active; 1 are canceled"),
         "{summary}"
     );
     submit(&n, &r, tmp.path(), "r", true).await.unwrap();
