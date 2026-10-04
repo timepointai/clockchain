@@ -95,11 +95,41 @@ jobs:
       - name: Build operator integration-test binary
         run: cargo build -p cc-node --bin cc-node
 
+      # G7: the client fixtures must be what the merged gateway, in front of a
+      # real v1 node, answers today; then both public clients run against them.
+      - name: Build the publisher and gateway for the client fixtures
+        run: cargo build -p cc-publisher --bin cc-publisher -p cc-gateway --bin cc-gateway
+
+      - name: Client fixtures reproduce through cc-gateway
+        run: python3 clients/fixtures/record.py --check
+
+      - name: Python public client
+        run: python3 -m unittest discover -s clients/python/tests -t clients/python
+
       - name: Install operator test dependency
         run: python3 -m pip install -r ops/requirements.txt
 
       - name: Offline evaluation contract
         run: python3 -m unittest discover -s ops -p 'test_*.py'
+
+  clients-ts:
+    name: TypeScript public client
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the pinned TypeScript compiler
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test against the recorded fixtures
+        run: npm test
 
   stage0:
     name: Stage 0 · model and mutants
