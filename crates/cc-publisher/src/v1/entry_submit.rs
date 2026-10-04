@@ -19,14 +19,26 @@ pub const REVIEW_SCHEMA: &str = "cc.publisher.v1.packet-review";
 pub const SUBMISSION_SCHEMA: &str = "cc.publisher.v1.packet-submission";
 
 /// Read `/health` and `GET /v1/export`, verify the export and return both.
+/// Only the verified fields are kept (`encoding`, `rule`, `corpus_digest`,
+/// `commitment`, `envelopes`), so nothing else a node sends reaches a file.
 pub async fn fetch(node: &Node) -> Result<(node::Health, Value, Context)> {
     let health = node.health().await?;
     ensure!(
         health.fold_matches(),
         "node fold_version differs from this build's fold_v1()"
     );
-    let mut export = node.export().await?;
-    node.redact_json(&mut export);
+    let served = node.export().await?;
+    let mut export = serde_json::Map::new();
+    for k in [
+        "encoding",
+        "rule",
+        "corpus_digest",
+        "commitment",
+        "envelopes",
+    ] {
+        export.insert(k.into(), served[k].clone());
+    }
+    let export = Value::Object(export);
     let ctx = Context::from_export(health.instance, &export).context("GET /v1/export")?;
     Ok((health, export, ctx))
 }
@@ -71,10 +83,11 @@ pub fn review(dir: &Path, ctx: Option<&Context>) -> Result<Value> {
                 .filter(|e| !c.events.contains_key(&e.id()))
                 .cloned()
                 .collect();
-            (
-                matches.into(),
-                c.self_check(&pending).map(|_| true).unwrap_or(false).into(),
-            )
+            let admissible = match c.self_check(&pending) {
+                Ok(()) => json!(true),
+                Err(e) => json!(format!("{e:#}")),
+            };
+            (matches.into(), admissible)
         }
     };
     Ok(json!({
@@ -92,8 +105,13 @@ pub fn review(dir: &Path, ctx: Option<&Context>) -> Result<Value> {
 
 /// `cc-publisher v1 submit-packet`. Steps 1 to 4 only read.
 pub async fn submit(node: &Node, dir: &Path, approve: Hash) -> Result<Value> {
-    let out = submit_unredacted(node, dir, approve).await;
-    out.map_err(|e| anyhow::anyhow!(node.redact(&format!("{e:#}"))))
+    match submit_unredacted(node, dir, approve).await {
+        Ok(mut report) => {
+            node.redact_json(&mut report);
+            Ok(report)
+        }
+        Err(e) => Err(anyhow::anyhow!(node.redact(&format!("{e:#}")))),
+    }
 }
 async fn submit_unredacted(node: &Node, dir: &Path, approve: Hash) -> Result<Value> {
     // 1. The exact packet the owner approved.
@@ -172,9 +190,9 @@ async fn submit_unredacted(node: &Node, dir: &Path, approve: Hash) -> Result<Val
             .iter()
             .find(|r| hash_json(&r["event"]) == Some(e.id()))
             .with_context(|| format!("readback: snapshot lacks {}", hex::encode(e.id())))?;
-        let state = row["state"].as_str().unwrap_or_default();
+        let state = row["state"].as_str().unwrap_or("absent");
         ensure!(
-            !matches!(state, "pending" | "invalid"),
+            matches!(state, "head" | "superseded" | "branch"),
             "readback: {} is {state}",
             hex::encode(e.id())
         );

@@ -4,6 +4,13 @@
 //! Every packet goes through `submit-packet` (library or binary) with the
 //! owner's approval digest; the node's own snapshot and support routes are the
 //! oracle for staleness, dispute exclusion and media binding.
+use axum::{
+    body::Body,
+    extract::{Request, State},
+    http::header,
+    middleware::{self, Next},
+    response::Response,
+};
 use cc_core::v1::{hash, revision_id, Hash, Kind, Signed, TargetKind};
 use cc_core::SecretKey;
 use cc_ledger::v1::Store;
@@ -21,15 +28,48 @@ use serde_json::{json, Value};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 
 const WRITE: &str = "synthetic-write";
 const READ: &str = "synthetic-read";
 const INSTANCE: Hash = [7; 32];
 const EVIDENCE: Hash = [0xee; 32];
 
+/// How the node's `/v1/snapshot` answers: honestly, with every row pending,
+/// or echoing the write token into every edge's reasons.
+const HONEST: u8 = 0;
+const ROWS_PENDING: u8 = 1;
+const ECHO_TOKEN: u8 = 2;
+
 struct TestNode {
     url: String,
+    lie: Arc<AtomicU8>,
     _cleanup: cc_testkit::Cleanup,
+}
+/// Rewrite `/v1/snapshot` as a misbehaving node would; the real node cannot
+/// be configured to.
+async fn lying(State(lie): State<Arc<AtomicU8>>, req: Request, next: Next) -> Response {
+    let snapshot = req.uri().path() == "/v1/snapshot";
+    let response = next.run(req).await;
+    let mode = lie.load(Ordering::SeqCst);
+    if !snapshot || mode == HONEST {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    let mut v: Value = serde_json::from_slice(&bytes).unwrap();
+    if mode == ROWS_PENDING {
+        for r in v["rows"].as_array_mut().unwrap() {
+            r["state"] = json!("pending");
+        }
+    } else {
+        for e in v["edges"].as_array_mut().unwrap() {
+            e["reasons"] = json!([WRITE]);
+        }
+    }
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, Body::from(serde_json::to_vec(&v).unwrap()))
 }
 impl TestNode {
     async fn start(mut curators: Vec<Hash>) -> Self {
@@ -63,10 +103,12 @@ impl TestNode {
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let app = serve_v1::router(state);
+        let lie = Arc::new(AtomicU8::new(HONEST));
+        let app = serve_v1::router(state).layer(middleware::from_fn_with_state(lie.clone(), lying));
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
             url,
+            lie,
             _cleanup: cleanup,
         }
     }
@@ -276,7 +318,33 @@ async fn a_dispute_is_never_support() {
     let refused = edge::build_assert(&k1, &ctx, assert_input("disputes", b, a)).map(|_| ());
     assert!(err(refused.unwrap_err())
         .contains("may be signed only by the creator of its source subject"),);
+    // The node enforces the same rule: a hand-signed non-creator dispute
+    // (bypassing the publisher's check) is classified invalid.
+    let pins = cc_core::v1::Pins {
+        source: ctx.current(b.0).unwrap().pin(),
+        target: ctx.current(a.0).unwrap().pin(),
+    };
+    let forged = edge::assert_envelope(
+        INSTANCE,
+        author(&k1),
+        "disputes",
+        pins,
+        "Forged.".into(),
+        vec![EVIDENCE],
+    )
+    .unwrap();
+    let forged = Signed::sign(&k1, forged).unwrap();
+    let (status, outcome) = n.writer().post_candidate(forged.bytes()).await.unwrap();
+    assert_eq!(
+        (
+            status.as_u16(),
+            outcome.state.as_str(),
+            outcome.reason.as_str()
+        ),
+        (422, "invalid", "dispute_counterclaim")
+    );
     // k2 created `b`: its dispute of `a` is admitted.
+    let ctx = n.context().await;
     let p = edge::build_assert(&k2, &ctx, assert_input("disputes", b, a)).unwrap();
     let dispute = p.events[0].id();
     let done = n.submit(&p, &tmp.path().join("dispute")).await;
@@ -342,11 +410,8 @@ async fn an_attest_is_bound_to_its_revision() {
     // The by-event packet was built against the context before the first
     // attestation; it is refused, rebuilt and resubmitted.
     let stale = by_event.write_dir(&tmp.path().join("e")).unwrap();
-    assert!(
-        entry_submit::submit(&n.writer(), &tmp.path().join("e"), stale)
-            .await
-            .is_err()
-    );
+    let refused = entry_submit::submit(&n.writer(), &tmp.path().join("e"), stale).await;
+    assert!(err(refused.unwrap_err()).contains("corpus changed since the packet's context"));
     let ctx = n.context().await;
     let rebuilt = attest::build(
         &k,
@@ -376,7 +441,6 @@ async fn an_attest_is_bound_to_its_revision() {
             .expect("media reading");
         assert_eq!(hash_json(&m["revision"]), Some(a.1), "{m}");
         assert_eq!(hash_json(&m["body"]), Some(body1), "{m}");
-        assert_ne!(hash_json(&m["revision"]), Some(a2));
     }
     // Control: an attestation of the corrected revision binds to it.
     let ctx = n.context().await;
@@ -566,6 +630,36 @@ async fn a_tampered_context_is_refused() {
     Context::from_export(INSTANCE, &export).unwrap();
 }
 
+/// The read-back after submission trusts nothing the node did not show: a
+/// snapshot that does not list the packet's events as retained and valid is a
+/// failure, and a node echoing the token never gets it into the report.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn submit_readback_and_redaction() {
+    let tmp = tempfile::tempdir().unwrap();
+    let k = key(0xa1);
+    let n = TestNode::start(vec![author(&k)]).await;
+    let a = n.genesis(&k, "p").await;
+    let b = n.genesis(&k, "q").await;
+    let ctx = n.context().await;
+    let p = edge::build_assert(&k, &ctx, assert_input("influence", a, b)).unwrap();
+    let dir = tmp.path().join("edge");
+    let digest = p.write_dir(&dir).unwrap();
+    n.lie.store(ROWS_PENDING, Ordering::SeqCst);
+    let e = err(entry_submit::submit(&n.writer(), &dir, digest)
+        .await
+        .unwrap_err());
+    assert!(e.contains("readback:") && e.contains("is pending"), "{e}");
+    // The envelope was admitted; an honest rerun completes, and the token a
+    // node echoes is redacted from the report.
+    n.lie.store(ECHO_TOKEN, Ordering::SeqCst);
+    let report = entry_submit::submit(&n.writer(), &dir, digest)
+        .await
+        .unwrap();
+    let text = report.to_string();
+    assert!(!text.contains(WRITE), "{text}");
+    assert_eq!(report["edges"][0]["reasons"], json!(["<redacted>"]));
+}
+
 // ---- entry packets ----------------------------------------------------------
 
 fn seed_file(dir: &Path, byte: u8) -> PathBuf {
@@ -620,6 +714,11 @@ fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
         }
     }
     out
+}
+fn s_id(dir: &Path) -> Hash {
+    Signed::decode(&std::fs::read(dir.join("events/00.bin")).unwrap())
+        .unwrap()
+        .id()
 }
 fn publisher() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_cc-publisher"));
@@ -694,6 +793,9 @@ async fn entry_packet_builds_deterministic_envelopes() {
     std::fs::remove_file(&pj).unwrap();
     std::fs::write(&pj, text).unwrap();
     assert!(err(Packet::load_dir(&t).map(|_| ()).unwrap_err()).contains("does not match"));
+    // A changed body, in an otherwise untouched packet, is refused too.
+    let t = tmp.path().join("tampered-body");
+    one.packet.write_dir(&t).unwrap();
     let body = std::fs::read_dir(t.join("bodies"))
         .unwrap()
         .next()
@@ -701,8 +803,49 @@ async fn entry_packet_builds_deterministic_envelopes() {
         .unwrap()
         .path();
     std::fs::remove_file(&body).unwrap();
-    std::fs::write(&body, "other").unwrap();
-    assert!(Packet::load_dir(&t).is_err());
+    std::fs::write(&body, "Synthetic entry body.\nA second line!\n").unwrap();
+    assert!(
+        err(Packet::load_dir(&t).map(|_| ()).unwrap_err()).contains("does not hash to its name")
+    );
+
+    // The manifest must say exactly what the events sign: a manifest whose
+    // bytes are consistent with its own hash but not with the events is refused.
+    let original: Value = serde_json::from_slice(one.packet.manifest.as_ref().unwrap()).unwrap();
+    for (path, value, want) in [
+        (
+            "/sources/1/sha256",
+            json!(hex::encode([0x63; 32])),
+            "source set",
+        ),
+        ("/edges/0/relation", json!("causation"), "edges[0] relation"),
+        ("/edges/0/sources", json!(["s1"]), "edges[0] sources"),
+        (
+            "/edges/0/target_revision",
+            json!(hex::encode([1u8; 32])),
+            "edges[0] target",
+        ),
+        ("/subject/value", json!("other"), "subject key"),
+        ("/nonce", json!(hex::encode([0x78; 32])), "nonce"),
+    ] {
+        let mut m = original.clone();
+        *m.pointer_mut(path).unwrap() = value;
+        let bytes = serde_json::to_vec(&m).unwrap();
+        let e = Packet::new(
+            "entry",
+            &ctx,
+            one.packet.events.clone(),
+            vec![one.packet.bodies.values().next().unwrap().clone()],
+            Some(bytes),
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err(e).contains(want), "{path}: want {want:?}");
+    }
+    // The reviewed locators appear in packet.json.
+    assert_eq!(
+        packet["sources"][0]["locator"],
+        "Synthetic capture, paragraph 2."
+    );
     // An unlisted file riding along is refused too.
     let x = tmp.path().join("extra");
     one.packet.write_dir(&x).unwrap();
@@ -830,6 +973,19 @@ async fn cli_context_entry_review_and_submit() {
     assert!(printed.contains("nothing was submitted"), "{printed}");
     let digest = hex::encode(Packet::load_dir(&dir).unwrap().digest().unwrap());
     assert!(printed.contains(&digest));
+    // A second build from the same manifest, key and context file is
+    // byte-identical.
+    let again = tmp.path().join("again");
+    ok(publisher()
+        .args(["v1", "entry", "--key"])
+        .arg(&seed)
+        .arg("--context")
+        .arg(&ctx_file)
+        .arg("--manifest")
+        .arg(&m)
+        .arg("--out")
+        .arg(&again));
+    assert_eq!(files(&again), files(&dir));
     let review: Value = serde_json::from_str(&ok(publisher()
         .args(["v1", "review-packet", "--dir"])
         .arg(&dir)
@@ -857,22 +1013,89 @@ async fn cli_context_entry_review_and_submit() {
     .unwrap();
     assert_eq!(sub["events"][0]["state"], "valid");
     assert_eq!(n.context().await.events.len(), 1);
-    // Parser-level refusals: a missing reviewed revision is exit 2.
-    let out = publisher()
+    // A correction through the binary, against a fresh context.
+    let subject = hex::encode(s_id(&dir));
+    let revision = hex::encode(revision_id(s_id(&dir), s_id(&dir)));
+    let ctx2 = tmp.path().join("context2.json");
+    ok(publisher()
+        .args(["v1", "context", "--node", &n.url, "--out"])
+        .arg(&ctx2)
+        .env("CC_NODE_API_KEY", WRITE));
+    std::fs::write(
+        tmp.path().join("new.txt"),
+        "Corrected synthetic entry body.\n",
+    )
+    .unwrap();
+    let cdir = tmp.path().join("correction");
+    let flags = |c: &mut Command| {
+        c.arg("--key")
+            .arg(&seed)
+            .arg("--context")
+            .arg(&ctx2)
+            .args([
+                "--rationale",
+                "Synthetic correction.",
+                "--evidence",
+                &hex::encode(EVIDENCE),
+            ])
+            .arg("--out")
+            .arg(&cdir);
+    };
+    let mut c = publisher();
+    c.args([
+        "v1",
+        "correction",
+        "--subject",
+        &subject,
+        "--revision",
+        &revision,
+        "--body",
+    ])
+    .arg(tmp.path().join("new.txt"));
+    flags(&mut c);
+    ok(&mut c);
+    let cdigest = hex::encode(Packet::load_dir(&cdir).unwrap().digest().unwrap());
+    let sub: Value = serde_json::from_str(&ok(publisher()
         .args([
             "v1",
-            "edge",
-            "assert",
-            "--relation",
-            "influence",
-            "--source",
-            "00",
-            "--target",
-            "00",
+            "submit-packet",
+            "--node",
+            &n.url,
+            "--approve",
+            &cdigest,
+            "--dir",
         ])
+        .arg(&cdir)
+        .env("CC_NODE_API_KEY", WRITE)))
+    .unwrap();
+    assert_eq!(sub["events"][0]["kind"], "correction");
+    assert_eq!(sub["events"][0]["state"], "valid");
+    // Parser-level refusal: with every other flag present, omitting the
+    // reviewed target revision is exit 2.
+    let mut c = publisher();
+    c.args([
+        "v1",
+        "edge",
+        "assert",
+        "--relation",
+        "influence",
+        "--source",
+        &subject,
+    ])
+    .args(["--target", &subject, "--source-revision", &revision]);
+    let cdir = tmp.path().join("unused");
+    let out = c
+        .arg("--key")
+        .arg(&seed)
+        .arg("--context")
+        .arg(&ctx2)
+        .args(["--rationale", "x", "--evidence", &hex::encode(EVIDENCE)])
+        .arg("--out")
+        .arg(&cdir)
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--target-revision"));
     let s = Signed::decode(&std::fs::read(dir.join("events/00.bin")).unwrap()).unwrap();
     assert_eq!(s.envelope().payload.kind(), Kind::Genesis);
 }

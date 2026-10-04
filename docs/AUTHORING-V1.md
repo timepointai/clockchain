@@ -42,8 +42,10 @@ placeholders.
 ## Context
 
 `context` reads `/health` and `GET /v1/export` and writes a new file (mode
-0600; an existing file is never replaced) holding the instance and the export
-as served. The node's fold must equal this build's `fold_v1()`.
+0600; an existing file is never replaced) holding the instance and the
+export's verified fields, unchanged: `encoding`, `rule`, `corpus_digest`,
+`commitment` and `envelopes`. Anything else the node sends is dropped. The
+node's fold must equal this build's `fold_v1()`.
 
 Every builder loads the context and checks it before use: each envelope
 decodes canonically with a valid signature, belongs to the instance, appears
@@ -148,7 +150,8 @@ each edge, in manifest order.
 ```
 
 - Unknown fields are refused. Paths are relative to the manifest, without
-  `..`.
+  `..` or a leading `/`. A symlink is followed, so keep the manifest
+  directory free of links you did not make.
 - `subject`, `asserted_time` and `body` follow the `genesis` rules. The
   Genesis evidence is the set of all source hashes.
 - `nonce` is fixed in the manifest, so the same manifest, key and context
@@ -178,7 +181,9 @@ Every builder writes the same directory:
 
 `packet.json` (`cc.publisher.v1.packet`) is a pure function of the
 envelopes, bodies, manifest and context digest: `command`, `instance`,
-`author`, `context` (`corpus_digest`, `events`), `manifest_sha256`, one entry
+`author`, `context` (`corpus_digest`, `events`), `manifest_sha256`,
+`sources` (`entry` only: each source's `id`, `sha256`, `locator` and
+`capture` path, as the reviewer must read them), one entry
 per event with every signed field and derived identifier (event, subject,
 revision, edge, pins, decision rationale, evidence, old and new values,
 attestation target), `bodies`, and `submitted` and `publication_authorized`,
@@ -187,8 +192,13 @@ both `false`. One packet has one author and one instance.
 The **packet digest** is the SHA-256 of `packet.json`. Reloading a packet
 (`review-packet`, `submit-packet`) decodes and verifies every envelope,
 checks every body against its name and the bodies against the events, and
-requires `packet.json` to be byte-identical to the recomputed one. Any edit
-to any file changes the digest or is refused.
+requires `packet.json` to be byte-identical to the recomputed one, and the
+directory to hold no other file. For an `entry` packet, the manifest must
+say exactly what the events sign: the Genesis instance, subject key,
+asserted time, nonce and source set, and for each edge its relation,
+rationale, cited sources, endpoints and reviewed revisions. A packet whose
+`packet.json` would exceed 1 MiB, the most a reload reads, is never written.
+Any edit to any file changes the digest or is refused.
 
 ## Review checklist
 
@@ -212,9 +222,10 @@ date and packet digest.
 6. **Media decision.** An attestation names the exact revision it
    illustrates. Absence cannot be signed in v1; do not encode it.
 7. **Scope stated.** What the record is not.
-8. **Exact handoff.** Run `review-packet --context`: the digest is the one
-   reviewed, `context_matches` and `admissible` are `true`. Any change to any
-   byte needs a new review.
+8. **Exact handoff.** Run `review-packet --context` and compare its
+   `packet_digest` with the digest recorded at review; `context_matches` and
+   `admissible` must be `true` (otherwise `admissible` gives the node rule's
+   reason). Any change to any byte needs a new review.
 
 `review-packet` prints `"status": "ready_for_owner_review"`. That is not
 approval.
@@ -240,13 +251,17 @@ The owner, and only the owner:
 4. Classifies the packet over that corpus with the node's own rule.
 5. Stores every body, then posts each envelope in order; each must be
    admitted `valid` (HTTP 201) with the matching event and input digest.
-6. Reads `GET /v1/snapshot` back: every packet event is retained and not
-   pending or invalid; the status of every edge in the packet is reported.
+6. Reads `GET /v1/snapshot` back: every packet event is retained in state
+   `head`, `superseded` or `branch` (never pending, invalid or absent); the
+   status of every edge in the packet is reported.
 
 Steps 1 to 4 only read; a refusal there writes nothing. A rerun after a
 partial failure is safe: re-posting an admitted envelope is idempotent, and
 the packet's own events do not count as a corpus change. Stdout is a
-`cc.publisher.v1.packet-submission` JSON report.
+`cc.publisher.v1.packet-submission` JSON report; the token is redacted from
+it and from every error. No receipt file is written; redirect stdout to keep
+the report. A directory written by `genesis` still goes through `submit`
+([PUBLISHER-V1.md](PUBLISHER-V1.md)).
 
 ## A future 1973 claim and influence edge
 
@@ -265,8 +280,9 @@ value appears in this repository.
    influence. The direction is the reviewer's claim and must match the
    evidence; support itself is undirected.
 4. `entry` builds the Genesis and the edge, signed with the owner's curator
-   key, so both the edge author and both endpoint creators are curators and
-   the edge can count as support.
+   key. The edge author and the new subject's creator are then the curator,
+   and the 1968 subject was created by the curator too, so the edge can
+   count as support.
 5. The owner runs the checklist on the Genesis and the edge separately, then
    `review-packet --context`.
 6. If approved, the owner runs `submit-packet --approve DIGEST`. Images are a

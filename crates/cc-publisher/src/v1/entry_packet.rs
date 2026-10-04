@@ -22,6 +22,15 @@ pub const EVENTS_DIR: &str = "events";
 pub const BODIES_DIR: &str = "bodies";
 /// Rationales and source locators: signed text a reviewer must read as is.
 pub const MAX_TEXT: usize = 64 * 1024;
+/// The largest `packet.json` a reload reads.
+pub const MAX_PACKET_JSON: usize = MAX_ENVELOPE;
+const COMMANDS: [&str; 5] = [
+    "correction",
+    "edge assert",
+    "edge reaffirm",
+    "attest",
+    "entry",
+];
 
 pub struct Packet {
     /// `correction`, `edge assert`, `edge reaffirm`, `attest` or `entry`.
@@ -267,7 +276,30 @@ impl Packet {
         for b in self.bodies.values() {
             genesis::validate_body(b)?;
         }
+        ensure!(
+            COMMANDS.contains(&self.command.as_str()),
+            "unknown packet command {:?}",
+            self.command
+        );
+        ensure!(
+            self.manifest.is_some() == (self.command == "entry"),
+            "only an entry packet carries a manifest"
+        );
+        // A packet that could not be reloaded must never be written.
+        let n = self.render()?.len();
+        ensure!(
+            n <= MAX_PACKET_JSON,
+            "{PACKET_FILE} would be {n} bytes; at most {MAX_PACKET_JSON}; split the packet"
+        );
         Ok(())
+    }
+    /// `entry` only: the manifest's sources, after checking that the manifest
+    /// says exactly what the events sign.
+    fn sources(&self) -> Result<Value> {
+        match &self.manifest {
+            Some(m) => super::entry::check_manifest(m, &self.events),
+            None => Ok(Value::Null),
+        }
     }
     pub fn ids(&self) -> Vec<Hash> {
         self.events.iter().map(Signed::id).collect()
@@ -282,6 +314,7 @@ impl Packet {
             "author": h(&self.author),
             "context": {"corpus_digest": h(&self.context), "events": self.context_events},
             "manifest_sha256": self.manifest.as_ref().map(|m| h(&hash(m))),
+            "sources": self.sources()?,
             "events": self.events.iter().enumerate().map(|(i, s)| describe(i, s)).collect::<Result<Vec<_>>>()?,
             "bodies": self.bodies.iter().map(|(k, b)| json!({
                 "file": format!("{BODIES_DIR}/{}.bin", h(k)),
@@ -334,7 +367,7 @@ impl Packet {
     /// bodies hash to their names, and `packet.json` is byte-identical to the
     /// one recomputed from those files.
     pub fn load_dir(dir: &Path) -> Result<Self> {
-        let raw = read_capped(&dir.join(PACKET_FILE), MAX_ENVELOPE)?;
+        let raw = read_capped(&dir.join(PACKET_FILE), MAX_PACKET_JSON)?;
         let v: Value =
             serde_json::from_slice(&raw).with_context(|| format!("{PACKET_FILE} is not JSON"))?;
         ensure!(

@@ -5,21 +5,24 @@
 //!
 //! Ported from the salvage authoring flow, offline parts only: declared
 //! sources carry the SHA-256 of a retained capture, and a capture present on
-//! disk must hash to it; an edge may cite only declared sources ("support
-//! references uncaptured source"); an existing endpoint carries the revision
+//! disk must hash to it; an edge may cite only declared sources (the
+//! salvage "support references uncaptured source", here "undeclared
+//! source"); an existing endpoint carries the revision
 //! the reviewer read, refused as `source_subject_changed` /
 //! `target_subject_changed` once it moves; and the result is a digest-bound
-//! packet, ready for owner review, which is not approval.
+//! packet, ready for owner review, which is not approval. A reloaded entry
+//! packet is checked against its manifest again ([`check_manifest`]).
 use super::edge::{self, check_dispute, check_relation, endpoint_pin};
 use super::entry_context::Context;
 use super::entry_packet::{validate_text, Packet};
 use super::genesis::{self, read_capped, GenesisInput, MAX_BODY};
 use super::{hex32, key, time};
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
-use cc_core::v1::{hash, revision_id, Hash, Pin, Pins, Signed};
+use cc_core::v1::{hash, revision_id, Hash, Payload, Pin, Pins, Signed};
 use cc_core::SecretKey;
 use clap::Args;
 use serde::Deserialize;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
@@ -109,15 +112,127 @@ pub struct Built {
     pub unverified_captures: Vec<String>,
 }
 
-pub fn build(signer: &SecretKey, ctx: &Context, manifest_path: &Path) -> Result<Built> {
-    let raw = read_capped(manifest_path, cc_core::v1::MAX_ENVELOPE)?;
-    let m: Manifest = serde_json::from_slice(&raw)
-        .with_context(|| format!("{} is not an entry manifest", manifest_path.display()))?;
-    let base = manifest_path.parent().unwrap_or(Path::new("."));
+fn parse(raw: &[u8]) -> Result<Manifest> {
+    let m: Manifest = serde_json::from_slice(raw)?;
     ensure!(
         m.schema == MANIFEST_SCHEMA,
         "manifest schema must be {MANIFEST_SCHEMA:?}"
     );
+    Ok(m)
+}
+
+fn sorted(mut v: Vec<Hash>) -> Vec<Hash> {
+    v.sort();
+    v
+}
+
+/// The manifest an entry packet carries must say exactly what its events
+/// sign: the Genesis instance, subject key, asserted time, nonce and evidence
+/// (every source hash), then one edge per manifest edge with its relation,
+/// rationale, cited source hashes, endpoints and reviewed revisions. Returns
+/// the sources, with locators, for `packet.json`.
+pub fn check_manifest(raw: &[u8], events: &[Signed]) -> Result<Value> {
+    let m = parse(raw).context("manifest.json")?;
+    let mismatch = |what: &str| anyhow!("manifest.json {what} differs from the signed events");
+    let shas = m
+        .sources
+        .iter()
+        .map(|s| hex32(&s.sha256).with_context(|| format!("source {:?} sha256", s.id)))
+        .collect::<Result<Vec<_>>>()?;
+    let by_id: BTreeMap<&str, Hash> = m
+        .sources
+        .iter()
+        .map(|s| s.id.as_str())
+        .zip(shas.iter().copied())
+        .collect();
+    ensure!(
+        by_id.len() == m.sources.len(),
+        "manifest.json declares a source id twice"
+    );
+    ensure!(events.len() == 1 + m.edges.len(), mismatch("event count"));
+    let g = &events[0];
+    let e = g.envelope();
+    let Payload::Genesis {
+        nonce, evidence, ..
+    } = &e.payload
+    else {
+        bail!(mismatch("first event kind"));
+    };
+    let key = e
+        .subject_key
+        .as_ref()
+        .context("Genesis lacks a subject key")?;
+    ensure!(hex32(&m.instance) == Some(e.instance), mismatch("instance"));
+    ensure!(
+        (
+            key.kind.as_str(),
+            key.namespace.as_str(),
+            key.value.as_str()
+        ) == (
+            m.subject.kind.as_str(),
+            m.subject.namespace.as_str(),
+            m.subject.value.as_str()
+        ),
+        mismatch("subject key")
+    );
+    ensure!(
+        e.asserted_time.as_ref() == Some(&time::parse(&m.asserted_time)?),
+        mismatch("asserted time")
+    );
+    ensure!(hex32(&m.nonce) == Some(*nonce), mismatch("nonce"));
+    ensure!(evidence.0 == sorted(shas.clone()), mismatch("source set"));
+    let entry = g.id();
+    for (n, (edge, signed)) in m.edges.iter().zip(&events[1..]).enumerate() {
+        let what = |x: &str| mismatch(&format!("edges[{n}] {x}"));
+        let Payload::EdgeAssert {
+            relation,
+            pins,
+            decision,
+        } = &signed.envelope().payload
+        else {
+            bail!(what("kind"));
+        };
+        ensure!(*relation == edge.relation, what("relation"));
+        ensure!(decision.rationale == edge.rationale, what("rationale"));
+        let cited = edge
+            .sources
+            .iter()
+            .map(|id| {
+                by_id
+                    .get(id.as_str())
+                    .copied()
+                    .with_context(|| what("sources"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(decision.evidence.0 == sorted(cited), what("sources"));
+        for (side, end, rev, pin) in [
+            ("source", &edge.source, &edge.source_revision, &pins.source),
+            ("target", &edge.target, &edge.target_revision, &pins.target),
+        ] {
+            let ok = if end == ENTRY {
+                rev.is_none()
+                    && pin.subject == entry
+                    && pin.basis == entry
+                    && pin.revision == revision_id(entry, entry)
+            } else {
+                hex32(end) == Some(pin.subject)
+                    && rev.as_deref().and_then(hex32) == Some(pin.revision)
+            };
+            ensure!(ok, what(side));
+        }
+    }
+    Ok(m.sources
+        .iter()
+        .map(|s| json!({"id": s.id, "sha256": s.sha256.to_lowercase(), "locator": s.locator, "capture": s.capture}))
+        .collect::<Vec<_>>()
+        .into())
+}
+
+pub fn build(signer: &SecretKey, ctx: &Context, manifest_path: &Path) -> Result<Built> {
+    let raw = read_capped(manifest_path, cc_core::v1::MAX_ENVELOPE)?;
+    let m = parse(&raw)
+        .with_context(|| format!("{} is not an entry manifest", manifest_path.display()))?;
+    let base = manifest_path.parent().unwrap_or(Path::new("."));
     let instance = hex32(&m.instance).context("manifest instance must be 64 hex characters")?;
     ensure!(
         instance == ctx.instance,
