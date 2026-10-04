@@ -145,3 +145,25 @@ def prove_guards(run, sql):
             raise ValueError(f'append-only trigger missing from catalog: cc_v1.{table}')
         proven[table] = 'proven'
     return proven
+
+
+def fingerprint_v1(sql):
+    """Row count and SHA-256 of every cc_v1 table's ordered rows. Read-only.
+
+    Equal fingerprints before and after a step prove the step wrote nothing to
+    the store: an update's `provision-v1` on a matching store, for instance.
+    """
+    # Each row is hashed on its own and the sorted row hashes are hashed again,
+    # so no intermediate value grows with the store beyond 64 bytes a row.
+    query = ' UNION ALL '.join(
+        f"SELECT '{t}'||'|'||count(*)||'|'||encode(sha256(convert_to(coalesce(string_agg(h, "
+        f"'' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to("
+        f"r::text, 'UTF8')), 'hex') AS h FROM cc_v1.{t} r) rows"
+        for t in TABLES)
+    rows = {}
+    for line in sql(query).splitlines():
+        table, count, digest = line.split('|')
+        rows[table] = {'rows': int(count), 'sha256': digest}
+    if tuple(sorted(rows)) != TABLES:
+        raise ValueError('store fingerprint does not cover every cc_v1 table')
+    return rows

@@ -137,13 +137,22 @@ In v1 mode none of the routes above are mounted. The contract is
 | `CC_V1_INSTANCE` | Instance ID, exactly 64 lowercase hex characters |
 | `CC_V1_CURATORS` | Ed25519 public keys, 64 lowercase hex each, comma-separated with no spaces, strictly sorted |
 | `CC_V1_MAX_HOPS` | Decimal hop bound; default `4` |
+| `CC_V1_READ_CONCURRENCY` | Reads in flight before further reads get `503 busy`; canonical decimal `1` to `64`, default `8` |
+| `CC_V1_NODE_SEED` | Optional. Exactly 64 lowercase hex characters, a 32-byte Ed25519 seed that signs node receipts. Refused if malformed, if it has fewer than 8 distinct characters, or if its public key is one of `CC_V1_CURATORS`. Absent: no receipts, and admission is unchanged |
 
 `CC_NODE_API_KEY`, `CC_NODE_READ_KEY`, `CC_NODE_POSTURE` and `PORT` keep their
 meaning. The gallery, beta and telemetry keys open no v1 route.
 
+`serve` reads `CC_V1_READ_CONCURRENCY` and `CC_V1_NODE_SEED`; `provision-v1`
+reads neither. A bad value stops `serve` with exit 78. The seed is a secret: set
+it as a platform secret, never in source or argv. The boot log line names
+`read_concurrency` and `node_key`, which is the public key or `off`. It never
+prints the seed.
+
 `cc-node provision-v1` creates the v1 schema and records the rule identity, or
 accepts a database already provisioned with exactly this identity. It needs only
-`CC_NODE_LEDGER`, `DATABASE_URL` and the `CC_V1_*` variables, and prints
+`CC_NODE_LEDGER`, `DATABASE_URL` and the identity variables `CC_V1_INSTANCE`,
+`CC_V1_CURATORS` and `CC_V1_MAX_HOPS`, and prints
 `{instance, fold_version:{version,manifest}, filter_version, semantic}`.
 `cc-node serve` reopens that database read-only at boot and never provisions.
 `cc-node migrate` refuses in v1 mode. Exit codes:
@@ -169,6 +178,7 @@ accepts a database already provisioned with exactly this identity. It needs only
 | `GET /v1/subjects/{id}` | read | Optional `as_of`; 404 for an unknown subject |
 | `GET /v1/revisions/{id}/prose` | read | Verified body text when retained |
 | `GET /v1/support?from=&to=` | read | Optional `as_of`; support verdict |
+| `GET /v1/receipts/{event}` | read | Verified receipts for that event, in receipt-digest order: 200 `{event, receipts:[{receipt, receipt_digest, node_key, event, received_at, encoding_version, fold_version:{version,manifest}, initial_admission_result:{state, reason, missing}}]}`; 404 `no_receipt`; 400 `invalid_event_id`; 503 `receipt_verification_failed` if a stored receipt fails verification |
 
 ```sh
 curl -fsS "$BASE/health"
@@ -177,9 +187,62 @@ curl -fsS -H "Authorization: Bearer $CC_NODE_READ_KEY" "$BASE/v1/subjects/$SUBJE
 
 Missing or unknown credentials get `401`; the read key on a write route gets
 `403`. A frozen node answers writes `503 {"error":"frozen"}` and still serves
-reads and export. Every read names `rule`, `corpus_digest` and `commitment`.
+reads and export. Every projection read (snapshot, subjects, prose, support)
+names `rule`, `corpus_digest` and `commitment`; the receipts route does not,
+because receipts are outside every commitment.
 IDs, digests and `as_of` (a 32-byte coordinate) are lowercase hex. Embedded
 projection objects, the admission outcome and the export manifest keep their
 canonical JSON, in which a hash is a list of 32 byte values. An unknown,
 misspelled or repeated query parameter on any v1 data route is
 `400 {"error":"invalid_query"}`.
+
+### Snapshot cache, read limit and receipts
+
+None of this changes the rule identity, the fold or `/health`. The `/health`
+document is unchanged and does not name the node key.
+
+**Snapshot cache.** A read reuses the last committed snapshot when three things
+match: the rule identity, the corpus digest, and a digest of the retained
+candidate bytes. Any difference folds again from verified bytes. Every admission
+invalidates the cache, whatever its outcome. Responses are byte-identical to an
+uncached fold. Export never uses the cache. Checking the key still has
+PostgreSQL hash every retained envelope on each read, so it grows with corpus
+bytes; a hit skips the signature checks and the fold.
+
+**Read limit.** At most `CC_V1_READ_CONCURRENCY` reads run at once. The limit
+covers the read-scope routes: snapshot, subjects, prose, support, receipts and
+the unknown-path fallback. It applies after authentication, so a `401` never
+takes a permit. `/health`, `/ready`, `/robots.txt` and the write-scope routes,
+including `/v1/export`, are outside it. A read that finds the limit full gets
+`503 {"error":"busy"}` with `Retry-After: 1` at once; it never waits for a
+permit. The store pool has ten connections. Above about nine, admitted reads
+can wait for a connection, and one that waits more than five seconds answers
+`503 store_unavailable`. The default of 8 stays below the pool.
+
+**Receipts.** With `CC_V1_NODE_SEED` set, the node signs a `NodeReceiptV1`
+(domain `cc.receipt.v1`) for the first admission of each candidate: the call
+that first retains that event id. The receipt is written in the same
+transaction as the candidate. If signing fails, nothing is admitted and the
+submit answers `503 admission_unavailable`. Otherwise:
+
+- A resubmission of a retained event gets no new receipt.
+- A rejected input that never becomes a candidate (undecodable, or the wrong
+  instance) gets none. A retained candidate classified `invalid` or `pending`
+  gets one that records that result.
+- The submit response is unchanged: the `Outcome` JSON. Fetch the receipt from
+  `GET /v1/receipts/{event}`.
+- Receipts are observations, not events. They never enter the candidate set,
+  corpus digest, view commitment, snapshot or export. A node with receipts on
+  commits exactly what a node with them off commits.
+- Receipts retained earlier stay readable if the seed is later removed.
+- Export carries no receipts, so a store restored from an export has none. A
+  database dump keeps them.
+
+`receipt` is the signed bytes in hex and is authoritative. The other fields are
+decoded conveniences. `received_at` is Unix microseconds observed by the node,
+not historical time. To verify a receipt, decode `receipt`, split off the
+trailing 64-byte signature, and check it with stock Ed25519 over the rest (the
+preimage) against the node key. Pin the expected node key out of band: the node
+does not publish it on `/health`, and the `node_key` inside a receipt only names
+the key that signed it. A receipt attests that this node saw this event, not
+that the event is true or that the corpus was in any given state.
