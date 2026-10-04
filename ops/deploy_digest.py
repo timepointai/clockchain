@@ -250,7 +250,7 @@ def update_fly(*args):
     return fly(*args)
 
 
-def wait_for_rollout(app, node, sha, expected_digest, attempts=ROLLOUT_ATTEMPTS, sleep=time.sleep):
+def wait_for_rollout(app, node, sha, expected_digest, attempts=ROLLOUT_ATTEMPTS, sleep=None):
     """Wait until the machine census and /health name the new build.
 
     Only the rollout is retried. Identity, readiness and commitments are
@@ -262,13 +262,13 @@ def wait_for_rollout(app, node, sha, expected_digest, attempts=ROLLOUT_ATTEMPTS,
                               expected_digest)
             status, raw = node.get('/health')
             health = json.loads(raw) if status == 200 else {}
-            if health.get('build') != sha[:12]:
+            if not isinstance(health, dict) or health.get('build') != sha[:12]:
                 raise AssertionError('node does not report the new build yet')
             return fleet, health
         except (AssertionError, ValueError, OSError, subprocess.CalledProcessError):
             if attempt == attempts - 1:
                 raise
-            sleep(5)
+            (sleep or time.sleep)(5)
 
 
 def write_private(path, data):
@@ -359,7 +359,7 @@ def promote_v1_update(args):
         return result
     except Exception as error:
         (evidence / 'FAILED').write_text(
-            'v1 update failed ' + ('after' if deployed else 'before') + ' the deploy. '
+            'v1 update failed ' + ('after the deploy started' if deployed else 'before the deploy') + '. '
             'No automatic rollback: see docs/OPERATIONS.md.\n')
         (evidence / 'recovery.json').write_text(json.dumps(
             {'status': 'NOT RUN', 'error': type(error).__name__, 'deployed': deployed,

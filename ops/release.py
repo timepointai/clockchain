@@ -40,7 +40,7 @@ def output(*args):
 
 def mode_flag(args):
     for flag in ('v1_fresh', 'v1_update', 'empty_corpus', 'zero_events'):
-        if getattr(args, flag):
+        if getattr(args, flag, False):
             return ['--' + flag.replace('_', '-')]
     return []
 

@@ -29,9 +29,10 @@ class ConfigError(ValueError):
 
 
 def outside_checkout(path, root=ROOT):
-    path = Path(path).resolve()
-    if path == root or path.is_relative_to(root):
-        raise ConfigError(f'{path.name}: private files must be outside the public checkout')
+    path = Path(path).absolute()  # unresolved, so callers' symlink checks still see a link
+    resolved = path.resolve()
+    if resolved == root or resolved.is_relative_to(root):
+        raise ConfigError(f'{resolved.name}: private files must be outside the public checkout')
     return path
 
 

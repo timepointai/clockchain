@@ -68,7 +68,10 @@ def run(env_file, *, proxy=FlyProxy, notify=owner_jobs.notify, stderr=sys.stderr
         env = owner_jobs.load_env_file(env_file)
         app, state_dir = owner_jobs.require(env, 'CC_FLY_APP', 'CC_OPS_STATE_DIR')
         state = owner_jobs.private_dir(state_dir)
-        expected = Expected.from_env(env, production=True)
+        try:
+            expected = Expected.from_env(env, production=True)
+        except ValueError as error:
+            raise owner_jobs.ConfigError(str(error)) from None
         with owner_jobs.JobLock(state, 'monitor') as locked:
             if not locked:
                 return 0  # the previous check is still running; it will report

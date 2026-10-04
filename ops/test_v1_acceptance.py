@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,11 +13,15 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also runnable by file path from the root
 import v1_acceptance
-from v1_acceptance import PG_IMAGE, PREFIX, SYNTHETIC_BODY, accept_v1, synthetic_node
-from v1_backup import RELATIONS
+from v1_acceptance import (PG_IMAGE, PREFIX, SYNTHETIC_BODY, accept_v1, accept_v1_update,
+                           pinned_image, synthetic_node)
+from v1_backup import RELATIONS, fingerprint_v1
+import v1_update
+from v1_update import CommitmentChanged
 from v1_identity import TABLES, Expected, fold_manifest
 
 IMAGE = 'registry.example.invalid/clockchain@sha256:' + 'ab' * 32
+PREVIOUS = 'registry.example.invalid/clockchain@sha256:' + 'ef' * 32
 SHA = '0123456789abcdef0123456789abcdef01234567'
 MANIFEST = fold_manifest().hex()
 PORT = '127.0.0.1:49152'
@@ -37,6 +42,24 @@ SENTINELS = {'CC_NODE_API_KEY': 'PRODUCTION-SENTINEL-full-key-7f3a',
              'CC_V1_INSTANCE': '9e' * 32, 'CC_V1_CURATORS': '8d' * 32,
              'FLY_API_TOKEN': 'FlyV1 PRODUCTION-SENTINEL-fly-token'}
 sha = lambda data: hashlib.sha256(data).hexdigest()
+UPDATE_EVIDENCE = {'v1-update.json', 'cleanup.json'}
+SEED = 'CC_V1_NODE_SEED'
+
+
+class Response:
+    """What urlopen returns to ReadOnlyNode: a status and the body bytes."""
+
+    def __init__(self, status, body):
+        self.status, self.body = status, body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self.body
 
 
 def pubkey(name):
@@ -55,11 +78,19 @@ class FakeDocker:
 
     def __init__(self, *, migrate_rc=78, seed_mode=0o600, provision_drift=False,
                  accept_mismatch=(), fail_rm=lambda name: False, fold_matches_build=True,
-                 guard_hole=None, probe_residue=False, extra_rows=False):
+                 guard_hole=None, probe_residue=False, extra_rows=False, images=(IMAGE,),
+                 upgrade_writes=None, refusal_writes=False):
         # guard_hole: a statement prefix the restored copy wrongly accepts.
         # probe_residue: the zero-check probes leave a rejection row behind.
         # extra_rows: the synthetic submit stores more rows than one Genesis.
+        # images: the cc images this run may use (the update scenario uses two).
+        # upgrade_writes: a provision-v1 by another image than the one that
+        #   provisioned the store, on a matching store, writes: 'rejection' adds
+        #   a row; 'rewrite' re-stamps rule_identity with every count unchanged.
+        # refusal_writes: a refused (65) provision-v1 adds a rejection row.
         self.guard_hole, self.probe_residue, self.extra_rows = guard_hole, probe_residue, extra_rows
+        self.images, self.upgrade_writes, self.refusal_writes = set(images), upgrade_writes, refusal_writes
+        self.ran, self.pulled, self.current_image, self.started = [], [], None, {}
         self.migrate_rc, self.seed_mode, self.provision_drift = migrate_rc, seed_mode, provision_drift
         self.fold_matches_build = fold_matches_build
         self.accept_mismatch, self.fail_rm = set(accept_mismatch), fail_rm
@@ -86,6 +117,7 @@ class FakeDocker:
     def dispatch(self, args):
         cmd, rest = args[0], args[1:]
         if cmd == 'pull':
+            self.pulled.append(args[-1])
             self.event('pull')
             return 0, 'pulled\n', ''
         if args[:2] == ['image', 'inspect']:
@@ -122,6 +154,7 @@ class FakeDocker:
                 return 1, '', 'removal failed'
             self.containers.pop(rest[2], None)
             self.removed.append(rest[2])
+            self.event('rm ' + rest[2].rsplit('-', 1)[1])
             return 0, rest[2] + '\n', ''
         raise AssertionError(f'unexpected docker command {args!r}')
 
@@ -150,8 +183,10 @@ class FakeDocker:
             env_name = Path(path).name
         if '-d' in flags:
             return self.start(opts['--name'][0], image, network, env)
-        if '--rm' not in flags or image != IMAGE:
+        if '--rm' not in flags or image not in self.images:
             raise AssertionError(f'unexpected one-off container {args!r}')
+        self.ran.append((image, ' '.join(command[:3])))
+        self.current_image = image
         if command[:1] == ['cc-publisher']:
             return self.publish(opts, network, env, env_name, command)
         if command == ['cc-node', 'migrate']:
@@ -165,11 +200,13 @@ class FakeDocker:
         if name in self.containers:
             return 125, '', 'name already in use'
         self.containers[name] = {'image': image, 'network': network, 'env': env}
+        self.started[name] = env
         self.created_containers.append(name)
         if image == PG_IMAGE:
             self.databases = {env['POSTGRES_DB']: empty_db()}
             self.event('run db')
-        elif image == IMAGE:
+        elif image in self.images:
+            self.ran.append((image, 'serve ' + name.rsplit('-', 1)[1]))
             self.event('serve ' + name.rsplit('-', 1)[1])
         else:
             raise AssertionError('unexpected image ' + image)
@@ -177,7 +214,7 @@ class FakeDocker:
 
     def node(self, url, network):
         for name, c in self.containers.items():
-            if url == f'http://{name}:8080' and c['image'] == IMAGE and c['network'] == network:
+            if url == f'http://{name}:8080' and c['image'] in self.images and c['network'] == network:
                 return c
         return None
 
@@ -262,12 +299,21 @@ class FakeDocker:
             rc = 69
         elif database['identity'] is None:
             database['identity'] = identity
+            database['provisioned_by'] = self.current_image
             database['counts'].update(identity=1, rule_identity=1)
             if self.probe_residue:
                 database['counts']['rejections'] = 1
             rc = 0
         elif database['identity'] == identity or env_name in self.accept_mismatch:
             rc = 0
+            if self.upgrade_writes and self.current_image != database['provisioned_by']:
+                if self.upgrade_writes == 'rejection':
+                    database['counts']['rejections'] += 1
+                else:
+                    stamps = database.setdefault('stamps', {})
+                    stamps['rule_identity'] = stamps.get('rule_identity', 0) + 1
+        elif self.refusal_writes:
+            database['counts']['rejections'] += 1
         if rc == 0:
             e = Expected(*identity)
             report = {'instance': e.instance, 'fold_version': {'version': 1, 'manifest': MANIFEST},
@@ -329,6 +375,8 @@ class FakeDocker:
         for t in TABLES:
             if query == f'SELECT count(*) FROM cc_v1.{t}':
                 return (0, f'{db["counts"][t]}\n', '') if provisioned else (1, '', 'no relation')
+        if ' UNION ALL ' in query:
+            return self.fingerprint(db, query) if provisioned else (1, '', 'no relation')
         if query.startswith('BEGIN; ') and query.endswith('; ROLLBACK;'):
             self.event('guard')
             if self.guard_hole and query.startswith('BEGIN; ' + self.guard_hole):
@@ -342,6 +390,39 @@ class FakeDocker:
             return 0, '1\n', ''
         raise AssertionError('unexpected query ' + query)
 
+    def fingerprint(self, db, query):
+        """fingerprint_v1's query: `table|count|sha256` per table, from the fake rows."""
+        parts = query.split(' UNION ALL ')
+        tables = [re.fullmatch(r"SELECT '(\w+)'\|\|'\|'\|\|count\(\*\)\|\|'\|'\|\|encode\(sha256\("
+                               r"convert_to\(coalesce\(string_agg\(r::text, E'\\n' ORDER BY r::text\), ''\), "
+                               r"'UTF8'\)\), 'hex'\) FROM cc_v1\.(\w+) r", part) for part in parts]
+        if not all(m and m[1] == m[2] for m in tables):
+            raise AssertionError('unexpected fingerprint query ' + query)
+        self.event('fingerprint')
+        identity = db['identity'] if db['identity'] is None else list(db['identity'])
+        rows = []
+        for m in tables:
+            t = m[1]
+            content = [t, db['counts'][t], identity if t in ('identity', 'rule_identity') else None,
+                       db.get('stamps', {}).get(t, 0)]
+            rows.append(f'{t}|{db["counts"][t]}|{sha(json.dumps(content).encode())}')
+        return 0, '\n'.join(rows) + '\n', ''
+
+    def serving(self):
+        """The one cc node container running now; HTTP on the loopback port reaches it."""
+        nodes = [n for n, c in self.containers.items() if c['image'] in self.images]
+        if len(nodes) != 1:
+            raise AssertionError(f'expected exactly one serving node, found {nodes!r}')
+        return nodes[0], self.containers[nodes[0]]
+
+    def view(self, container):
+        """Corpus digest, commitment and export a node derives from its store."""
+        db = self.databases[urlsplit(container['env']['DATABASE_URL']).path.lstrip('/')]
+        state = json.dumps({'identity': db['identity'], 'counts': db['counts']}, sort_keys=True).encode()
+        snapshot = {'corpus_digest': sha(b'corpus ' + state), 'commitment': sha(b'commitment ' + state)}
+        export = dict(snapshot, envelopes=['01' + sha(state)] * db['counts']['candidates'])
+        return snapshot, export
+
 
 class V1AcceptanceTests(unittest.TestCase):
     def setUp(self):
@@ -351,7 +432,7 @@ class V1AcceptanceTests(unittest.TestCase):
         self.tmp = self.root / 'tmp'  # every mkdtemp of the run lands here
         self.tmp.mkdir()
         self.evidence = self.root / 'evidence'
-        self.checked = []
+        self.checked, self.requests = [], []
 
     def accept(self, fake, *, evidence=None, restored_export=None, image=IMAGE, revision=SHA):
         exports = [EXPORT, restored_export or EXPORT]
@@ -682,6 +763,296 @@ class V1AcceptanceTests(unittest.TestCase):
                 for name in (network + '-app', network + '-restored'):
                     self.assertNotIn(name, fake.containers)
                 self.assertEqual(list(self.tmp.iterdir()), [])  # directories still removed
+
+
+    # Update acceptance ---------------------------------------------------
+
+    def accept_update(self, fake, *, evidence=None, previous=PREVIOUS, image=IMAGE, revision=SHA,
+                      node_seed=False, tamper=None):
+        """Run accept_v1_update; loopback HTTP reaches whichever node container is serving.
+
+        The real ReadOnlyNode, observe, require_identity and require_unchanged
+        run; only urlopen is replaced. `tamper(node, path, raw)` may replace the
+        bytes the node named by its container suffix answers with.
+        """
+        def answer(container, path, auth):
+            env = container['env']
+            snapshot, export = fake.view(container)
+            if path == '/health':
+                e = Expected(env['CC_V1_INSTANCE'], env['CC_V1_CURATORS'], env['CC_V1_MAX_HOPS'])
+                body = {'ledger': 'v1', 'instance': e.instance, 'fold_version': e.fold,
+                        'filter_version': e.filter_version, 'curators': e.curators,
+                        'max_hops': e.max_hops}
+            elif path == '/v1/snapshot' and auth in ('Bearer ' + env['CC_NODE_READ_KEY'],
+                                                     'Bearer ' + env['CC_NODE_API_KEY']):
+                body = snapshot
+            elif path == '/v1/export' and auth == 'Bearer ' + env['CC_NODE_API_KEY']:
+                body = export
+            else:
+                return 401, b'{"error":"unauthorized"}'
+            return 200, json.dumps(body).encode()
+
+        def opener(request, timeout):
+            parts = urlsplit(request.full_url)
+            if (f'{parts.scheme}://{parts.netloc}', request.get_method(), request.data) != \
+                    (LOOPBACK, 'GET', None):
+                raise AssertionError('unexpected HTTP request ' + request.full_url)
+            name, container = fake.serving()
+            node, auth = name.rsplit('-', 1)[1], request.get_header('Authorization')
+            fake.event(f'get {node} {parts.path}')
+            self.requests.append((node, parts.path, auth))
+            status, raw = answer(container, parts.path, auth)
+            return Response(status, tamper(node, parts.path, raw) if tamper and status == 200 else raw)
+
+        def check_populated(url, sha_, key, read_key, expected, entry, **kw):
+            fake.event('populated')
+            self.checked.append(('populated', url, key, read_key, expected, kw))
+            if url != LOOPBACK or entry['instance'] != expected.instance or \
+                    entry['author'] not in expected.curators:
+                raise AssertionError('populated check of the wrong node or entry')
+            name, container = fake.serving()
+            status, raw = answer(container, '/v1/snapshot', 'Bearer ' + read_key)
+            if tamper:
+                raw = tamper(name.rsplit('-', 1)[1], '/v1/snapshot', raw)
+            return dict(POPULATED, **json.loads(raw))
+
+        def wait(url, *args, **kwargs):
+            if url != LOOPBACK:
+                raise AssertionError('readiness probe left loopback')
+            fake.event('wait')
+
+        def unexpected(*args, **kwargs):
+            raise AssertionError('the update scenario reads nodes only through ReadOnlyNode')
+
+        with patch.object(v1_acceptance.subprocess, 'run', fake), \
+                patch.object(v1_acceptance, 'check_v1_zero', unexpected), \
+                patch.object(v1_acceptance, 'check_v1_populated', check_populated), \
+                patch.object(v1_acceptance, 'http', unexpected), \
+                patch.object(v1_acceptance, 'ReadOnlyNode',
+                             lambda base: v1_update.ReadOnlyNode(base, opener=opener)), \
+                patch.object(v1_acceptance, 'wait_http', wait), \
+                patch.object(v1_acceptance.time, 'sleep', side_effect=AssertionError('slept')), \
+                patch.object(tempfile, 'tempdir', str(self.tmp)):
+            return accept_v1_update(previous, image, revision, evidence or self.evidence,
+                                    node_seed=node_seed)
+
+    def assertCleanUpdateFailure(self, fake, evidence=None):
+        evidence = evidence or self.evidence
+        self.assertTrue((evidence / 'FAILED').is_file())
+        self.assertFalse((evidence / 'v1-update.json').exists())
+        self.assertEqual(json.loads((evidence / 'cleanup.json').read_text()),
+                         {'removed': True, 'remaining': []})
+        self.assertNothingLeft(fake)
+
+    def store(self, fake):
+        return fake.databases['clockchain']
+
+    def test_update_happy_path_keeps_commitments_and_removes_everything(self):
+        fake = FakeDocker(images=(PREVIOUS, IMAGE))
+        result = self.accept_update(fake)
+        self.assertEqual(result['result'], 'pass')
+        self.assertEqual({p.name for p in self.evidence.iterdir()}, UPDATE_EVIDENCE)
+        read = lambda name: json.loads((self.evidence / name).read_text())
+        self.assertEqual(read('v1-update.json'), result)
+        self.assertEqual(read('cleanup.json'), {'removed': True, 'remaining': []})
+        self.assertEqual((result['previous_image'], result['image'], result['sha']),
+                         (PREVIOUS, IMAGE, SHA))
+        self.assertEqual((result['counts'], result['mismatch_refusal'], result['node_seed']),
+                         (STORED, 65, False))
+        # Both nodes served the view the populated store derives; no export bytes in evidence.
+        [network] = fake.created_networks
+        snapshot, export = fake.view({'env': fake.started[network + '-app']})
+        want = dict(snapshot, export_sha256=sha(json.dumps(export).encode()))
+        self.assertEqual((result['before'], result['after'], result['unchanged']), (want, want, want))
+        self.assertEqual(self.store(fake)['counts'], STORED)
+        # previous provisions and serves; Genesis goes to it alone; it is removed
+        # before the new image's no-op provision, refusal and serve.
+        self.assertEqual(fake.events, [
+            'pull', 'pull', 'network create', 'keygen curator.seed', 'run db',
+            'provision node.env', 'serve previous', 'wait', 'genesis', 'submit',
+            'get previous /health', 'get previous /v1/snapshot', 'get previous /v1/export',
+            'fingerprint', 'rm previous',
+            'provision update.env', 'fingerprint', 'provision wrong-instance.env', 'fingerprint',
+            'serve app', 'wait', 'populated',
+            'get app /health', 'get app /v1/snapshot', 'get app /v1/export', 'fingerprint',
+            'rm app', 'rm db'])
+        self.assertEqual(fake.ran, [
+            (IMAGE, 'cc-publisher v1 keygen'), (PREVIOUS, 'cc-node provision-v1'),
+            (PREVIOUS, 'serve previous'), (IMAGE, 'cc-publisher v1 genesis'),
+            (IMAGE, 'cc-publisher v1 submit'), (IMAGE, 'cc-node provision-v1'),
+            (IMAGE, 'cc-node provision-v1'), (IMAGE, 'serve app')])
+        self.assertEqual(fake.pulled, [PREVIOUS, IMAGE])
+        self.assertEqual([(n, rc) for n, rc, _ in fake.provisions],
+                         [('node.env', 0), ('update.env', 0), ('wrong-instance.env', 65)])
+        self.assertEqual(json.loads(fake.provisions[0][2]), json.loads(fake.provisions[1][2]))
+        submits = [(net, params['--node'], env) for sub, net, params, env in fake.publisher
+                   if sub == 'submit']
+        self.assertEqual(submits, [(network, f'http://{network}-previous:8080', 'submit.env')])
+        self.assertEqual({net for sub, net, _, _ in fake.publisher if sub != 'submit'}, {'none'})
+        node = self.env_file(fake, 'node.env')
+        key, read_key = 'Bearer ' + node['CC_NODE_API_KEY'], 'Bearer ' + node['CC_NODE_READ_KEY']
+        for served in ('previous', 'app'):
+            self.assertEqual([r for r in self.requests if r[0] == served],
+                             [(served, '/health', None), (served, '/v1/snapshot', read_key),
+                              (served, '/v1/export', key)])
+        self.assertEqual(sorted(fake.created_containers),
+                         sorted(network + s for s in ('-db', '-previous', '-app')))
+        self.assertNothingLeft(fake)
+
+    def test_update_new_image_provision_writing_fails_and_cleans_up(self):
+        # 'rewrite' keeps every row count: only the per-table digest can see it.
+        for mode in ('rejection', 'rewrite'):
+            with self.subTest(mode):
+                fake = FakeDocker(images=(PREVIOUS, IMAGE), upgrade_writes=mode)
+                evidence = self.root / ('writes-' + mode)
+                with self.assertRaisesRegex(AssertionError, 'new image provision-v1 wrote to a matching store'):
+                    self.accept_update(fake, evidence=evidence)
+                if mode == 'rewrite':
+                    self.assertEqual(self.store(fake)['counts'], STORED)
+                self.assertNotIn('provision wrong-instance.env', fake.events)
+                self.assertNotIn('serve app', fake.events)
+                self.assertCleanUpdateFailure(fake, evidence)
+
+    def test_update_refused_provision_writing_fails(self):
+        fake = FakeDocker(images=(PREVIOUS, IMAGE), refusal_writes=True)
+        with self.assertRaisesRegex(AssertionError, 'refused provision-v1 wrote to the store'):
+            self.accept_update(fake)
+        self.assertNotIn('serve app', fake.events)
+        self.assertCleanUpdateFailure(fake)
+
+    def test_update_new_node_serving_another_commitment_fails(self):
+        def tamper(node, path, raw):
+            if node != 'app' or path == '/health':
+                return raw
+            return json.dumps(dict(json.loads(raw), commitment='ff' * 32)).encode()
+        fake = FakeDocker(images=(PREVIOUS, IMAGE))
+        with self.assertRaisesRegex(CommitmentChanged, 'changed across a no-write step: commitment'):
+            self.accept_update(fake, tamper=tamper)
+        self.assertCleanUpdateFailure(fake)
+
+    def test_update_new_node_serving_other_export_bytes_fails(self):
+        # Same corpus digest and commitment; only the export bytes differ.
+        changes = {'reserialized': lambda d: json.dumps(d, indent=1).encode(),
+                   'extra envelope': lambda d: json.dumps(dict(d, envelopes=d['envelopes'] + ['02'])).encode()}
+        for label, change in changes.items():
+            with self.subTest(label):
+                tamper = lambda node, path, raw: change(json.loads(raw)) \
+                    if (node, path) == ('app', '/v1/export') else raw
+                fake, evidence = FakeDocker(images=(PREVIOUS, IMAGE)), self.root / label
+                with self.assertRaisesRegex(CommitmentChanged, 'changed across a no-write step: export$'):
+                    self.accept_update(fake, evidence=evidence, tamper=tamper)
+                self.assertCleanUpdateFailure(fake, evidence)
+
+    def test_update_new_image_accepting_a_mismatched_identity_fails(self):
+        fake = FakeDocker(images=(PREVIOUS, IMAGE), accept_mismatch={'wrong-instance.env'})
+        with self.assertRaisesRegex(AssertionError, 'must refuse a mismatched identity with 65, not 0'):
+            self.accept_update(fake)
+        self.assertNotIn('serve app', fake.events)
+        self.assertCleanUpdateFailure(fake)
+
+    def test_update_new_image_provisioning_another_report_fails(self):
+        fake = FakeDocker(images=(PREVIOUS, IMAGE), provision_drift=True)
+        with self.assertRaisesRegex(AssertionError, 'new image provisions a different identity'):
+            self.accept_update(fake)
+        self.assertCleanUpdateFailure(fake)
+
+    def test_update_node_seed_reaches_only_the_new_node(self):
+        for node_seed in (True, False):
+            with self.subTest(node_seed=node_seed):
+                fake, evidence = FakeDocker(images=(PREVIOUS, IMAGE)), self.root / f'seed-{node_seed}'
+                self.requests = []
+                result = self.accept_update(fake, evidence=evidence, node_seed=node_seed)
+                self.assertIs(result['node_seed'], node_seed)
+                [network] = fake.created_networks
+                node, update = self.env_file(fake, 'node.env'), self.env_file(fake, 'update.env')
+                self.assertEqual(fake.started[network + '-app'], update)
+                self.assertEqual(fake.started[network + '-previous'], node)
+                self.assertEqual({k: v for k, v in update.items() if k != SEED}, node)
+                for path, text in fake.env_reads:
+                    if Path(path).name != 'update.env' or not node_seed:
+                        self.assertNotIn(SEED, text, Path(path).name)
+                if node_seed:
+                    self.assertRegex(update[SEED], '^[0-9a-f]{64}$')
+                    self.assertNotIn(update[SEED], node.values())
+                    for text in [' '.join(argv) for argv in fake.calls] + \
+                            [p.read_text() for p in evidence.iterdir()]:
+                        self.assertNotIn(update[SEED], text)
+                else:
+                    self.assertNotIn(SEED, update)
+
+    def test_update_no_production_credentials_reach_any_container(self):
+        fake = FakeDocker(images=(PREVIOUS, IMAGE))
+        sentinels = dict(SENTINELS, CC_V1_NODE_SEED='PRODUCTION-SENTINEL-node-seed-55e0')
+        with patch.dict(os.environ, sentinels):
+            self.accept_update(fake, node_seed=True)
+        self.assertEqual(len(fake.env_reads), sum(argv.count('--env-file') for argv in fake.calls))
+        self.assertEqual({Path(p).name for p, _ in fake.env_reads},
+                         {'node.env', 'update.env', 'wrong-instance.env', 'submit.env'})
+        argvs = [' '.join(argv) for argv in fake.calls]
+        reports = [p.read_text() for p in self.evidence.iterdir()]
+        headers = [str(auth) for _, _, auth in self.requests]
+        for name, value in sentinels.items():
+            for text in argvs + [t for _, t in fake.env_reads] + reports + headers:
+                self.assertNotIn(value, text, name)
+        for argv in fake.calls:
+            self.assertFalse(set(argv) & set(sentinels), 'bare host variable name in argv')
+            self.assertFalse({'-e', '--env'} & set(argv), 'inherits a host variable into a container')
+            self.assertFalse(any(a.startswith(('--env=', '-e')) and a != '-e' for a in argv))
+        for kwargs in fake.kwargs:
+            self.assertNotIn('env', kwargs)
+        update = self.env_file(fake, 'update.env')
+        [private] = {Path(p).parent for p, _ in fake.env_reads}
+        for name in ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY', 'POSTGRES_PASSWORD', SEED):
+            self.assertRegex(update[name], '^[0-9a-f]{64}$')
+            for text in argvs + reports:
+                self.assertNotIn(update[name], text, name)
+        self.assertEqual(set(headers), {'None', 'Bearer ' + update['CC_NODE_API_KEY'],
+                                        'Bearer ' + update['CC_NODE_READ_KEY']})
+        self.assertEqual(urlsplit(update['DATABASE_URL']).hostname, fake.created_networks[0] + '-db')
+        for argv in fake.calls:  # the credential directory is never mounted
+            for flag, value in zip(argv, argv[1:]):
+                if flag == '-v':
+                    self.assertNotIn(str(private), value)
+
+    def test_update_mutable_image_or_short_sha_rejected_before_docker(self):
+        bad = ('registry.example.invalid/clockchain:latest', 'registry.example.invalid/clockchain',
+               'registry.example.invalid/clockchain@sha256:' + 'ab' * 31, PREVIOUS.upper(),
+               PREVIOUS + '\n', '@sha256:' + 'ab' * 32)
+        cases = [(ref, IMAGE, SHA) for ref in bad] + [(PREVIOUS, ref, SHA) for ref in bad] + \
+            [(PREVIOUS, IMAGE, s) for s in ('abc1234', SHA[:39], SHA + '0', SHA.upper(), '')]
+        for previous, image, revision in cases:
+            with self.subTest(previous=previous, image=image, sha=revision):
+                fake = FakeDocker(images=(PREVIOUS, IMAGE))
+                with self.assertRaises(ValueError):
+                    self.accept_update(fake, previous=previous, image=image, revision=revision)
+                self.assertEqual(fake.calls, [])
+                self.assertFalse(self.evidence.exists())
+                self.assertEqual(list(self.tmp.iterdir()), [])
+
+    def test_pinned_image_strips_the_tag_and_refuses_other_references(self):
+        digest = '@sha256:' + '4c' * 32
+        pinned = 'registry.fly.io/cc-prod' + digest
+        for ref in ('registry.fly.io/cc-prod:deployment-01J8ZQ' + digest, pinned):
+            with self.subTest(ref):
+                self.assertEqual(pinned_image(ref, 'cc-prod'), pinned)
+        for ref in ('registry.fly.io/cc-staging' + digest, 'registry.fly.io/cc-prod-2' + digest,
+                    'registry.fly.io/cc-prodx:tag' + digest, 'registry.fly.io/other/cc-prod' + digest,
+                    'docker.io/cc-prod' + digest, 'registry.fly.io:443/cc-prod' + digest,
+                    'registry.fly.io/cc-prod:latest', 'registry.fly.io/cc-prod',
+                    'registry.fly.io/cc-prod@sha256:' + '4c' * 31, pinned.upper(), pinned + '\n',
+                    'registry.fly.io/cc-prod:a:b' + digest, pinned + digest, ''):
+            with self.subTest(ref), self.assertRaisesRegex(ValueError, 'pinned digest of the target app'):
+                pinned_image(ref, 'cc-prod')
+        # The app name is literal, not a pattern.
+        with self.assertRaises(ValueError):
+            pinned_image('registry.fly.io/ccxprod' + digest, 'cc.prod')
+
+    def test_synthetic_node_accepts_the_previous_container(self):
+        name = PREFIX + '0123456789ab-previous'
+        self.assertEqual(synthetic_node(name), f'http://{name}:8080')
+        for bad in (PREFIX + '0123456789ab-previous2', PREFIX + '0123456789ab-prev'):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                synthetic_node(bad)
 
 
 if __name__ == '__main__':

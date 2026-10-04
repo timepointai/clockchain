@@ -133,7 +133,7 @@ def require_identity(health, expected, stored=None):
     return actual
 
 
-def require_ready(node, attempts=READY_ATTEMPTS, sleep=time.sleep):
+def require_ready(node, attempts=READY_ATTEMPTS, sleep=None):
     """`/ready` must be 200 and serving. Only 503 `busy` is retried."""
     for attempt in range(attempts):
         status, raw = node.get('/ready')
@@ -144,7 +144,7 @@ def require_ready(node, attempts=READY_ATTEMPTS, sleep=time.sleep):
         if not isinstance(body, dict):
             body = {}
         if status == 503 and body.get('reason') == 'busy' and attempt < attempts - 1:
-            sleep(1)
+            (sleep or time.sleep)(1)
             continue
         if status != 200 or body.get('serving') is not True:
             raise NotReady(f'/ready: HTTP {status}' + (f' ({body["reason"]})' if
