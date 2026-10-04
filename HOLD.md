@@ -39,6 +39,28 @@ The owner decided the following:
 - **Still held.** Generation and model calls remain held. Issue #6 disposition
   and any further publication remain owner decisions.
 
+## Launch record — 2026-10-02
+
+v1 was released onto the fresh database. The inaugural Engelbart 1968 Genesis was
+admitted on 2026-10-02 as event `95f7fe16…a75185b6`, and it is the only entry.
+Production stays on private ingress, with posture `live`.
+
+## Owner decision: post-launch program — 2026-10-03
+
+The owner authorized building all twelve post-launch items in
+[STAGE-G.md](docs/design/STAGE-G.md). Building and supervised merging in this
+repository are authorized. These remain explicit owner actions, run from the owner's
+workstation:
+
+- production deploys, including update releases;
+- public ingress or exposure;
+- production secrets;
+- key ceremonies, including the hot delegate key;
+- any new entry, edge or media;
+- merges in consumer repositories.
+
+Generation and model calls remain held.
+
 ## PR #5 merge record — 2026-09-28
 
 PR #5 merged under the owner's independent HTTP policy decision and explicit
