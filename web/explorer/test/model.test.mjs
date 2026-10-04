@@ -19,7 +19,7 @@ test('hex converts canonical byte arrays and rejects other shapes', () => {
 test('asserted time renders the coordinates Rust wrote, and parses back to them', () => {
   // The fixture's coordinates were computed in Rust (tests/fixture.rs) from
   // these calendar days; this is an independent implementation agreeing.
-  const byCalendar = new Map(snapshot.revisions.map((r) => [m.renderAssertedTime(r.asserted_time), m.hex(r.asserted_time.coordinate)]));
+  const byCalendar = new Map(snapshot.revisions.filter((r) => r.asserted_time).map((r) => [m.renderAssertedTime(r.asserted_time), m.hex(r.asserted_time.coordinate)]));
   assert.deepEqual([...byCalendar.keys()].sort(), ['1901-03-04', '1901-03-05', '1902-06-01']);
   for (const [cal, coord] of byCalendar) {
     assert.deepEqual(m.parseAssertedTime(cal), { coordinate: coord, precision: 'day' });
@@ -125,4 +125,28 @@ test('an edge reading without pins is refused, not guessed', () => {
   const e = structuredClone(snapshot.edges[0]);
   e.pins = [];
   assert.throws(() => m.edgeView(e, m.index(snapshot)), /without pins/);
+});
+
+test('a page claims prose only when every read is bound and verified', async () => {
+  const pass = (...names) => ({ checks: names.map((name) => ({ name, status: 'pass' })) });
+  const ok = pass('view_commitment', 'read:subject', 'read:prose');
+  const current = m.hex(subjectA.revision.id);
+  const proseCurrent = await json(`revisions/${current}/prose.json`);
+  const other = snapshot.revisions.map((r) => m.hex(r.id)).find((r) => r !== current && m.hex(snapshot.revisions.find((x) => m.hex(x.id) === r).subject) === A);
+  const proseOther = await json(`revisions/${other}/prose.json`);
+  const base = { id: A, asOf: null, subjectRead: subjectA, proseRead: proseCurrent };
+  assert.deepEqual(m.pageChecks(ok, base), { ok: true, claim: true, problems: [] });
+  // Verified prose of an older revision of the same subject is not the claim.
+  const older = m.pageChecks(ok, { ...base, proseRead: proseOther });
+  assert.equal(older.claim, false);
+  assert.match(older.problems.join(), /another revision/);
+  // A read for another subject, or another as_of, than the one requested.
+  assert.match(m.pageChecks(ok, { ...base, id: B }).problems.join(), /another subject/);
+  assert.match(m.pageChecks(ok, { ...base, asOf: 'f'.repeat(64) }).problems.join(), /another as_of/);
+  // Any failing snapshot check or read check, or no verifier at all.
+  const failing = (name) => ({ checks: ok.checks.map((c) => (c.name === name ? { ...c, status: 'fail' } : c)) });
+  for (const name of ['view_commitment', 'read:subject', 'read:prose']) assert.equal(m.pageChecks(failing(name), base).claim, false, name);
+  assert.equal(m.pageChecks({ error: 'x' }, base).claim, false);
+  // No prose read: nothing is claimed, but the subject read itself can be ok.
+  assert.deepEqual(m.pageChecks(ok, { ...base, proseRead: null }), { ok: true, claim: false, problems: [] });
 });

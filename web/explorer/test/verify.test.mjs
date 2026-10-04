@@ -36,7 +36,7 @@ test('the recorded fixture verifies in wasm, signatures included', () => {
   assert.equal(r.checks.length, 10 + reads.length);
   assert.ok(r.checks.every((c) => c.status === 'pass'));
   assert.equal(r.recomputed.commitment, JSON.parse(snapshot).commitment);
-  assert.equal(r.recomputed.signatures, 9);
+  assert.equal(r.recomputed.signatures, 10);
 });
 
 test('without the export, signatures are not checked and the outcome is partial', () => {

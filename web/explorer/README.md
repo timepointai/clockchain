@@ -46,9 +46,15 @@ The module recomputes, from the served text:
   are recomputed from the snapshot rows, and served prose must hash to its
   revision's body.
 
-The served snapshot is parsed strictly (no unknown or repeated fields) and
-compared with its canonical re-encoding as JSON values; whitespace, key order
-and string escapes are not part of the commitment and are not checked.
+The projection readings are parsed strictly (no unknown or repeated fields),
+and the whole snapshot is compared with its canonical re-encoding as JSON
+values, which catches unknown keys at any depth. Whitespace, key order and
+string escapes are not part of the commitment and are not checked.
+
+A subject page shows prose as the subject's claim only when the snapshot
+verified, the subject read answers the subject and `as_of` that were
+requested, and the prose read is for that read's current revision and hashes
+to its committed body.
 
 It does **not** re-run the fold. Admission states, frontiers, revision
 selection, authority, edge and media readings, and support verdicts (with

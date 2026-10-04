@@ -57,10 +57,9 @@ async function checkReads(reads) {
     return { error: err.message };
   }
 }
-const SNAPSHOT_CHECKS = ['health', 'fold_version', 'filter_version', 'snapshot', 'snapshot_rule', 'canonical_form', 'event_ids', 'corpus_digest', 'view_commitment'];
 function readStatus(report) {
   if (report.error) return h('p', { class: 'check' }, badge('not_checked'), ` Reads on this page were not checked: ${report.error}.`);
-  const bad = report.checks.filter((c) => c.status === 'fail' && SNAPSHOT_CHECKS.includes(c.name));
+  const bad = report.checks.filter((c) => c.status === 'fail' && m.SNAPSHOT_CHECKS.includes(c.name));
   const reads = report.checks.filter((c) => c.name.startsWith('read:'));
   return h('div', { class: 'check' },
     bad.length ? h('p', {}, badge('fail'), ` The served snapshot does not verify (${bad.map((c) => c.name).join(', ')}); nothing below is consistent with a commitment.`) : null,
@@ -133,7 +132,9 @@ function subjectsView() {
 async function subjectView(id, asOf) {
   if (!m.isHex32(id)) return h('p', { class: 'error' }, 'Not a subject id.');
   const read = await api.subject(id, asOf);
-  if (!read.ok && read.status !== 404) return refusal(read);
+  // A 404 is a subject read only when it is one (an unknown subject); any
+  // other refusal, such as an unrecorded fixture read, is shown as a refusal.
+  if (!read.ok && !(read.status === 404 && read.json?.visibility)) return refusal(read);
   const v = m.subjectView(state.snapshot.json, id, read.json);
   if (!v) return h('p', { class: 'error' }, 'This subject is not in the served snapshot.');
   const prose = m.isHex32(v.current) ? await api.prose(v.current) : null;
@@ -142,7 +143,7 @@ async function subjectView(id, asOf) {
     { kind: 'subject', body: read.text },
     ...(prose ? [{ kind: 'prose', body: prose.text }] : []),
   ]);
-  const proseOk = checked.checks?.some((c) => c.name === 'read:prose' && c.status === 'pass');
+  const page = m.pageChecks(checked, { id, asOf, subjectRead: read.json, proseRead: prose?.json ?? null });
   const asOfForm = h('form', { class: 'inline', onsubmit: (e) => {
     e.preventDefault();
     const t = e.target.elements.asof.value.trim();
@@ -167,6 +168,7 @@ async function subjectView(id, asOf) {
       ]),
       asOfForm,
       readStatus(checked),
+      page.problems.length ? h('ul', { class: 'error' }, page.problems.map((p) => h('li', {}, p))) : null,
     ),
     section('Claim',
       !current ? h('p', {}, read.json?.visibility === 'visible' ? 'No current revision.' : `No visible revision (${read.json?.visibility ?? 'unknown'}).`) :
@@ -174,7 +176,9 @@ async function subjectView(id, asOf) {
         prose?.json?.availability === 'available'
           ? h('div', {},
             h('blockquote', {}, prose.json.prose),
-            h('p', { class: 'muted' }, proseOk ? 'This text hashes to the committed body (checked in your browser).' : 'This text was NOT confirmed against the committed body; see the checks below.'))
+            h('p', { class: page.claim ? 'muted' : 'error' }, page.claim
+              ? 'This is the current revision’s text; it hashes to the committed body (checked in your browser).'
+              : 'This text was NOT confirmed as the current revision’s committed body; see the checks above.'))
           : h('p', { class: 'muted' }, `Prose ${prose?.json?.availability ?? 'unavailable'}; the claim is committed by its body hash.`),
         dl([
           ['Asserted time', current.assertedTime ? h('span', {}, current.assertedTime.calendar ?? 'non-calendar coordinate', ` (${current.assertedTime.precision}) `, hash(current.assertedTime.coordinate)) : 'none'],

@@ -38,7 +38,11 @@ const base = `http://127.0.0.1:${server.address().port}/index.html?fixture=synth
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {});
 const page = await browser.newPage();
 const problems = [];
-page.on('console', (m) => m.type() === 'error' && problems.push(`console: ${m.text()}`));
+// HTTP errors are judged by URL below; the browser's own console line for
+// them carries no URL. Only the deliberately unrecorded as_of read may 404.
+const UNRECORDED = `.as_of.${'7f'.padEnd(64, '0')}.json`;
+page.on('console', (m) => m.type() === 'error' && !m.text().startsWith('Failed to load resource') && problems.push(`console: ${m.text()}`));
+page.on('response', (r) => r.status() >= 400 && !r.url().endsWith(UNRECORDED) && problems.push(`HTTP ${r.status()}: ${r.url()}`));
 page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
 page.on('requestfailed', (r) => problems.push(`requestfailed: ${r.url()}`));
 const expect = (ok, what) => {
@@ -49,7 +53,7 @@ const expect = (ok, what) => {
 await page.goto(base);
 await page.waitForSelector('main table');
 const subjects = await page.$$eval('main tbody tr', (rows) => rows.length);
-expect(subjects === 2, 'subjects list shows the 2 fixture subjects');
+expect(subjects === 3, 'subjects list shows the 3 fixture subjects');
 await page.click('text=synthetic/harbour-press');
 await page.waitForSelector('blockquote');
 const claim = await page.textContent('blockquote');
@@ -77,13 +81,37 @@ const flagged = await page.waitForFunction(() => document.querySelector('main').
 expect(flagged, 'tampered prose is flagged as unconfirmed');
 expect((await page.$$eval('.check li', (l) => l.map((x) => x.textContent))).some((c) => c.startsWith('fail')), 'tampered prose fails read:prose on the page');
 await page.unroute('**/prose.json');
+// The verified prose of the subject's OLDER revision, served for the current
+// one: it hashes correctly, but it is not the current claim.
+const older = await page.evaluate(async () => {
+  const snap = await (await fetch('./fixtures/synthetic/snapshot.json')).json();
+  const hex = (b) => b.map((x) => x.toString(16).padStart(2, '0')).join('');
+  const sub = location.hash.split('/')[2];
+  const cur = (await (await fetch(`./fixtures/synthetic/subjects/${sub}.json`)).json()).revision.id;
+  return snap.revisions.map((r) => ({ id: hex(r.id), subject: hex(r.subject) })).find((r) => r.subject === sub && r.id !== hex(cur)).id;
+});
+await page.route('**/prose.json', async (route) => {
+  const r = await route.fetch({ url: route.request().url().replace(/revisions\/[0-9a-f]{64}\//, `revisions/${older}/`) });
+  await route.fulfill({ response: r });
+});
+await page.goto(`${subjectUrl.split('#')[0]}#/`);
+await page.goto(subjectUrl);
+const swapped = await page.waitForFunction(() => document.querySelector('main').textContent.includes('another revision than the current one'), null, { timeout: 10000 }).then(() => true, () => false);
+expect(swapped, 'verified prose of an older revision is not shown as the current claim');
+await page.unroute('**/prose.json');
+// An as_of that was never recorded is a refusal, not a failed verification.
+await page.goto(`${subjectUrl}/as_of/${'7f'.padEnd(64, '0')}`);
+const refused = await page.waitForFunction(() => document.querySelector('main').textContent.includes('not_recorded'), null, { timeout: 10000 }).then(() => true, () => false);
+expect(refused, 'an unrecorded as_of read is shown as a refusal');
+await page.goto(subjectUrl);
+await page.waitForSelector('text=printing-and-publishing path');
 await page.click('text=printing-and-publishing path');
 await page.waitForSelector('.kind-path li');
 const path3 = await page.$$eval('.kind-path li strong', (l) => l.map((x) => x.textContent));
 expect(path3.length === 3 && path3.every((s) => !/-/.test(s)), `TT kind path has 3 labelled levels (${path3.join(' > ')})`);
 await page.goto(`${base}#/dag`);
 await page.waitForSelector('svg.dag g.node');
-expect((await page.$$('svg.dag g.node')).length === 10, 'DAG draws 9 events and 1 missing parent');
+expect((await page.$$('svg.dag g.node')).length === 11, 'DAG draws 10 events and 1 missing parent');
 await page.goto(`${base}#/edges`);
 await page.waitForSelector('form.inline');
 await page.click('text=Query support');

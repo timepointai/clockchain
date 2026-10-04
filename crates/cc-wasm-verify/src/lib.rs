@@ -21,9 +21,11 @@
 //! - **View commitment.** The served projection is rearranged into the
 //!   canonical `cc.view-rows.json.v1` bytes, and the commitment is recomputed
 //!   from those bytes, the recomputed `filter_version` and the recomputed corpus
-//!   digest. The served document is parsed strictly (no unknown or repeated
-//!   fields) and must equal its canonical re-encoding as JSON values, so no
-//!   field outside the commitment can ride along. The comparison is over
+//!   digest. The projection readings are parsed strictly (no unknown or
+//!   repeated fields; cc-core's envelope types ignore unknown keys when
+//!   parsing), and the whole document must equal its canonical re-encoding as
+//!   JSON values, which catches any unknown key at any depth. No field outside
+//!   the commitment can ride along. The comparison is over
 //!   values, not bytes: whitespace, key order and string escapes in the served
 //!   text are not committed and are not checked.
 //! - **Reads.** Subject, prose and support reads must name the verified rule,
@@ -312,14 +314,18 @@ fn run(c: &mut Checks, r: &mut Recomputed, input: &Input) {
     };
     r.filter_version = Some(hex::encode(filter_version));
 
-    // Typed straight from the text, so a repeated field is refused rather than
-    // collapsed to one of its values.
+    // Both parses must succeed. The value form bounds nesting and number range;
+    // the typed form is read straight from the text, so a repeated field of a
+    // reading is refused rather than collapsed to one of its values. Neither
+    // failure can panic: a panic would trap the wasm instance.
+    let served: serde_json::Value = match serde_json::from_str(&input.snapshot) {
+        Ok(v) => v,
+        Err(e) => return c.fail("snapshot", format!("snapshot is not JSON: {e}")),
+    };
     let s: rows::Snapshot = match serde_json::from_str(&input.snapshot) {
         Ok(s) => s,
         Err(e) => return c.fail("snapshot", format!("snapshot is not a v1 snapshot: {e}")),
     };
-    let served: serde_json::Value =
-        serde_json::from_str(&input.snapshot).expect("parsed as a snapshot above");
     c.pass(
         "snapshot",
         format!(
@@ -547,8 +553,10 @@ fn check_read(c: &mut Checks, read: &Read, s: &rows::Snapshot, snapshot_ok: bool
 /// The subject read the verified snapshot implies, recomputed: the reading's
 /// state and frontier, and the `as_of` visibility rule (the current revision
 /// is visible only when its asserted coordinate is at or before `as_of`; an
-/// unknown asserted time is not visible). This is the node's
-/// `Snapshot::visibility`, over the verified rows.
+/// unknown asserted time is not visible). This follows the node's
+/// `Snapshot::visibility` over the verified rows, except that a resolved head
+/// with no selected revision, which an honest node never serves, fails here
+/// instead of reading as a visibility without a revision.
 fn subject_read(body: &str, s: &rows::Snapshot) -> Result<String, String> {
     let read: SubjectRead = serde_json::from_str(body).map_err(|e| e.to_string())?;
     let id = hex32(&read.subject).ok_or("subject is not hex")?;

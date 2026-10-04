@@ -21,6 +21,9 @@ pub const PROSE_A2: &str = "A fictional printing house opens in a fictional harb
 pub const PROSE_B: &str =
     "A fictional reading society is founded in the same fictional town. Synthetic test prose.";
 
+pub const PROSE_C: &str =
+    "A fictional archive of undated pamphlets, kept by the same society. Synthetic test prose.";
+
 pub fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/explorer/fixtures/synthetic")
 }
@@ -149,6 +152,8 @@ pub struct Corpus {
     pub bodies: Vec<&'static str>,
     pub a: Hash,
     pub b: Hash,
+    /// A subject with no asserted time: never visible under an as_of.
+    pub undated: Hash,
 }
 
 pub fn corpus() -> Corpus {
@@ -255,11 +260,26 @@ pub fn corpus() -> Corpus {
     .clone();
     bad.grant = Some([8; 32]);
     let invalid = Signed::sign(&key(2), bad).unwrap();
+    let mut e = genesis(
+        3,
+        "learning-institutions",
+        "undated-archive",
+        24,
+        PROSE_C,
+        day(1900, 1, 1),
+    )
+    .envelope()
+    .clone();
+    e.asserted_time = None;
+    let undated = Signed::sign(&key(3), e).unwrap();
     Corpus {
         a: g.id(),
         b: b.id(),
-        events: vec![g, c, d, b, influence, dispute, attest, absent, invalid],
-        bodies: vec![PROSE_A1, PROSE_A2, PROSE_B],
+        undated: undated.id(),
+        events: vec![
+            g, c, d, b, influence, dispute, attest, absent, invalid, undated,
+        ],
+        bodies: vec![PROSE_A1, PROSE_A2, PROSE_B, PROSE_C],
     }
 }
 
@@ -283,7 +303,7 @@ impl Node {
 /// Public read routes, as the gateway names them, and the node path behind each.
 pub fn routes(c: &Corpus, snapshot: &Value) -> Vec<(String, String)> {
     let mut out = vec![("snapshot.json".into(), "/v1/snapshot".into())];
-    for s in [c.a, c.b] {
+    for s in [c.a, c.b, c.undated] {
         let h = hex::encode(s);
         out.push((format!("subjects/{h}.json"), format!("/v1/subjects/{h}")));
         // Before, on and after the current revision's asserted day, so the

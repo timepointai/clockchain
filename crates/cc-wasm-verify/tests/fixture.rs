@@ -61,12 +61,13 @@ async fn recorded_fixture_is_what_the_node_serves_and_verifies() {
         })
         .collect();
     visibility.sort();
-    let after = visibility
-        .iter()
-        .filter(|(_, v)| v == "after_as_of")
-        .count();
-    let visible = visibility.iter().filter(|(_, v)| v == "visible").count();
-    assert_eq!((after, visible), (3, 3), "{visibility:?}");
+    let count = |want: &str| visibility.iter().filter(|(_, v)| v == want).count();
+    let counts = (
+        count("after_as_of"),
+        count("visible"),
+        count("asserted_time_unknown"),
+    );
+    assert_eq!(counts, (3, 3, 3), "{visibility:?}");
     // Not a /public/v1 route: the owner's export, the optional signature input.
     let (status, export) = node.get("/v1/export", WRITE).await;
     assert_eq!(status, 200);

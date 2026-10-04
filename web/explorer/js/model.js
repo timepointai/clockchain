@@ -204,6 +204,31 @@ export function subjectView(snapshot, id, read) {
   };
 }
 
+// What a subject page may claim about the reads it displays. `report` is the
+// verifier's report over exactly those response texts. The prose is shown as
+// the subject's claim only when every link holds: the snapshot verified, the
+// subject read answers the subject and as_of that were requested and verified,
+// and the prose read is for that read's current revision and verified.
+export const SNAPSHOT_CHECKS = ['health', 'fold_version', 'filter_version', 'snapshot', 'snapshot_rule', 'canonical_form', 'event_ids', 'corpus_digest', 'view_commitment'];
+export function pageChecks(report, { id, asOf = null, subjectRead, proseRead = null }) {
+  const status = (name) => report?.checks?.find((c) => c.name === name)?.status ?? 'not_checked';
+  const problems = [];
+  if (!report || report.error) problems.push('the verifier did not run');
+  const failed = (report?.checks ?? []).filter((c) => c.status === 'fail' && SNAPSHOT_CHECKS.includes(c.name));
+  if (failed.length) problems.push(`the served snapshot does not verify (${failed.map((c) => c.name).join(', ')})`);
+  if (subjectRead?.subject !== id) problems.push('the subject read names another subject than the one requested');
+  if ((subjectRead?.as_of ?? null) !== (asOf ?? null)) problems.push('the subject read answers another as_of than the one requested');
+  if (status('read:subject') !== 'pass') problems.push('the subject read did not verify');
+  const current = subjectRead?.revision ? hex(subjectRead.revision.id) : null;
+  let claim = false;
+  if (proseRead) {
+    if (!current || hex(proseRead.revision.id) !== current) problems.push('the prose read is for another revision than the current one');
+    if (status('read:prose') !== 'pass') problems.push('the prose read did not verify');
+    claim = problems.length === 0;
+  }
+  return { ok: problems.length === 0, claim, problems };
+}
+
 export function edgeView(e, ix) {
   const label = (s) => ix.subjects.find((x) => x.id === hex(s))?.label ?? short(s);
   // Every committed edge reading has at least one head's pins; refuse rather
@@ -302,7 +327,7 @@ export function dag(snapshot, subject = null) {
   const ready = [...nodes.keys()].filter((id) => pending.get(id) === 0);
   while (ready.length) {
     const id = ready.pop();
-    depth.set(id, Math.max(-1, ...out.get(id).map((p) => depth.get(p))) + 1);
+    depth.set(id, out.get(id).reduce((d, p) => Math.max(d, depth.get(p) + 1), 0));
     for (const child of into.get(id)) {
       pending.set(child, pending.get(child) - 1);
       if (pending.get(child) === 0) ready.push(child);
@@ -317,7 +342,13 @@ export function dag(snapshot, subject = null) {
     n.lane = lanes.get(col) ?? 0;
     lanes.set(col, n.lane + 1);
   }
-  return { nodes: ordered, links, columns: Math.max(0, ...lanes.keys()) + 1, lanes: Math.max(0, ...lanes.values()) };
+  let columns = 0;
+  let lanesMax = 0;
+  for (const [col, n] of lanes) {
+    columns = Math.max(columns, col + 1);
+    lanesMax = Math.max(lanesMax, n);
+  }
+  return { nodes: ordered, links, columns, lanes: lanesMax };
 }
 
 function pins(r) {

@@ -106,8 +106,8 @@ fn untouched_fixture_verifies_every_check() {
             "read:support",
         ]
     );
-    assert_eq!(r.recomputed.events, 9);
-    assert_eq!(r.recomputed.signatures, 9);
+    assert_eq!(r.recomputed.events, 10);
+    assert_eq!(r.recomputed.signatures, 10);
     let s = parse(SNAPSHOT);
     assert_eq!(r.recomputed.commitment.as_deref(), s["commitment"].as_str());
     assert_eq!(
@@ -417,4 +417,26 @@ fn repeated_fields_are_refused_not_collapsed() {
         .unwrap()
         .detail
         .contains("duplicate field"));
+}
+
+/// Hostile text inside an envelope's unknown key, where the typed parse skips
+/// it, must fail the snapshot check rather than panic (a panic traps wasm).
+#[test]
+fn hostile_snapshot_text_fails_without_panicking() {
+    let inject = |junk: &str| {
+        SNAPSHOT.replacen(
+            "\"envelope\":{",
+            &format!("\"envelope\":{{\"junk\":{junk},"),
+            1,
+        )
+    };
+    let deep = format!("{}1{}", "[".repeat(200), "]".repeat(200));
+    for junk in ["1e400", deep.as_str(), "\"\\udc00\""] {
+        let r = verify(&Input {
+            snapshot: inject(junk),
+            ..input()
+        });
+        assert_eq!(r.outcome, Outcome::Failed, "{junk:.20}");
+        assert_eq!(r.status("snapshot"), Some(Status::Fail), "{junk:.20}");
+    }
 }
