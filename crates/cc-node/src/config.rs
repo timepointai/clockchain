@@ -440,8 +440,10 @@ impl V1Config {
 pub const V1_DEFAULT_READ_CONCURRENCY: usize = 8;
 
 /// The largest accepted `CC_V1_READ_CONCURRENCY`; anything above it is a typo
-/// rather than a limit.
-pub const V1_MAX_READ_CONCURRENCY: usize = 1024;
+/// rather than a limit. Reads above the store pool's ten connections wait for
+/// a connection (up to its five-second acquire timeout) rather than for a
+/// permit.
+pub const V1_MAX_READ_CONCURRENCY: usize = 64;
 
 /// The node's receipt-signing seed. Held only as the signing key; `Debug`
 /// prints the public key, never the seed.
@@ -637,7 +639,7 @@ pub enum ConfigError {
     V1CuratorsMalformed,
     #[error("CC_V1_MAX_HOPS={0:?} is not a hop bound. Unset it for the governed default of 4 or set a decimal integer from 1 to 65535.")]
     V1MaxHopsMalformed(String),
-    #[error("CC_V1_READ_CONCURRENCY={0:?} is not a read limit. Unset it for the default of 8 or set a decimal integer from 1 to 1024.")]
+    #[error("CC_V1_READ_CONCURRENCY={0:?} is not a read limit. Unset it for the default of 8 or set a decimal integer from 1 to 64.")]
     V1ReadConcurrencyMalformed(String),
     #[error("CC_V1_NODE_SEED must be exactly 64 lowercase hex characters (a 32-byte Ed25519 seed), with no whitespace. Unset it to disable node receipts.")]
     V1NodeSeedMalformed,

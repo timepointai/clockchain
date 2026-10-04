@@ -15,6 +15,9 @@ use std::sync::{Arc, Mutex};
 /// was committed under, plus a digest of the exact retained bytes it was
 /// folded from. The last part makes a retained row whose bytes changed out of
 /// band a miss, so it is re-verified rather than served from memory.
+///
+/// Process-local and never serialized: distinct from the pinned `cc.cache.v1`
+/// key ([`Snapshot::cache_key`]), which names query results.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CacheKey {
     pub rule: RuleId,
@@ -40,10 +43,12 @@ fn key_of(filter: &FilterIdentity, rows: &[(Hash, Hash)]) -> CacheKey {
 #[derive(Default)]
 struct Inner {
     /// Bumped by every admission. A fold that started under an older
-    /// generation is never stored, so an admit cannot be overwritten by a
-    /// snapshot computed before it.
+    /// generation is not stored. This only avoids filling the cache with a
+    /// snapshot the next probe would miss anyway; correctness rests on the
+    /// key, which is always derived from the rows the snapshot was folded from.
     generation: u64,
-    entry: Option<(CacheKey, Snapshot)>,
+    /// Shared, so a hit holds the lock only to clone a pointer.
+    entry: Option<(CacheKey, Arc<Snapshot>)>,
     hits: u64,
     misses: u64,
 }
@@ -68,7 +73,9 @@ impl SnapshotCache {
 
 impl Store {
     /// The cache probe: one query over ids and server-side byte digests,
-    /// with no envelope transferred, decoded or verified.
+    /// with no envelope transferred, decoded or verified. PostgreSQL still
+    /// hashes every retained envelope, so its cost grows with corpus bytes;
+    /// it skips the signature checks and the fold, which dominate a miss.
     async fn probe(&self, filter: &FilterIdentity) -> Result<CacheKey, Error> {
         let rows = sqlx::query(
             "SELECT event_id, sha256(envelope) AS digest FROM cc_v1.candidates ORDER BY event_id",
@@ -98,16 +105,20 @@ impl Store {
         };
         let generation = cache.lock().generation;
         let key = self.probe(filter).await?;
-        {
+        let hit = {
             let mut inner = cache.lock();
-            if let Some((cached, s)) = &inner.entry {
-                if *cached == key {
-                    let s = s.clone();
-                    inner.hits += 1;
-                    return Ok(s);
-                }
+            let hit = match &inner.entry {
+                Some((cached, s)) if *cached == key => Some(s.clone()),
+                _ => None,
+            };
+            match hit {
+                Some(_) => inner.hits += 1,
+                None => inner.misses += 1,
             }
-            inner.misses += 1;
+            hit
+        };
+        if let Some(s) = hit {
+            return Ok(Snapshot::clone(&s));
         }
         let candidates = self.verified_candidates().await?;
         let s = Snapshot::of(filter, &candidates);
@@ -117,7 +128,7 @@ impl Store {
             .collect();
         let mut inner = cache.lock();
         if inner.generation == generation {
-            inner.entry = Some((key_of(filter, &rows), s.clone()));
+            inner.entry = Some((key_of(filter, &rows), Arc::new(s.clone())));
         }
         Ok(s)
     }

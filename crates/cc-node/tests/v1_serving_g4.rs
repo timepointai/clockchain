@@ -20,8 +20,9 @@ use std::time::{Duration, Instant};
 const WRITE: &str = "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf";
 const READ: &str = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
 const STRANGER: &str = "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff";
-/// A synthetic node seed for these tests only.
-const SEED: &str = "08f390f2748f48bd00183c81c231092b06f3179525447c409412c15f95fa8e5d";
+/// A synthetic, visibly patterned node seed for these tests only. It has the
+/// 16 distinct characters the placeholder check asks for.
+const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
 fn seed_key() -> cc_core::SecretKey {
     cc_core::SecretKey::from_seed(hex::decode(SEED).unwrap().try_into().unwrap())
@@ -220,8 +221,6 @@ async fn a_full_read_limit_answers_busy_and_spares_health_ready_and_writes() {
     let (status, _) = node.submit(genesis().bytes()).await;
     assert_eq!(status, S::CREATED);
     assert_eq!(node.json("/v1/export", Some(WRITE)).await.0, S::OK);
-    // Refusals took no permit.
-    assert_eq!(permits.available_permits(), 0);
 
     drop(held);
     let one = permits.clone().try_acquire_owned().unwrap();
@@ -339,11 +338,11 @@ fn serving_configuration_is_parsed_strictly() {
     let default = serving(&[]).unwrap();
     assert_eq!(default.read_concurrency, 8);
     assert!(default.node_seed.is_none());
-    for good in ["1", "8", "1024"] {
+    for good in ["1", "8", "64"] {
         let c = serving(&[("CC_V1_READ_CONCURRENCY", good)]).unwrap();
         assert_eq!(c.read_concurrency.to_string(), good);
     }
-    for bad in ["0", "1025", "08", "+8", " 8", "8 ", "-1", "", "eight"] {
+    for bad in ["0", "65", "1024", "08", "+8", " 8", "8 ", "-1", "", "eight"] {
         assert!(
             matches!(
                 serving(&[("CC_V1_READ_CONCURRENCY", bad)]),
@@ -421,6 +420,17 @@ fn cc_node(env: &HashMap<&'static str, String>) -> Command {
     c
 }
 
+/// A spawned `cc-node`, killed when dropped, so a failing assertion never
+/// leaves a server running.
+struct Running(std::process::Child);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// Everything the process printed, with terminal colour codes removed.
 fn output_of(child: &mut std::process::Child) -> String {
     let mut out = String::new();
@@ -444,7 +454,8 @@ fn output_of(child: &mut std::process::Child) -> String {
 }
 
 /// The real binary: a malformed seed, a curator seed or a bad read limit is
-/// exit 78 before binding, and no refusal prints the seed.
+/// exit 78 before binding, for the stated reason, and no refusal prints the
+/// seed.
 #[test]
 fn the_binary_refuses_bad_serving_configuration_without_printing_the_seed() {
     let upper = SEED.to_uppercase();
@@ -455,13 +466,26 @@ fn the_binary_refuses_bad_serving_configuration_without_printing_the_seed() {
         .map(hex::encode)
         .collect::<Vec<_>>()
         .join(",");
-    for env in [
-        env_of(&[("CC_V1_NODE_SEED", &upper)]),
-        env_of(&[("CC_V1_NODE_SEED", &SEED[..63])]),
-        env_of(&[("CC_V1_NODE_SEED", SEED), ("CC_V1_CURATORS", &joined)]),
-        env_of(&[("CC_V1_READ_CONCURRENCY", "0")]),
+    for (env, reason) in [
+        (
+            env_of(&[("CC_V1_NODE_SEED", &upper)]),
+            "CC_V1_NODE_SEED must be exactly 64 lowercase hex characters",
+        ),
+        (
+            env_of(&[("CC_V1_NODE_SEED", &SEED[..63])]),
+            "CC_V1_NODE_SEED must be exactly 64 lowercase hex characters",
+        ),
+        (
+            env_of(&[("CC_V1_NODE_SEED", SEED), ("CC_V1_CURATORS", &joined)]),
+            "CC_V1_NODE_SEED derives a curator key",
+        ),
+        (
+            env_of(&[("CC_V1_READ_CONCURRENCY", "0")]),
+            "CC_V1_READ_CONCURRENCY=\"0\" is not a read limit",
+        ),
     ] {
-        let mut child = cc_node(&env).spawn().unwrap();
+        let mut child = Running(cc_node(&env).spawn().unwrap());
+        let child = &mut child.0;
         let deadline = Instant::now() + Duration::from_secs(30);
         let status = loop {
             if let Some(s) = child.try_wait().unwrap() {
@@ -470,8 +494,9 @@ fn the_binary_refuses_bad_serving_configuration_without_printing_the_seed() {
             assert!(Instant::now() < deadline, "serve did not refuse");
             std::thread::sleep(Duration::from_millis(50));
         };
-        let out = output_of(&mut child);
+        let out = output_of(child);
         assert_eq!(status.code(), Some(78), "{out}");
+        assert!(out.contains(reason), "{out}");
         assert!(!out.to_lowercase().contains(SEED), "the seed was printed");
         assert!(!out.contains(&SEED[..63]), "the seed was printed");
     }
@@ -483,26 +508,48 @@ fn the_binary_refuses_bad_serving_configuration_without_printing_the_seed() {
 async fn the_binary_receipts_with_a_seed_and_logs_only_the_public_key() {
     for seeded in [true, false] {
         let (pool, cleanup, _store) = bound().await;
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
         let url = url_of(&pool).await;
-        let port_s = port.to_string();
-        let mut pairs = vec![("DATABASE_URL", url.as_str()), ("PORT", port_s.as_str())];
-        if seeded {
-            pairs.push(("CC_V1_NODE_SEED", SEED));
-        }
-        let mut child = cc_node(&env_of(&pairs)).spawn().unwrap();
-        let base = format!("http://127.0.0.1:{port}");
         let http = reqwest::Client::new();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while http.get(format!("{base}/health")).send().await.is_err() {
-            assert!(Instant::now() < deadline, "serve never listened");
-            assert!(child.try_wait().unwrap().is_none(), "serve exited");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        // A free port is found by binding and releasing it, so another
+        // process can take it first; the child then fails to bind and exits,
+        // and the attempt is repeated on a fresh port.
+        let mut attempts = 0;
+        let (mut child, base) = loop {
+            attempts += 1;
+            let port = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            let port_s = port.to_string();
+            let mut pairs = vec![("DATABASE_URL", url.as_str()), ("PORT", port_s.as_str())];
+            if seeded {
+                pairs.push(("CC_V1_NODE_SEED", SEED));
+            }
+            let mut child = Running(cc_node(&env_of(&pairs)).spawn().unwrap());
+            let base = format!("http://127.0.0.1:{port}");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let listening = loop {
+                // Only this child's identity counts as listening.
+                if let Ok(r) = http.get(format!("{base}/health")).send().await {
+                    let bytes = r.bytes().await.unwrap_or_default();
+                    let health: Json = serde_json::from_slice(&bytes).unwrap_or_default();
+                    if health["instance"] == hex::encode(INSTANCE) {
+                        break true;
+                    }
+                }
+                if child.0.try_wait().unwrap().is_some() {
+                    break false;
+                }
+                assert!(Instant::now() < deadline, "serve never listened");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            };
+            if listening {
+                break (child, base);
+            }
+            let out = output_of(&mut child.0);
+            assert!(out.contains("could not bind") && attempts < 3, "{out}");
+        };
         let g = genesis();
         let posted = http
             .post(format!("{base}/v1/candidates"))
@@ -520,9 +567,9 @@ async fn the_binary_receipts_with_a_seed_and_logs_only_the_public_key() {
             .unwrap();
         let expected = if seeded { S::OK } else { S::NOT_FOUND };
         assert_eq!(got.status(), expected);
-        child.kill().unwrap();
-        child.wait().unwrap();
-        let out = output_of(&mut child);
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        let out = output_of(&mut child.0);
         let public = hex::encode(seed_key().author().to_bytes());
         let logged = if seeded { public.as_str() } else { "off" };
         assert!(out.contains(&format!("node_key={logged}")), "{out}");

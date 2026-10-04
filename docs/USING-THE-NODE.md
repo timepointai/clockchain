@@ -137,7 +137,7 @@ In v1 mode none of the routes above are mounted. The contract is
 | `CC_V1_INSTANCE` | Instance ID, exactly 64 lowercase hex characters |
 | `CC_V1_CURATORS` | Ed25519 public keys, 64 lowercase hex each, comma-separated with no spaces, strictly sorted |
 | `CC_V1_MAX_HOPS` | Decimal hop bound; default `4` |
-| `CC_V1_READ_CONCURRENCY` | Reads in flight before further reads get `503 busy`; canonical decimal `1` to `1024`, default `8` |
+| `CC_V1_READ_CONCURRENCY` | Reads in flight before further reads get `503 busy`; canonical decimal `1` to `64`, default `8` |
 | `CC_V1_NODE_SEED` | Optional. Exactly 64 lowercase hex characters, a 32-byte Ed25519 seed that signs node receipts. Refused if malformed, if it has fewer than 8 distinct characters, or if its public key is one of `CC_V1_CURATORS`. Absent: no receipts, and admission is unchanged |
 
 `CC_NODE_API_KEY`, `CC_NODE_READ_KEY`, `CC_NODE_POSTURE` and `PORT` keep their
@@ -205,14 +205,19 @@ document is unchanged and does not name the node key.
 match: the rule identity, the corpus digest, and a digest of the retained
 candidate bytes. Any difference folds again from verified bytes. Every admission
 invalidates the cache, whatever its outcome. Responses are byte-identical to an
-uncached fold. Export never uses the cache.
+uncached fold. Export never uses the cache. Checking the key still has
+PostgreSQL hash every retained envelope on each read, so it grows with corpus
+bytes; a hit skips the signature checks and the fold.
 
 **Read limit.** At most `CC_V1_READ_CONCURRENCY` reads run at once. The limit
 covers the read-scope routes: snapshot, subjects, prose, support, receipts and
 the unknown-path fallback. It applies after authentication, so a `401` never
 takes a permit. `/health`, `/ready`, `/robots.txt` and the write-scope routes,
 including `/v1/export`, are outside it. A read that finds the limit full gets
-`503 {"error":"busy"}` with `Retry-After: 1` at once. Reads are never queued.
+`503 {"error":"busy"}` with `Retry-After: 1` at once; it never waits for a
+permit. The store pool has ten connections. Above about nine, admitted reads
+can wait for a connection, and one that waits more than five seconds answers
+`503 store_unavailable`. The default of 8 stays below the pool.
 
 **Receipts.** With `CC_V1_NODE_SEED` set, the node signs a `NodeReceiptV1`
 (domain `cc.receipt.v1`) for the first admission of each candidate: the call
