@@ -434,6 +434,89 @@ impl V1Config {
     }
 }
 
+/// Concurrent v1 reads served when `CC_V1_READ_CONCURRENCY` is unset. Below the
+/// store pool's ten connections, so reads at the limit still leave room for
+/// admission and `/ready`.
+pub const V1_DEFAULT_READ_CONCURRENCY: usize = 8;
+
+/// The largest accepted `CC_V1_READ_CONCURRENCY`; anything above it is a typo
+/// rather than a limit.
+pub const V1_MAX_READ_CONCURRENCY: usize = 1024;
+
+/// The node's receipt-signing seed. Held only as the signing key; `Debug`
+/// prints the public key, never the seed.
+pub struct NodeSeed(cc_core::SecretKey);
+
+impl NodeSeed {
+    pub fn into_key(self) -> cc_core::SecretKey {
+        self.0
+    }
+    pub fn public(&self) -> [u8; 32] {
+        self.0.author().to_bytes()
+    }
+}
+
+impl std::fmt::Debug for NodeSeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "NodeSeed(public={})", hex::encode(self.public()))
+    }
+}
+
+/// v1 serving options (Stage (g) G4). Neither changes the store identity or
+/// any commitment; both are optional and default to the Stage (f) behavior.
+#[derive(Debug)]
+pub struct V1Serving {
+    /// `CC_V1_READ_CONCURRENCY`: reads in flight before further reads are
+    /// answered `503 busy`.
+    pub read_concurrency: usize,
+    /// `CC_V1_NODE_SEED`: when set, every first admission is receipted. When
+    /// absent, no receipt is signed and admission is unchanged.
+    pub node_seed: Option<NodeSeed>,
+}
+
+impl V1Serving {
+    pub fn from_env(v1: &V1Config) -> Result<V1Serving, ConfigError> {
+        V1Serving::from_lookup(env_lookup, v1)
+    }
+
+    /// Strict parse. The seed is exactly 64 lowercase hex characters, is not
+    /// a placeholder, and does not belong to a curator: the node key signs
+    /// observations, never subject authority.
+    pub fn from_lookup(
+        get: impl Fn(&str) -> Option<String>,
+        v1: &V1Config,
+    ) -> Result<V1Serving, ConfigError> {
+        let read_concurrency = match get("CC_V1_READ_CONCURRENCY") {
+            None => V1_DEFAULT_READ_CONCURRENCY,
+            // Canonical decimal only: no sign, padding or leading zeros.
+            Some(raw) => raw
+                .parse::<usize>()
+                .ok()
+                .filter(|n| n.to_string() == raw && (1..=V1_MAX_READ_CONCURRENCY).contains(n))
+                .ok_or(ConfigError::V1ReadConcurrencyMalformed(raw))?,
+        };
+        let node_seed = match get("CC_V1_NODE_SEED") {
+            None => None,
+            Some(raw) => {
+                let seed = lower_hex32(&raw).ok_or(ConfigError::V1NodeSeedMalformed)?;
+                let distinct: std::collections::BTreeSet<char> = raw.chars().collect();
+                if distinct.len() < MIN_KEY_ALPHABET {
+                    return Err(ConfigError::V1NodeSeedWeak);
+                }
+                let seed = NodeSeed(cc_core::SecretKey::from_seed(seed));
+                if v1.filter.curators.contains(&seed.public()) {
+                    return Err(ConfigError::V1NodeSeedIsCurator);
+                }
+                Some(seed)
+            }
+        };
+        Ok(V1Serving {
+            read_concurrency,
+            node_seed,
+        })
+    }
+}
+
 /// Exactly 64 lowercase hex characters, or `None`. Uppercase is refused so a
 /// configured value and the hex `/health` publishes compare as equal strings.
 fn lower_hex32(s: &str) -> Option<[u8; 32]> {
@@ -554,6 +637,14 @@ pub enum ConfigError {
     V1CuratorsMalformed,
     #[error("CC_V1_MAX_HOPS={0:?} is not a hop bound. Unset it for the governed default of 4 or set a decimal integer from 1 to 65535.")]
     V1MaxHopsMalformed(String),
+    #[error("CC_V1_READ_CONCURRENCY={0:?} is not a read limit. Unset it for the default of 8 or set a decimal integer from 1 to 1024.")]
+    V1ReadConcurrencyMalformed(String),
+    #[error("CC_V1_NODE_SEED must be exactly 64 lowercase hex characters (a 32-byte Ed25519 seed), with no whitespace. Unset it to disable node receipts.")]
+    V1NodeSeedMalformed,
+    #[error("CC_V1_NODE_SEED has fewer than 8 distinct characters and looks like a placeholder. Generate a random 32-byte seed.")]
+    V1NodeSeedWeak,
+    #[error("CC_V1_NODE_SEED derives a curator key. The node key signs receipts only; use a separate seed.")]
+    V1NodeSeedIsCurator,
     #[error("CC_V1_CURATORS/CC_V1_MAX_HOPS do not form a governed filter identity ({0}): curators must be valid Ed25519 keys, nonempty and strictly sorted, and the hop bound nonzero.")]
     V1FilterIdentity(String),
 }

@@ -19,22 +19,34 @@
 //! `support`) and the admission `Outcome` keep their canonical serde form, the
 //! one the pinned `cc.view-rows.json.v1` vector fixes, where a hash is a list of
 //! 32 byte values.
+//!
+//! # Serving limits and receipts (Stage (g) G4)
+//!
+//! [`Serving`] is the part of the router that is not store identity: the read
+//! concurrency limit and the optional node key. [`router`] uses the defaults
+//! (receipts off, the default read limit); [`router_with`] takes the configured
+//! values. Snapshots are cached by the store itself, keyed by rule identity and
+//! corpus digest and invalidated by every admission.
 
 use axum::{
     body::Bytes,
-    extract::{rejection::QueryRejection, DefaultBodyLimit, Path, Query, State},
+    extract::{rejection::QueryRejection, DefaultBodyLimit, Path, Query, Request, State},
     http::{header, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Response},
     routing::{get, post, put},
-    Json, Router,
+    Extension, Json, Router,
 };
+use cc_core::v1::receipt::{Admission as Observed, SignedReceipt};
 use cc_core::v1::{receipt::FoldRef, Hash, MAX_ENVELOPE};
 use cc_ledger::v1::{Error, Readiness, RuleId, Snapshot, State as Admission, Store};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 use crate::auth::{self, Credentials};
-use crate::config::{Config, KeyDigest, Posture, V1Config};
+use crate::config::{Config, KeyDigest, Posture, V1Config, V1Serving, V1_DEFAULT_READ_CONCURRENCY};
 use crate::security;
 
 /// Everything a v1 handler may reach, assembled once at boot.
@@ -94,6 +106,47 @@ impl V1State {
             beta_key: config.beta_key,
             telemetry_key: config.telemetry_key,
         }
+    }
+}
+
+/// Serving options that are not store identity: the read limit and the node
+/// key. Clones share one semaphore.
+#[derive(Clone)]
+pub struct Serving {
+    read_permits: Arc<Semaphore>,
+    node: Option<Arc<cc_core::SecretKey>>,
+}
+
+impl Default for Serving {
+    /// The default read limit and no node key: receipts off.
+    fn default() -> Self {
+        Serving::new(V1_DEFAULT_READ_CONCURRENCY, None)
+    }
+}
+
+impl Serving {
+    /// `read_concurrency` reads may run at once; one more is answered `busy`.
+    /// With `node`, every first admission is receipted under that key.
+    pub fn new(read_concurrency: usize, node: Option<cc_core::SecretKey>) -> Serving {
+        Serving {
+            read_permits: Arc::new(Semaphore::new(read_concurrency)),
+            node: node.map(Arc::new),
+        }
+    }
+
+    pub fn from_config(c: V1Serving) -> Serving {
+        Serving::new(c.read_concurrency, c.node_seed.map(|s| s.into_key()))
+    }
+
+    /// The semaphore the read boundary draws from. A holder of every permit
+    /// makes every read `busy`, which is how the limit is tested.
+    pub fn read_permits(&self) -> Arc<Semaphore> {
+        self.read_permits.clone()
+    }
+
+    /// The node's public key, when receipts are on.
+    pub fn node_key(&self) -> Option<[u8; 32]> {
+        self.node.as_ref().map(|k| k.author().to_bytes())
     }
 }
 
@@ -234,10 +287,20 @@ pub fn health_body(v1: &V1Config, posture: Posture, semantic: &str) -> Bytes {
     Bytes::from(serde_json::to_vec(&doc).expect("the health document is plain JSON"))
 }
 
+/// Build the v1 router with the default [`Serving`]: receipts off and the
+/// default read limit.
+pub fn router(state: V1State) -> Router {
+    router_with(state, Serving::default())
+}
+
 /// Build the v1 router. Same shape as the legacy one: public liveness, then a
 /// read boundary that owns the fallback, then a write boundary, each wrapped
 /// by the shared guards in [`crate::auth`].
-pub fn router(state: V1State) -> Router {
+///
+/// The read limit sits inside the read guard, so a caller is authenticated
+/// before it can hold a permit and a 401 never costs one. `/health`, `/ready`
+/// and `/robots.txt` are outside it.
+pub fn router_with(state: V1State, serving: Serving) -> Router {
     let live = state.posture.writes_permitted();
 
     let readable = Router::new()
@@ -245,7 +308,12 @@ pub fn router(state: V1State) -> Router {
         .route("/v1/subjects/:subject_id", get(subject))
         .route("/v1/revisions/:revision/prose", get(prose))
         .route("/v1/support", get(support))
+        .route("/v1/receipts/:event", get(receipts))
         .fallback(not_found)
+        .layer(axum::middleware::from_fn_with_state(
+            serving.read_permits(),
+            limit_reads,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_read::<V1State>,
@@ -283,7 +351,25 @@ pub fn router(state: V1State) -> Router {
         .with_state(state)
         .merge(readable)
         .merge(writable)
+        .layer(Extension(serving))
         .layer(axum::middleware::from_fn(security::response_headers))
+}
+
+/// At most `read_concurrency` reads at once. A read that finds every permit
+/// taken is answered `503 busy` at once rather than queued, so a flood of
+/// reads can neither hold the pool nor pile up waiters.
+async fn limit_reads(
+    State(permits): State<Arc<Semaphore>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Ok(_permit) = permits.try_acquire() else {
+        let mut busy = refusal(StatusCode::SERVICE_UNAVAILABLE, "busy");
+        busy.headers_mut()
+            .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
+        return busy;
+    };
+    next.run(request).await
 }
 
 fn refusal(status: StatusCode, error: &str) -> Response {
@@ -369,11 +455,26 @@ async fn not_found() -> Response {
     refusal(StatusCode::NOT_FOUND, "no_such_route")
 }
 
-async fn submit(State(state): State<V1State>, q: Strict<NoQuery>, body: Bytes) -> Response {
+async fn submit(
+    State(state): State<V1State>,
+    Extension(serving): Extension<Serving>,
+    q: Strict<NoQuery>,
+    body: Bytes,
+) -> Response {
     if query(q).is_none() {
         return refusal(StatusCode::BAD_REQUEST, "invalid_query");
     }
-    match state.store.admit(&body).await {
+    // The response is the `Outcome` either way; a receipt, when one is
+    // signed, is read back from `/v1/receipts/{event}`.
+    let admitted = match serving.node.as_deref() {
+        None => state.store.admit(&body).await,
+        Some(node) => state
+            .store
+            .admit_observed(&body, Some(node))
+            .await
+            .map(|(outcome, _)| outcome),
+    };
+    match admitted {
         Ok(outcome) => {
             let code = match outcome.status.state {
                 Admission::Valid => StatusCode::CREATED,
@@ -615,6 +716,63 @@ async fn support(State(state): State<V1State>, q: Strict<SupportQuery>) -> Respo
     m.insert("to".into(), hex::encode(to).into());
     m.insert("support".into(), to_value(&verdict.support));
     Json(Value::Object(m)).into_response()
+}
+
+/// Every receipt this store retains for one event, each verified before it is
+/// served. Receipts are node observations outside every commitment, so unlike
+/// the projection reads this names no `rule`, `corpus_digest` or `commitment`.
+async fn receipts(
+    State(state): State<V1State>,
+    Path(event): Path<String>,
+    q: Strict<NoQuery>,
+) -> Response {
+    if query(q).is_none() {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
+    }
+    let Some(id) = hex32(&event) else {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_event_id");
+    };
+    match state.store.receipts(id).await {
+        Ok(found) if found.is_empty() => refusal(StatusCode::NOT_FOUND, "no_receipt"),
+        Ok(found) => Json(json!({
+            "event": event,
+            "receipts": found.iter().map(receipt_json).collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(Error::Corrupt) => refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "receipt_verification_failed",
+        ),
+        Err(e) => store_refusal(e),
+    }
+}
+
+/// The signed bytes as hex, and their decoded fields for convenience. The
+/// bytes are authoritative; a verifier checks them, not the fields.
+fn receipt_json(r: &SignedReceipt) -> Value {
+    let n = r.receipt();
+    let result = &n.initial_admission_result;
+    json!({
+        "receipt": hex::encode(r.bytes()),
+        "receipt_digest": hex::encode(cc_core::v1::hash(r.bytes())),
+        "node_key": hex::encode(n.node_key),
+        "event": hex::encode(n.event),
+        "received_at": n.received_at,
+        "encoding_version": n.encoding_version,
+        "fold_version": {
+            "version": n.fold_version.version,
+            "manifest": hex::encode(n.fold_version.manifest),
+        },
+        "initial_admission_result": {
+            "state": match result.state {
+                Observed::Valid => "valid",
+                Observed::Pending => "pending",
+                Observed::Invalid => "invalid",
+            },
+            "reason": result.reason,
+            "missing": result.missing.0.iter().map(hex::encode).collect::<Vec<_>>(),
+        },
+    })
 }
 
 /// The `ExportManifest` serde JSON exactly, except that each envelope is one

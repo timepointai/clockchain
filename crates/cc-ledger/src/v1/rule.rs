@@ -13,7 +13,7 @@ pub struct RuleId {
     pub filter_version: Hash,
 }
 impl RuleId {
-    fn of(f: &FilterIdentity) -> Self {
+    pub(crate) fn of(f: &FilterIdentity) -> Self {
         Self {
             fold_version: f.fold.version,
             fold_manifest: f.fold.manifest,
@@ -278,7 +278,7 @@ impl Store {
             rule: self.rule.as_ref().map(RuleId::of),
         })
     }
-    fn bound(&self, requested: Option<&FoldRef>) -> Result<&FilterIdentity, Error> {
+    pub(crate) fn bound(&self, requested: Option<&FoldRef>) -> Result<&FilterIdentity, Error> {
         let rule = self.rule.as_ref().ok_or(Error::Unbound)?;
         if requested.is_some_and(|r| !supported_fold(r) || *r != rule.fold) {
             return Err(Error::UnsupportedFoldVersion);
@@ -296,7 +296,7 @@ impl Store {
     /// Recompute and commit the projection under the bound rule identity.
     pub async fn snapshot(&self, requested: Option<&FoldRef>) -> Result<Snapshot, Error> {
         let rule = self.ready(requested).await?;
-        Ok(Snapshot::of(rule, &self.verified_candidates().await?))
+        self.committed(rule).await
     }
     pub async fn export(&self, requested: Option<&FoldRef>) -> Result<ExportManifest, Error> {
         let rule = self.ready(requested).await?;
