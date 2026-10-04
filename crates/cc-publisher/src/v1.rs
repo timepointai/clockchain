@@ -5,10 +5,17 @@
 use cc_core::v1::Hash;
 use serde_json::Value;
 
+pub mod attest;
 pub mod authority;
 pub mod authority_cli;
 pub mod authority_node;
 pub mod cli;
+pub mod correction;
+pub mod edge;
+pub mod entry;
+pub mod entry_context;
+pub mod entry_packet;
+pub mod entry_submit;
 pub mod genesis;
 pub mod key;
 pub mod node;

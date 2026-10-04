@@ -61,6 +61,41 @@ pub enum Command {
         #[arg(long)]
         dir: Option<PathBuf>,
     },
+    /// Save a node's verified export as the context the content commands build against.
+    Context {
+        #[arg(long)]
+        node: String,
+        /// New context file; an existing file is never replaced.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Build and sign a Correction packet offline against a context.
+    Correction(super::correction::CorrectionArgs),
+    /// Build and sign an EdgeAssert or EdgeReaffirm packet offline against a context.
+    #[command(subcommand)]
+    Edge(super::edge::EdgeCommand),
+    /// Build and sign a revision- or event-scoped Attestation packet offline.
+    Attest(super::attest::AttestArgs),
+    /// Build every envelope of one reviewed entry packet offline from a manifest.
+    Entry(super::entry::EntryArgs),
+    /// Reload a packet offline and print its review report and digest.
+    ReviewPacket {
+        #[arg(long)]
+        dir: PathBuf,
+        /// Also check it against this context file.
+        #[arg(long)]
+        context: Option<PathBuf>,
+    },
+    /// Submit one packet whose exact digest the owner approved.
+    SubmitPacket {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        dir: PathBuf,
+        /// The packet digest the owner approved, 64 hex characters.
+        #[arg(long)]
+        approve: String,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -209,6 +244,32 @@ pub async fn run(cmd: Command) -> Result<()> {
                 node::verify(&node, subject_arg(&subject)?, dir.as_deref().map(Path::new)).await?;
             print_json(&report)?;
             ensure!(ok, "verification failed");
+        }
+        Command::Context { node, out } => {
+            let node = Node::new(&node, Some(&token(WRITE_TOKEN_ENV, None)?))?;
+            let ctx = super::entry_submit::save_context(&node, &out).await?;
+            println!(
+                "context written to {}: corpus {} ({} events)",
+                out.display(),
+                hex::encode(ctx.corpus_digest),
+                ctx.events.len()
+            );
+        }
+        Command::Correction(args) => super::correction::run(args)?,
+        Command::Edge(cmd) => super::edge::run(cmd)?,
+        Command::Attest(args) => super::attest::run(args)?,
+        Command::Entry(args) => super::entry::run(args)?,
+        Command::ReviewPacket { dir, context } => {
+            let ctx = context
+                .as_deref()
+                .map(super::entry_context::Context::load)
+                .transpose()?;
+            print_json(&super::entry_submit::review(&dir, ctx.as_ref())?)?;
+        }
+        Command::SubmitPacket { node, dir, approve } => {
+            let approve = hex32(&approve).context("--approve must be 64 hex characters")?;
+            let node = Node::new(&node, Some(&token(WRITE_TOKEN_ENV, None)?))?;
+            print_json(&super::entry_submit::submit(&node, &dir, approve).await?)?;
         }
     }
     Ok(())
