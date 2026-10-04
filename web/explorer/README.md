@@ -1,0 +1,85 @@
+# Clockchain explorer
+
+A static, read-only explorer for the public read API (`/public/v1`, served by
+`cc-gateway`), with an in-browser verifier built from
+[`crates/cc-wasm-verify`](../../crates/cc-wasm-verify).
+
+No framework, no build-time network fetches and nothing loaded from another
+origin at runtime. The page is plain ES modules, one stylesheet, the verifier's
+`.wasm` and a copy of the pinned TT taxonomy.
+
+## Views
+
+| View | Route | Reads |
+| --- | --- | --- |
+| Subjects | `#/` | `health`, `snapshot` |
+| Subject: claim (prose), subject key, asserted time, revisions, frontier, events, edges, media, `as_of` | `#/subject/{id}` | `subjects/{id}?as_of=`, `revisions/{rev}/prose` |
+| Causal DAG, whole corpus or one subject | `#/dag`, `#/dag/{id}` | `snapshot` |
+| Edges and support query | `#/edges` | `snapshot`, `support?from=&to=&as_of=` |
+| TT kind path of a subject's kind | `#/kind/{id}` | verifier tables, `taxonomy-v2.1.json` |
+| Verify in your browser | `#/verify` | `health`, `snapshot`, subject and prose reads |
+
+Served strings reach the page only as text nodes and attribute values. Asserted
+times are rendered from their coordinates (proleptic Gregorian, astronomical
+years, the publisher's `--asserted-time` mapping) for display and to build
+`as_of` queries; the node decides visibility.
+
+## What "Verify in your browser" checks
+
+The module recomputes, from the served text:
+
+- each row's canonical event id, from its envelope;
+- signatures, only when signed bytes are supplied (an export manifest file);
+  `/public/v1` serves envelopes without signatures, so without one the check is
+  reported **not checked**, never passed;
+- the corpus digest, from all served rows;
+- `filter_version`, from the served curator keys and `max_hops`, this build's
+  `fold_version` 1 and the pinned TT taxonomy hash;
+- the view commitment, over the canonical `cc.view-rows.json.v1` bytes rebuilt
+  from the served snapshot;
+- that subject and prose reads agree with the verified snapshot, and that served
+  prose hashes to its revision's body.
+
+It does **not** re-run the fold. Admission states, frontiers, revision
+selection, authority, edge and media readings, support verdicts and `as_of`
+visibility are checked only for consistency with the commitment. A node that
+folded wrongly but committed to its wrong rows passes. Re-running the fold in
+the browser needs a wasm-clean projection crate, which is a future owner
+decision. The page shows the module's own statement of these limits
+(`cc_about`), not a paraphrase.
+
+The verifier is only as independent as the module you run. To check with your
+own build, run `cargo build -p cc-wasm-verify --target
+wasm32-unknown-unknown --release` from source and load the `.wasm` through the
+page's file input.
+
+## Build and run
+
+```sh
+web/explorer/build.sh                      # dist/ for a same-origin /public/v1
+web/explorer/build.sh --api-base https://<gateway-origin>/public/v1
+web/explorer/build.sh --fixture            # include the synthetic fixture
+```
+
+`--api-base` on another origin is also written into the page's `connect-src`.
+Serve `dist/` as static files with `application/wasm` for `.wasm`. With
+`--fixture`, open `index.html?fixture=synthetic` to browse the recorded
+synthetic fixture without a gateway; it answers only recorded reads.
+
+## Tests
+
+```sh
+cargo build -p cc-wasm-verify --target wasm32-unknown-unknown --release
+node --test web/explorer/test/*.test.mjs   # CI runs this
+web/explorer/build.sh --fixture && node web/explorer/test/browser-smoke.mjs  # local, needs Playwright
+```
+
+`fixtures/synthetic/` is recorded from the real v1 node over PostgreSQL by
+`crates/cc-wasm-verify/tests/fixture.rs`, which fails whenever the node would
+now serve something different. Re-record with
+`CC_RECORD_FIXTURE=1 cargo test -p cc-wasm-verify --test fixture`. All of it is
+synthetic: fictional subjects, test keys, a synthetic instance. `health.json`
+omits `instance`, as the gateway contract does, and pins `build` to a fixed
+string so the recording is stable; `export.json`
+is the node's owner-scoped export, included only as the optional signature
+input.
