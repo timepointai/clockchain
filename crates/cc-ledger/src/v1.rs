@@ -9,6 +9,7 @@ mod authority;
 mod edges;
 mod projection;
 mod rule;
+mod serving;
 pub use authority::{Authority, Effect, Grant};
 pub use edges::{
     support_graph, EdgeReading, Exclusion, MediaReading, Neighbor, Reason, Support, SupportGraph,
@@ -18,6 +19,7 @@ pub use projection::{
     project, EventReading, Projection, ProjectionState, Revision, SubjectReading,
 };
 pub use rule::{canonical_rows, EntityRead, ExportManifest, Readiness, RuleId, Snapshot, Verdict};
+pub use serving::CacheKey;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -372,6 +374,9 @@ pub struct Store {
     instance: Hash,
     /// Boot-pinned filter identity; configuration, never a ledger event.
     rule: Option<cc_filter::v1::FilterIdentity>,
+    /// The committed-snapshot cache, shared by clones; `None` folds on every
+    /// read. Invalidated by every admission.
+    cache: Option<serving::SnapshotCache>,
 }
 const SCHEMA: &str = include_str!("v1.sql");
 impl Store {
@@ -413,6 +418,7 @@ impl Store {
             pool,
             instance,
             rule: None,
+            cache: Some(Default::default()),
         })
     }
     /// Reopen a store that `provision` and `bind` already set up, for serving.
@@ -461,6 +467,7 @@ impl Store {
             pool,
             instance,
             rule: Some(filter),
+            cache: Some(Default::default()),
         };
         store.readiness().await?;
         Ok(store)
@@ -478,6 +485,35 @@ impl Store {
     }
     /// The sole v1 semantic write entry point, including import and restore.
     pub async fn admit(&self, bytes: &[u8]) -> Result<Outcome, Error> {
+        Ok(self.admit_observed(bytes, None).await?.0)
+    }
+    /// [`Store::admit`], and, when `node` is given and this call retained the
+    /// candidate for the first time, a signed `NodeReceiptV1` for it, written
+    /// to `cc_v1.receipts` in the same transaction. The outcome is identical
+    /// with or without `node`; receipts never enter the candidate set.
+    /// Every call invalidates the snapshot cache, whatever its outcome.
+    pub async fn admit_observed(
+        &self,
+        bytes: &[u8],
+        node: Option<&cc_core::SecretKey>,
+    ) -> Result<(Outcome, Option<cc_core::v1::receipt::SignedReceipt>), Error> {
+        let result = self.admit_once(bytes, node).await;
+        if let Some(cache) = &self.cache {
+            cache.invalidate();
+        }
+        result
+    }
+    async fn admit_once(
+        &self,
+        bytes: &[u8],
+        node: Option<&cc_core::SecretKey>,
+    ) -> Result<(Outcome, Option<cc_core::v1::receipt::SignedReceipt>), Error> {
+        // A receipt names the fold it was observed under; refuse before any
+        // write if there is none.
+        let observer = match node {
+            Some(key) => Some((key, self.bound(None)?)),
+            None => None,
+        };
         let digest = hash(bytes);
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT singleton FROM cc_v1.identity WHERE singleton=true FOR UPDATE")
@@ -493,12 +529,15 @@ impl Store {
                 };
                 sqlx::query("INSERT INTO cc_v1.rejections(input_digest,reason) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(digest.to_vec()).bind(reason).execute(&mut *tx).await?;
                 tx.commit().await?;
-                return Ok(Outcome {
-                    event: None,
-                    input_digest: digest,
-                    status: Status::invalid(reason),
-                    authority: None,
-                });
+                return Ok((
+                    Outcome {
+                        event: None,
+                        input_digest: digest,
+                        status: Status::invalid(reason),
+                        authority: None,
+                    },
+                    None,
+                ));
             }
         };
         let id = signed.id();
@@ -519,20 +558,47 @@ impl Store {
         let mut analysis = analyze(&candidates);
         let status = analysis.admission.remove(&id).ok_or(Error::Corrupt)?;
         let authority = analysis.authority.effects.remove(&id);
-        sqlx::query(
+        let inserted = sqlx::query(
             "INSERT INTO cc_v1.candidates(event_id,envelope) VALUES($1,$2) ON CONFLICT DO NOTHING",
         )
         .bind(id.to_vec())
         .bind(bytes)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected()
+            == 1;
+        let receipt = match observer {
+            Some((key, filter)) if inserted => {
+                let r = serving::receipt_for(
+                    key,
+                    self.instance,
+                    filter,
+                    id,
+                    &status,
+                    serving::now_micros(),
+                )?;
+                sqlx::query(
+                    "INSERT INTO cc_v1.receipts(receipt_digest,event_id,envelope) VALUES($1,$2,$3)",
+                )
+                .bind(hash(r.bytes()).to_vec())
+                .bind(id.to_vec())
+                .bind(r.bytes())
+                .execute(&mut *tx)
+                .await?;
+                Some(r)
+            }
+            _ => None,
+        };
         tx.commit().await?;
-        Ok(Outcome {
-            event: Some(id),
-            input_digest: digest,
-            status,
-            authority,
-        })
+        Ok((
+            Outcome {
+                event: Some(id),
+                input_digest: digest,
+                status,
+                authority,
+            },
+            receipt,
+        ))
     }
     /// Retain a verified node observation separately. No grant, event, or
     /// admission boolean is installed from it. This does not endorse its node
