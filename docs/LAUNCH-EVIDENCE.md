@@ -169,13 +169,14 @@ grant. An ordinary Attestation has no resolution or delegation power.
 **Decision.** One `admit()` for HTTP, import, restore and publisher submission.
 v0 and raw-supersedes ingress are excluded from v1. **PRs:** #8, #16, #14.
 
-`Store::admit` is `crates/cc-ledger/src/v1.rs:480`. Raw import and restore call
-it for each envelope and are compiled only with the `review` feature. Verified
-restore, `Store::restore_export` (`crates/cc-ledger/src/v1/rule.rs:314`), is not
-feature-gated: it checks the fold, rule identity, instance, corpus digest and
-commitment, then admits each envelope through the same `admit`. The v1 HTTP
-handler calls it (`crates/cc-node/src/serve_v1.rs:376`). The publisher submits
-only over that HTTP route.
+`Store::admit` is `crates/cc-ledger/src/v1.rs:480`. The v1 HTTP `submit`
+handler calls `Store::admit` (`crates/cc-node/src/serve_v1.rs:376`), and the
+publisher submits only over that route. Raw import and restore call `admit` for
+each envelope and are compiled only with the `review` feature. The verified
+restore path, `Store::restore_export` (`crates/cc-ledger/src/v1/rule.rs:314`),
+is not feature-gated. It checks the fold, rule identity, instance, corpus digest
+and commitment, then admits each envelope through `admit_all` and `admit`. It is
+not exposed as a node HTTP route; v1 mode has no restore over HTTP.
 
 | Test | Location | Kind | Asserts |
 | --- | --- | --- | --- |
