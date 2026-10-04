@@ -597,6 +597,7 @@ async fn compromise_revoke_on_the_last_good_parent_suppresses_later_acts() {
 
     let ctx = n.grants(s).await;
     assert_eq!(ctx.frontier, vec![r.id()]);
+    assert_eq!(ctx.state, "resolved");
     assert_eq!(status(&ctx, d.id()), GrantStatus::Tombstoned);
     assert_eq!(status(&ctx, da.id()), GrantStatus::Tombstoned);
     assert_eq!(ctx.event(c.id()).unwrap().reason, "revoked_concurrent");
@@ -604,6 +605,12 @@ async fn compromise_revoke_on_the_last_good_parent_suppresses_later_acts() {
     // The subject reads the last trusted body again.
     assert_eq!(current(&n, s).await, genesis_revision);
     assert_eq!(genesis_revision.0, g.revision());
+    // `verify`, as the playbook's last step runs it, passes on that revision.
+    let (ok, report) = node::verify(&n.reader(), s, Some(&tmp.path().join("genesis")))
+        .await
+        .unwrap();
+    assert!(ok, "{report}");
+    assert_eq!(report["revision"]["id"], hex::encode(g.revision()));
 
     // Control: the same compromise revoked on the head keeps the hostile body.
     let tmp2 = tempfile::tempdir().unwrap();
