@@ -153,9 +153,12 @@ def fingerprint_v1(sql):
     Equal fingerprints before and after a step prove the step wrote nothing to
     the store: an update's `provision-v1` on a matching store, for instance.
     """
+    # Each row is hashed on its own and the sorted row hashes are hashed again,
+    # so no intermediate value grows with the store beyond 64 bytes a row.
     query = ' UNION ALL '.join(
-        f"SELECT '{t}'||'|'||count(*)||'|'||encode(sha256(convert_to(coalesce("
-        f"string_agg(r::text, E'\\n' ORDER BY r::text), ''), 'UTF8')), 'hex') FROM cc_v1.{t} r"
+        f"SELECT '{t}'||'|'||count(*)||'|'||encode(sha256(convert_to(coalesce(string_agg(h, "
+        f"'' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to("
+        f"r::text, 'UTF8')), 'hex') AS h FROM cc_v1.{t} r) rows"
         for t in TABLES)
     rows = {}
     for line in sql(query).splitlines():

@@ -3,7 +3,7 @@
 The jobs (`schedule_backups.py`, `monitor_v1.py`) run from the owner's
 workstation, never from CI or a cloud session. Their configuration comes from
 a private env file (mode 0600, outside this checkout) named on the command
-line, so no value lands in a plist, argv or log. Each run writes a status JSON
+line, so no secret value lands in a plist, argv or log. Each run writes a status JSON
 into a private state directory and raises a macOS notification on failure.
 Errors are recorded by type and a redacted message: any value from the env
 file is replaced before it is written or printed.

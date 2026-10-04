@@ -11,14 +11,14 @@ loopback port. Ownership rules:
 - A pidfile per job (`fly-proxy-<job>.json`) in the private state directory
   records the exact argv of the running proxy. Callers hold that job's lock,
   so a pidfile they find was left by a previous run of the same job that died
-  before its cleanup ran. That orphan is stopped only when the recorded pid is
-  alive AND its command line is exactly the recorded argv (random port
-  included). Anything else is left running; only the stale pidfile goes.
+  before its cleanup ran. That process is never signalled: this run did not
+  start it. When the recorded pid is alive with exactly the recorded argv, it
+  is reported as `orphan_left_running` (and logged with its pid) so the owner
+  can stop it; the pidfile is removed either way.
 """
 import json
 import os
 from pathlib import Path
-import signal
 import socket
 import subprocess
 import time
@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 
 READY_ATTEMPTS = 30
+LOG_LIMIT = 1024 * 1024
 
 
 class ProxyFailed(RuntimeError):
@@ -80,7 +81,7 @@ class FlyProxy:
         return self.state_dir / f'fly-proxy-{self.job}.json'
 
     def reap_orphan(self):
-        """Stop a proxy a previous run of this job started and could not clean up."""
+        """Clear a pidfile a previous run left behind. Never signals its process."""
         try:
             record = json.loads(self.pidfile.read_text())
         except FileNotFoundError:
@@ -91,10 +92,16 @@ class FlyProxy:
         outcome = 'stale_pidfile_removed'
         if type(pid) is int and pid > 1 and isinstance(argv, list) and alive(pid) and \
                 command_line(pid, self.runner) == ' '.join(argv):
-            os.kill(pid, signal.SIGTERM)
-            outcome = 'orphan_stopped'
+            outcome = 'orphan_left_running'
+            with open(self.log_path, 'a') as log:
+                log.write(f'previous proxy pid {pid} is still running; not started by this run, '
+                          'left alone\n')
         self.pidfile.unlink(missing_ok=True)
         return outcome
+
+    @property
+    def log_path(self):
+        return self.state_dir / f'fly-proxy-{self.job}.log'
 
     def start(self):
         if self.proc is not None:
@@ -103,7 +110,12 @@ class FlyProxy:
         port = free_port()
         self.argv = [self.flyctl, 'proxy', f'{port}:80', self.app + '.flycast', '-a', self.app,
                      '--bind-addr', '127.0.0.1']
-        log = open(self.state_dir / f'fly-proxy-{self.job}.log', 'ab')
+        try:
+            if self.log_path.stat().st_size > LOG_LIMIT:
+                self.log_path.unlink()
+        except FileNotFoundError:
+            pass
+        log = open(self.log_path, 'ab')
         try:
             self.proc = self.popen(self.argv, stdout=log, stderr=log, stdin=subprocess.DEVNULL)
         finally:

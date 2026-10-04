@@ -394,8 +394,9 @@ class FakeDocker:
         """fingerprint_v1's query: `table|count|sha256` per table, from the fake rows."""
         parts = query.split(' UNION ALL ')
         tables = [re.fullmatch(r"SELECT '(\w+)'\|\|'\|'\|\|count\(\*\)\|\|'\|'\|\|encode\(sha256\("
-                               r"convert_to\(coalesce\(string_agg\(r::text, E'\\n' ORDER BY r::text\), ''\), "
-                               r"'UTF8'\)\), 'hex'\) FROM cc_v1\.(\w+) r", part) for part in parts]
+                               r"convert_to\(coalesce\(string_agg\(h, '' ORDER BY h\), ''\), 'UTF8'\)\), "
+                               r"'hex'\) FROM \(SELECT encode\(sha256\(convert_to\(r::text, 'UTF8'\)\), "
+                               r"'hex'\) AS h FROM cc_v1\.(\w+) r\) rows", part) for part in parts]
         if not all(m and m[1] == m[2] for m in tables):
             raise AssertionError('unexpected fingerprint query ' + query)
         self.event('fingerprint')

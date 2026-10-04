@@ -6,7 +6,6 @@ FlyProxy builds and serves GET /health on 127.0.0.1:PORT until terminated.
 import json
 import os
 from pathlib import Path
-import signal
 import stat
 import subprocess
 import sys
@@ -222,7 +221,8 @@ class FlyProxyProcessTests(unittest.TestCase):
                     self.assertEqual(proxy.reaped, 'stale_pidfile_removed')
                 self.assert_survives(foreign)
 
-    def test_orphan_with_exactly_the_recorded_argv_is_stopped(self):
+    def test_orphan_with_exactly_the_recorded_argv_is_left_running_and_logged(self):
+        # A previous run's proxy is still not this run's process: never signalled.
         port = free_port()
         argv = [sys.executable, self.flyctl, *proxy_args(port)]
         orphan = self.spawn(argv)
@@ -231,11 +231,20 @@ class FlyProxyProcessTests(unittest.TestCase):
         self.write_pidfile({'pid': orphan.pid, 'argv': argv})
         proxy = self.proxy()
         with proxy as url:
-            self.assertEqual(proxy.reaped, 'orphan_stopped')
-            self.assertEqual(orphan.wait(timeout=10), -signal.SIGTERM)
+            self.assertEqual(proxy.reaped, 'orphan_left_running')
             self.assertEqual(json.loads(self.pidfile().read_text())['pid'], proxy.started_pid)
             self.assertEqual(health(url), 200)
         self.assertFalse(self.pidfile().exists())
+        self.assertIsNone(orphan.poll())
+        self.assertEqual(health(f'http://127.0.0.1:{port}'), 200)
+        self.assertIn(f'previous proxy pid {orphan.pid} is still running', proxy.log_path.read_text())
+
+    def test_oversized_proxy_log_is_started_afresh(self):
+        proxy = self.proxy()
+        proxy.log_path.write_bytes(b'x' * (fly_proxy.LOG_LIMIT + 1))
+        with proxy:
+            pass
+        self.assertLess(proxy.log_path.stat().st_size, fly_proxy.LOG_LIMIT)
 
     def test_pidfile_naming_a_dead_pid_is_just_removed(self):
         dead = self.spawn([sys.executable, '-c', 'pass'])

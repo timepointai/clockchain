@@ -52,6 +52,10 @@ docker buildx imagetools inspect "registry.fly.io/<app>:git-$SHA"
   `release_command = "cc-node provision-v1"`, a `/health` check). Fly secrets
   include `DATABASE_URL`, `CC_V1_INSTANCE`, `CC_V1_CURATORS`, both node keys,
   and none of `CC_NODE_LEDGER`, `CC_NODE_POSTURE`, `CC_V1_MAX_HOPS`.
+- No entry, correction or other submission in flight. The update proves that
+  nothing was written between its before and after observations, so a
+  legitimate submission during the window fails it after the deploy with
+  `CommitmentChanged`. Hold publishing until the update finishes.
 
 ### Command
 
@@ -99,8 +103,11 @@ must be new and outside the checkout; releases serialize on
    image re-serve the restored copy; its commitment must equal the observed one.
 8. **Deploy.** `flyctl deploy --ha=false --no-public-ips --image <digest>`;
    `cc-node provision-v1` runs as the release command and must be a no-op;
-   app scaled to one machine. The only `flyctl` subcommands this mode may run
-   are `machines list`, `secrets list`, `deploy` and `scale count 1`.
+   app scaled to one machine. The update step itself runs only `machines
+   list`, `secrets list`, `deploy` and `scale count 1` (an allow-list refuses
+   anything else); the two verified backups add `ssh console` and `ssh sftp
+   get` on the DB app (a read-only psql session, `pg_dump` into a temporary
+   file, its download and removal). Node HTTP is GET-only.
 9. **Rollout wait.** Up to 12 attempts, 5 s apart, until the census shows the
    new digest and `/health` reports `build` = the checkout SHA's first 12
    characters. Only the rollout is retried.
@@ -233,8 +240,11 @@ schema `cc.v1-backup-status.v1`. Success: `result: ok`, `started_at`,
   wake. Nothing runs while the machine is powered off.
 - Docker must be running (PG18 restore and image re-serve); otherwise the run
   fails and notifies.
-- Env values never reach the plist, argv, stdout or the status file; error
-  text has every env value of 4+ characters replaced with `[redacted]`.
+- Secret values never reach the plist, argv, stdout or the status file; error
+  text has every env value of 4+ characters replaced with `[redacted]`. Non-
+  secret names do appear: the app, DB app, database and user in `flyctl` argv,
+  `CC_OPS_STATE_DIR` as the plist's log path, and the image reference
+  (`registry.fly.io/<app>@sha256:...`) in the status file.
 
 ## 4. Monitoring
 
@@ -264,8 +274,8 @@ the run exits 0 silently.
 | `kind` | Cause |
 | --- | --- |
 | `identity_drift` | `/health` identity differs, is malformed or is not JSON |
-| `not_ready` | `/health` non-200, or `/ready` non-200 or not serving |
-| `unreachable` | Proxy exited or never answered, or a network error |
+| `not_ready` | `/ready` non-200 (after `busy` retries) or not serving |
+| `unreachable` | Proxy exited or `/health` never answered 200 within 30 s (a node answering 503 lands here), or a network error |
 | `configuration` | Env file or state directory unsafe or incomplete |
 | `error` | Anything else |
 
@@ -282,10 +292,13 @@ an external uptime check.
   touched. Nothing signals by name or port (no `pkill` or `killall`).
 - Each job keeps `fly-proxy-<job>.json` (pid and exact argv) and
   `fly-proxy-<job>.log` in `CC_OPS_STATE_DIR`. Since the job lock is held, a
-  pidfile found at start was left by a crashed run of the same job. That pid is
-  sent SIGTERM only if it is alive **and** its `ps` command line equals the
-  recorded argv, random port included; otherwise it is left running and only
-  the stale pidfile is removed.
+  pidfile found at start was left by a crashed run of the same job. That
+  process is **never signalled**: this run did not start it. If it is alive
+  and its `ps` command line equals the recorded argv (random port included),
+  the log records `previous proxy pid <pid> is still running` for you to stop
+  by hand; the stale pidfile is removed either way. launchd normally removes
+  such a child with the job's process group.
+- The proxy log is started afresh once it exceeds 1 MiB.
 - The release opens its own random-port loopback proxy and stops it in a
   `finally`; it uses no pidfile, and the release lock serializes it.
 

@@ -20,8 +20,9 @@ The job runs daily at 09:00 local time unless `--time` says otherwise. Each run:
    failed attempts), deleting only directories this job named.
 
 Every run rewrites `backup-status.json` in `CC_OPS_STATE_DIR`. A failure also
-raises a macOS notification. Values from the env file never reach argv, the
-plist, stdout or the status file.
+raises a macOS notification. Secret values (the node key, and any env-file
+value in an error message) never reach argv, the plist, stdout or the status
+file; the app, database and user names do appear in flyctl argv.
 
 The env file (mode 0600, outside the checkout) holds CC_FLY_APP,
 CC_BACKUP_DIR, CC_OPS_STATE_DIR, CC_BACKUP_DB_APP, CC_BACKUP_DATABASE,
@@ -118,8 +119,11 @@ def backup(env, backup_dir, state, *, proxy=FlyProxy, capture=capture_v1, machin
         with os.fdopen(fd, 'wb') as f:
             f.write(export)
     except BaseException:
-        if bundle.exists():
-            bundle.rename(bundle.with_name(bundle.name + '.failed'))
+        try:
+            if bundle.exists():
+                bundle.rename(bundle.with_name(bundle.name + '.failed'))
+        except OSError:
+            pass  # the original error matters more than the rename
         raise
     return bundle, report, image
 

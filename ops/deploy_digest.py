@@ -238,8 +238,10 @@ def promote_v1(args):
         raise
 
 
-# The only flyctl commands an update release may run. Everything else that
-# reaches production is a GET through ReadOnlyNode or a read-only SQL session.
+# The flyctl commands promote_v1_update itself runs. The verified backups
+# (`capture_v1`) add `ssh console`/`ssh sftp get` on the database app: a
+# read-only psql session, `pg_dump` into a temporary file, its download and
+# removal. Node HTTP is GET-only through ReadOnlyNode.
 UPDATE_FLY = (('machines', 'list'), ('secrets', 'list'), ('deploy',), ('scale', 'count', '1'))
 ROLLOUT_ATTEMPTS = 12
 
@@ -324,7 +326,8 @@ def promote_v1_update(args):
             raise CommitmentChanged('pre-deploy backup does not hold the observed commitment')
         # 3. Exact-digest deploy; `cc-node provision-v1` runs as the release command.
         deployed = True
-        deploy(args.app, args.config, args.image)
+        update_fly('deploy', '--app', args.app, '--config', args.config, '--ha=false',
+                   '--no-public-ips', '--image', args.image)
         update_fly('scale', 'count', '1', '--process-group', 'app', '--app', args.app, '--yes')
         # 4. Read-only post checks.
         fleet, health_after = wait_for_rollout(args.app, node, args.sha, args.image.split('@')[1])
