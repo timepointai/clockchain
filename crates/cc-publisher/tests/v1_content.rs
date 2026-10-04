@@ -36,8 +36,9 @@ const READ: &str = "synthetic-read";
 const INSTANCE: Hash = [7; 32];
 const EVIDENCE: Hash = [0xee; 32];
 
-/// How the node's `/v1/snapshot` answers: honestly, with every row pending,
-/// or echoing the write token into every edge's reasons.
+/// How the node's `/v1/snapshot` and `/v1/export` answer: honestly, with
+/// every snapshot row pending, or echoing the write token into edge reasons
+/// and unverified export fields.
 const HONEST: u8 = 0;
 const ROWS_PENDING: u8 = 1;
 const ECHO_TOKEN: u8 = 2;
@@ -50,16 +51,22 @@ struct TestNode {
 /// Rewrite `/v1/snapshot` as a misbehaving node would; the real node cannot
 /// be configured to.
 async fn lying(State(lie): State<Arc<AtomicU8>>, req: Request, next: Next) -> Response {
-    let snapshot = req.uri().path() == "/v1/snapshot";
+    let path = req.uri().path().to_owned();
     let response = next.run(req).await;
     let mode = lie.load(Ordering::SeqCst);
-    if !snapshot || mode == HONEST {
+    if !matches!(path.as_str(), "/v1/snapshot" | "/v1/export") || mode == HONEST {
         return response;
     }
     let (mut parts, body) = response.into_parts();
     let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
     let mut v: Value = serde_json::from_slice(&bytes).unwrap();
-    if mode == ROWS_PENDING {
+    if path == "/v1/export" {
+        if mode == ECHO_TOKEN {
+            v["commitment"] = json!(WRITE);
+            v["encoding"] = json!(WRITE);
+            v["rule"]["echo"] = json!(WRITE);
+        }
+    } else if mode == ROWS_PENDING {
         for r in v["rows"].as_array_mut().unwrap() {
             r["state"] = json!("pending");
         }
@@ -658,6 +665,17 @@ async fn submit_readback_and_redaction() {
     let text = report.to_string();
     assert!(!text.contains(WRITE), "{text}");
     assert_eq!(report["edges"][0]["reasons"], json!(["<redacted>"]));
+    // A context keeps only what was verified: the echoed export fields never
+    // reach the saved file.
+    let (_, export, _) = entry_submit::fetch(&n.writer()).await.unwrap();
+    assert!(!export.to_string().contains(WRITE), "{export}");
+    let file = tmp.path().join("ctx.json");
+    entry_submit::save_context(&n.writer(), &file)
+        .await
+        .unwrap();
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert!(!saved.contains(WRITE));
+    Context::load(&file).unwrap();
 }
 
 // ---- entry packets ----------------------------------------------------------
@@ -872,6 +890,47 @@ async fn entry_packet_builds_deterministic_envelopes() {
         .is_some());
 }
 
+/// A packet whose packet.json would exceed what a reload reads is never
+/// written, even when its manifest is within the manifest cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unreloadable_packet_is_never_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let k = key(0xb1);
+    let n = TestNode::start(vec![author(&k)]).await;
+    let other = n.genesis(&k, "big").await;
+    let ctx = n.context().await;
+    let cap = cc_publisher::v1::entry_packet::MAX_PACKET_JSON;
+    // Sixteen edges whose rationales fill the manifest to just under its cap.
+    let edges = |len: usize| {
+        json!((0..16)
+            .map(|i| json!({
+                "relation": "influence", "source": "entry", "target": hex::encode(other.0),
+                "target_revision": hex::encode(other.1),
+                "rationale": format!("{i:02}{}", "r".repeat(len - 2)), "sources": ["s1"],
+            }))
+            .collect::<Vec<_>>())
+    };
+    let mut len = 65_536;
+    let m = loop {
+        let m = manifest(tmp.path(), edges(len), None);
+        if std::fs::metadata(&m).unwrap().len() as usize <= cap - 64 {
+            break m;
+        }
+        len -= 256;
+    };
+    let e = err(entry::build(&k, &ctx, &m).map(|_| ()).unwrap_err());
+    assert!(
+        e.contains("packet.json would be") && e.contains("split the packet"),
+        "{e}"
+    );
+    // Control: a quarter of the edges builds and reloads.
+    let small = manifest(tmp.path(), json!(edges(len).as_array().unwrap()[..4]), None);
+    let p = entry::build(&k, &ctx, &small).unwrap().packet;
+    let dir = tmp.path().join("small");
+    p.write_dir(&dir).unwrap();
+    Packet::load_dir(&dir).unwrap();
+}
+
 /// Manifest refusals ported from the salvage review flow.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn entry_manifest_refusals() {
@@ -995,6 +1054,7 @@ async fn cli_context_entry_review_and_submit() {
     assert_eq!(review["packet_digest"], json!(digest));
     assert_eq!(review["context_matches"], true);
     assert_eq!(review["admissible"], true);
+    assert_eq!(review["admission_reason"], Value::Null);
     assert_eq!(review["writes_performed"], false);
     // Nothing has been submitted by any of the above.
     assert_eq!(n.context().await.events.len(), 0);
@@ -1070,6 +1130,35 @@ async fn cli_context_entry_review_and_submit() {
     .unwrap();
     assert_eq!(sub["events"][0]["kind"], "correction");
     assert_eq!(sub["events"][0]["state"], "valid");
+    // Reviewed against the older (empty) context, the correction's parent is
+    // unknown: not admissible, with the node rule's reason.
+    let review: Value = serde_json::from_str(&ok(publisher()
+        .args(["v1", "review-packet", "--dir"])
+        .arg(tmp.path().join("correction"))
+        .arg("--context")
+        .arg(&ctx_file)))
+    .unwrap();
+    assert_eq!(review["context_matches"], false);
+    assert_eq!(review["admissible"], false);
+    assert!(
+        review["admission_reason"]
+            .as_str()
+            .unwrap()
+            .contains("parent_missing"),
+        "{review}"
+    );
+    // The saved context holds only the verified fields.
+    let saved: Value = serde_json::from_slice(&std::fs::read(&ctx2).unwrap()).unwrap();
+    let keys = |v: &Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    assert_eq!(keys(&saved), ["export", "instance", "schema"]);
+    assert_eq!(
+        keys(&saved["export"]),
+        ["corpus_digest", "envelopes", "rule"]
+    );
+    assert_eq!(
+        keys(&saved["export"]["rule"]),
+        ["fold_manifest", "fold_version"]
+    );
     // Parser-level refusal: with every other flag present, omitting the
     // reviewed target revision is exit 2.
     let mut c = publisher();

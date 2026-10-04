@@ -18,9 +18,9 @@ use std::path::Path;
 pub const REVIEW_SCHEMA: &str = "cc.publisher.v1.packet-review";
 pub const SUBMISSION_SCHEMA: &str = "cc.publisher.v1.packet-submission";
 
-/// Read `/health` and `GET /v1/export`, verify the export and return both.
-/// Only the verified fields are kept (`encoding`, `rule`, `corpus_digest`,
-/// `commitment`, `envelopes`), so nothing else a node sends reaches a file.
+/// Read `/health` and `GET /v1/export` and verify the export. The returned
+/// export is rebuilt from the verified context alone (fold, corpus digest,
+/// envelopes), so nothing unverified that a node sends reaches a file.
 pub async fn fetch(node: &Node) -> Result<(node::Health, Value, Context)> {
     let health = node.health().await?;
     ensure!(
@@ -28,19 +28,8 @@ pub async fn fetch(node: &Node) -> Result<(node::Health, Value, Context)> {
         "node fold_version differs from this build's fold_v1()"
     );
     let served = node.export_json().await?;
-    let mut export = serde_json::Map::new();
-    for k in [
-        "encoding",
-        "rule",
-        "corpus_digest",
-        "commitment",
-        "envelopes",
-    ] {
-        export.insert(k.into(), served[k].clone());
-    }
-    let export = Value::Object(export);
-    let ctx = Context::from_export(health.instance, &export).context("GET /v1/export")?;
-    Ok((health, export, ctx))
+    let ctx = Context::from_export(health.instance, &served).context("GET /v1/export")?;
+    Ok((health, ctx.export_json(), ctx))
 }
 
 /// `cc-publisher v1 context`: save the verified export to a new file.
@@ -69,8 +58,8 @@ pub fn review(dir: &Path, ctx: Option<&Context>) -> Result<Value> {
     let p = Packet::load_dir(dir)?;
     let digest = p.digest()?;
     let packet: Value = serde_json::from_slice(&p.render()?)?;
-    let (context_matches, admissible) = match ctx {
-        None => (Value::Null, Value::Null),
+    let (context_matches, (admissible, admission_reason)) = match ctx {
+        None => (Value::Null, (Value::Null, Value::Null)),
         Some(c) => {
             ensure!(
                 c.instance == p.instance,
@@ -83,11 +72,11 @@ pub fn review(dir: &Path, ctx: Option<&Context>) -> Result<Value> {
                 .filter(|e| !c.events.contains_key(&e.id()))
                 .cloned()
                 .collect();
-            let admissible = match c.self_check(&pending) {
-                Ok(()) => json!(true),
-                Err(e) => json!(format!("{e:#}")),
+            let (admissible, reason) = match c.self_check(&pending) {
+                Ok(()) => (true, Value::Null),
+                Err(e) => (false, json!(format!("{e:#}"))),
             };
-            (matches.into(), admissible)
+            (matches.into(), (admissible.into(), reason))
         }
     };
     Ok(json!({
@@ -95,6 +84,7 @@ pub fn review(dir: &Path, ctx: Option<&Context>) -> Result<Value> {
         "packet_digest": hex::encode(digest),
         "context_matches": context_matches,
         "admissible": admissible,
+        "admission_reason": admission_reason,
         "status": "ready_for_owner_review",
         "note": "ready_for_owner_review is not approval",
         "publication_authorized": false,

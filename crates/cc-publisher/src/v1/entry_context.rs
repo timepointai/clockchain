@@ -94,6 +94,16 @@ impl Context {
             projection,
         })
     }
+    /// The verified export: this build's fold, the corpus digest and every
+    /// envelope, all re-encoded from what was checked.
+    pub fn export_json(&self) -> Value {
+        let fold = fold_v1();
+        json!({
+            "rule": {"fold_version": fold.version, "fold_manifest": hex::encode(fold.manifest)},
+            "corpus_digest": hex::encode(self.corpus_digest),
+            "envelopes": self.events.values().map(|e| hex::encode(e.bytes())).collect::<Vec<_>>(),
+        })
+    }
     /// The file `cc-publisher v1 context` writes.
     pub fn file_json(instance: Hash, export: &Value) -> Value {
         json!({

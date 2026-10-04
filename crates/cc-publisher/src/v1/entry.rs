@@ -133,6 +133,11 @@ fn sorted(mut v: Vec<Hash>) -> Vec<Hash> {
 /// the sources, with locators, for `packet.json`.
 pub fn check_manifest(raw: &[u8], events: &[Signed]) -> Result<Value> {
     let m = parse(raw).context("manifest.json")?;
+    // What packet.json shows the reviewer obeys the build-time text rules.
+    for s in &m.sources {
+        genesis::validate_key_field("source id", &s.id).context("manifest.json")?;
+        validate_text("source locator", &s.locator).context("manifest.json")?;
+    }
     let mismatch = |what: &str| anyhow!("manifest.json {what} differs from the signed events");
     let shas = m
         .sources
