@@ -91,8 +91,9 @@ clean, CI-passing main commit using an immutable image digest. Acceptance runs i
 temporary local Docker containers with its own PG18, credentials and synthetic
 data; it never uses production data. The same tested image is promoted. The
 production app and its private Postgres run on Fly with no public ingress. The v1
-release refuses any running or scheduled tick machine. Deploys, public exposure, secrets, key ceremonies and new entries
-are owner actions run from the owner's workstation.
+release refuses any running or scheduled tick machine. Deploys, public exposure,
+secrets, key ceremonies and new entries are owner actions run from the owner's
+workstation.
 
 See [owner operations](docs/CICD-FLY.md), [API](docs/USING-THE-NODE.md),
 [media](docs/TYPED-MEDIA-ABSENCE.md), [evaluation](docs/evaluation/README.md) and
