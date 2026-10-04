@@ -1,0 +1,42 @@
+[package]
+name = "cc-gateway"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The unauthenticated, read-only public gateway in front of a private v1 node."
+
+# A library target as well as a binary, so the integration tests can serve the
+# real router on a real socket in front of a real v1 node.
+[lib]
+name = "cc_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cc-gateway"
+path = "src/main.rs"
+
+# Deliberately no cc-node, cc-ledger or sqlx: the gateway reaches the node only
+# over HTTP with a read key, so it cannot touch a store or a write path even by
+# mistake.
+[dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+# No system proxy and no redirects are configured on the client in code; the
+# feature set is the workspace's rustls-only one.
+reqwest.workspace = true
+serde.workspace = true
+# `raw_value` lets the gateway drop one top-level key while passing every
+# embedded projection value through byte for byte.
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+cc-core.workspace = true
+cc-ledger.workspace = true
+cc-node = { path = "../cc-node" }
+cc-testkit.workspace = true
+sqlx.workspace = true
+hex.workspace = true
