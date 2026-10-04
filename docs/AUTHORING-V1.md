@@ -151,8 +151,8 @@ each edge, in manifest order.
 ```
 
 - Unknown fields are refused. Paths are relative to the manifest, without
-  `..` or a leading `/`. A symlink is followed, so keep the manifest
-  directory free of links you did not make.
+  `..` or a leading `/`. No path may be, or pass through, a symlink below
+  the manifest directory, so a link can never pull in bytes from elsewhere.
 - `subject`, `asserted_time` and `body` follow the `genesis` rules. The
   Genesis evidence is the set of all source hashes.
 - `nonce` is fixed in the manifest, so the same manifest, key and context
@@ -288,9 +288,11 @@ value appears in this repository.
    influence. The direction is the reviewer's claim and must match the
    evidence; support itself is undirected.
 4. `entry` builds the Genesis and the edge, signed with the owner's curator
-   key. The edge author and the new subject's creator are then the curator,
-   and the 1968 subject was created by the curator too, so the edge can
-   count as support.
+   key. The edge author and the new subject's creator are then that
+   curator. If the 1968 subject's creator is also in the node's curator set,
+   both endpoint creators are curators and the edge can count as support;
+   otherwise it is admitted but excluded from support
+   (`untrusted_origin`).
 5. The owner runs the checklist on the Genesis and the edge separately, then
    `review-packet --context`.
 6. If approved, the owner runs `submit-packet --approve DIGEST`. Images are a

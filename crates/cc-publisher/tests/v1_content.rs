@@ -985,6 +985,50 @@ async fn entry_manifest_refusals() {
     std::fs::write(tmp.path().join("bad.txt"), "not the capture").unwrap();
     refuse(json!([]), Some("bad.txt"), "capture hash mismatch");
     refuse(json!([]), Some("../capture.txt"), "without '..'");
+    // Absolute paths and symlinks never pull in bytes from outside the
+    // manifest directory, even bytes that would hash correctly.
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(
+        outside.path().join("capture.txt"),
+        "synthetic capture bytes",
+    )
+    .unwrap();
+    std::fs::write(outside.path().join("body.txt"), "Outside synthetic body.\n").unwrap();
+    let abs = outside.path().join("capture.txt");
+    refuse(json!([]), Some(abs.to_str().unwrap()), "without '..'");
+    let link =
+        |to: PathBuf, name: &str| std::os::unix::fs::symlink(to, tmp.path().join(name)).unwrap();
+    link(outside.path().join("capture.txt"), "link-capture.txt");
+    link(outside.path().join("body.txt"), "link-body.txt");
+    link(outside.path().to_path_buf(), "linkdir");
+    for capture in ["link-capture.txt", "linkdir/capture.txt"] {
+        refuse(
+            json!([]),
+            Some(capture),
+            "must not be or pass through a symlink",
+        );
+    }
+    let with_body = |body: &str| {
+        let m = manifest(tmp.path(), json!([]), None);
+        let mut v: Value = serde_json::from_slice(&std::fs::read(&m).unwrap()).unwrap();
+        v["body"] = json!(body);
+        std::fs::write(&m, serde_json::to_vec(&v).unwrap()).unwrap();
+        entry::build(&k, &ctx, &m).map(|b| b.packet)
+    };
+    let abs_body = outside.path().join("body.txt");
+    for (body, want) in [
+        ("link-body.txt", "must not be or pass through a symlink"),
+        ("linkdir/body.txt", "must not be or pass through a symlink"),
+        (abs_body.to_str().unwrap(), "without '..'"),
+    ] {
+        let e = err(with_body(body).map(|_| ()).unwrap_err());
+        assert!(e.contains(want), "{body}: want {want:?}, got {e:?}");
+    }
+    // Control: a regular body in a regular subdirectory is accepted and signed.
+    std::fs::create_dir(tmp.path().join("sub")).unwrap();
+    std::fs::write(tmp.path().join("sub/body.txt"), "Synthetic nested body.\n").unwrap();
+    let p = with_body("sub/body.txt").unwrap();
+    assert!(p.bodies.contains_key(&hash(b"Synthetic nested body.\n")));
     // A dispute from the entry itself is the entry author's own counterclaim.
     let m = manifest(tmp.path(), edge(json!({"relation": "disputes"})), None);
     entry::build(&k, &ctx, &m).unwrap();

@@ -93,7 +93,9 @@ pub struct EdgeIn {
     pub sources: Vec<String>,
 }
 
-/// A manifest path: relative, without `..`, resolved against the manifest.
+/// A manifest path: relative, without `..`, resolved against the manifest,
+/// and with no symlink anywhere below the manifest directory, so a link in
+/// the packet's sources can never pull in bytes from elsewhere.
 fn resolve(base: &Path, field: &str, rel: &str) -> Result<PathBuf> {
     let p = Path::new(rel);
     ensure!(
@@ -102,7 +104,19 @@ fn resolve(base: &Path, field: &str, rel: &str) -> Result<PathBuf> {
                 .all(|c| matches!(c, Component::Normal(_) | Component::CurDir)),
         "{field} {rel:?} must be a relative path without '..'"
     );
-    Ok(base.join(p))
+    let mut at = base.to_path_buf();
+    for c in p.components() {
+        if let Component::Normal(name) = c {
+            at.push(name);
+            let meta = std::fs::symlink_metadata(&at)
+                .with_context(|| format!("{field} {rel:?}: {}", at.display()))?;
+            ensure!(
+                !meta.file_type().is_symlink(),
+                "{field} {rel:?} must not be or pass through a symlink"
+            );
+        }
+    }
+    Ok(at)
 }
 
 /// Which captures were found on disk and verified.
