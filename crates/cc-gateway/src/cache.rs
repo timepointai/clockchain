@@ -16,7 +16,7 @@
 //! An observation only replaces a newer one if it was requested later, so a
 //! slow response carrying an older digest cannot roll the generation back.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -33,16 +33,37 @@ pub struct Cache {
     freshness: Duration,
     max_bytes: usize,
     inner: Mutex<Inner>,
-    /// Held while a probe is in flight, so concurrent requests share one.
-    pub(crate) probing: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
 struct Inner {
     /// The digest the entries belong to, and when it was requested.
     generation: Option<(String, Instant)>,
-    entries: HashMap<String, Entry>,
+    /// Each entry with the tick of its last use.
+    entries: HashMap<String, (Entry, u64)>,
+    /// Ticks in use order, oldest first, for least-recently-used eviction.
+    order: BTreeMap<u64, String>,
+    tick: u64,
     bytes: usize,
+}
+
+impl Inner {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+        self.bytes = 0;
+    }
+
+    fn touch(&mut self, key: &str) -> u64 {
+        self.tick += 1;
+        let tick = self.tick;
+        if let Some((_, used)) = self.entries.get_mut(key) {
+            self.order.remove(used);
+            *used = tick;
+        }
+        self.order.insert(tick, key.to_string());
+        tick
+    }
 }
 
 impl Cache {
@@ -51,7 +72,6 @@ impl Cache {
             freshness,
             max_bytes,
             inner: Mutex::new(Inner::default()),
-            probing: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -76,32 +96,43 @@ impl Cache {
             Some((d, _)) if d == digest => inner.generation = Some((d.clone(), requested)),
             _ => {
                 inner.generation = Some((digest.to_string(), requested));
-                inner.entries.clear();
-                inner.bytes = 0;
+                inner.clear();
             }
         }
     }
 
     pub fn get(&self, digest: &str, key: &str) -> Option<Entry> {
-        let inner = self.lock();
-        match &inner.generation {
-            Some((d, _)) if d == digest => inner.entries.get(key).cloned(),
-            _ => None,
+        let mut inner = self.lock();
+        if !matches!(&inner.generation, Some((d, _)) if d == digest) {
+            return None;
         }
+        let entry = inner.entries.get(key)?.0.clone();
+        inner.touch(key);
+        Some(entry)
     }
 
-    /// Keep `entry` only if it was folded from the current generation and fits.
+    /// Keep `entry` only if it was folded from the current generation and fits
+    /// the byte bound, evicting the least recently used entries to make room.
     pub fn put(&self, digest: &str, key: &str, entry: Entry) {
         let mut inner = self.lock();
         if !matches!(&inner.generation, Some((d, _)) if d == digest) {
             return;
         }
         let size = key.len() + entry.body.len();
-        if inner.entries.contains_key(key) || inner.bytes + size > self.max_bytes {
+        if inner.entries.contains_key(key) || size > self.max_bytes {
             return;
         }
+        while inner.bytes + size > self.max_bytes {
+            let Some((_, old)) = inner.order.pop_first() else {
+                break;
+            };
+            if let Some((e, _)) = inner.entries.remove(&old) {
+                inner.bytes -= old.len() + e.body.len();
+            }
+        }
         inner.bytes += size;
-        inner.entries.insert(key.to_string(), entry);
+        inner.entries.insert(key.to_string(), (entry, 0));
+        inner.touch(key);
     }
 
     #[cfg(test)]
@@ -167,7 +198,26 @@ mod tests {
         let t = Instant::now();
         c.observe("d", t);
         c.put("d", "/a", entry("12345"));
-        c.put("d", "/b", entry("123456"));
+        // Too big to fit even in an empty cache: never stored.
+        c.put("d", "/b", entry("1234567890"));
         assert_eq!(c.len(), 1);
+        assert!(c.get("d", "/a").is_some());
+    }
+
+    #[test]
+    fn a_full_cache_evicts_the_least_recently_used_entry() {
+        // Each entry is a two-byte key plus a two-byte body: two fit.
+        let c = Cache::new(Duration::from_secs(5), 8);
+        let t = Instant::now();
+        c.observe("d", t);
+        c.put("d", "/a", entry("aa"));
+        c.put("d", "/b", entry("bb"));
+        // Using /a makes /b the least recently used.
+        assert!(c.get("d", "/a").is_some());
+        c.put("d", "/c", entry("cc"));
+        assert_eq!(c.len(), 2);
+        assert!(c.get("d", "/b").is_none());
+        assert!(c.get("d", "/a").is_some());
+        assert!(c.get("d", "/c").is_some());
     }
 }

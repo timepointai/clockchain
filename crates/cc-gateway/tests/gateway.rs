@@ -2,8 +2,11 @@
 //! served v1 node (`cc_node::serve_v1::router`) on a real socket over a real
 //! PostgreSQL store. The node is wrapped in a recording layer, so every claim
 //! about what did or did not reach it is read from the node side.
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{Request, State},
@@ -63,8 +66,12 @@ fn logs() -> Arc<Mutex<Vec<u8>>> {
 
 /// `(method, path and query, authorization)` for every request the node saw.
 type Seen = Arc<Mutex<Vec<(String, String, Option<String>)>>>;
+/// Every request header name the node saw.
+type Names = Arc<Mutex<BTreeSet<String>>>;
 
-async fn record(State(seen): State<Seen>, req: Request, next: Next) -> Response {
+async fn record(State((seen, names)): State<(Seen, Names)>, req: Request, next: Next) -> Response {
+    let seen_names = req.headers().keys().map(|k| k.as_str().to_string());
+    names.lock().unwrap().extend(seen_names);
     let auth = req
         .headers()
         .get("authorization")
@@ -79,6 +86,7 @@ async fn record(State(seen): State<Seen>, req: Request, next: Next) -> Response 
 struct Node {
     base: String,
     seen: Seen,
+    names: Names,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -120,11 +128,16 @@ async fn boot_node(store: &Store) -> Node {
         beta_key: None,
         telemetry_key: None,
     };
-    let seen = Seen::default();
-    let app =
-        serve_v1::router(state).layer(axum::middleware::from_fn_with_state(seen.clone(), record));
+    let (seen, names) = (Seen::default(), Names::default());
+    let log = (seen.clone(), names.clone());
+    let app = serve_v1::router(state).layer(axum::middleware::from_fn_with_state(log, record));
     let (base, server) = serve(app).await;
-    Node { base, seen, server }
+    Node {
+        base,
+        seen,
+        names,
+        server,
+    }
 }
 
 struct Rig {
@@ -507,6 +520,11 @@ async fn the_read_key_never_leaks_and_client_credentials_never_pass() {
     }
     let seen = rig.node.seen();
     assert!(seen.len() > paths.len(), "{seen:?}");
+    // Only what the gateway itself sends: no cookie, no forwarding header.
+    let names = rig.node.names.lock().unwrap().clone();
+    let allowed: BTreeSet<String> = ["accept", "authorization", "host"].map(String::from).into();
+    assert!(names.is_subset(&allowed), "{names:?}");
+    assert!(names.contains("authorization"), "{names:?}");
     for (m, path, auth) in seen {
         assert_eq!(m, "GET", "{path}");
         if path == "/health" {
@@ -613,19 +631,34 @@ async fn writes_are_refused_before_routing_and_never_reach_the_node() {
 #[tokio::test]
 async fn the_rate_limit_triggers_per_client_before_the_node_is_asked() {
     let rig = rig().await;
-    // The default is 60 a minute.
+    // The default is a burst of 60, then 60 a minute: one more each second.
     let gw = gateway(&rig.node.base, READ, &[]).await;
+    let start = Instant::now();
     for i in 0..60 {
         assert_eq!(gw.get("/public/v1/health").await.0, S::OK, "request {i}");
     }
-    let (status, headers, body) = gw.raw(Method::GET, "/public/v1/health", &[], vec![]).await;
-    assert_eq!(status, S::TOO_MANY_REQUESTS);
+    let mut refilled = 0;
+    let (headers, body) = loop {
+        let (status, headers, body) = gw.raw(Method::GET, "/public/v1/health", &[], vec![]).await;
+        if status == S::TOO_MANY_REQUESTS {
+            break (headers, body);
+        }
+        assert_eq!(status, S::OK);
+        refilled += 1;
+        assert!(refilled <= 10, "no limit after {} requests", 60 + refilled);
+    };
+    // Any request past the 60th was a token refilled while this test ran.
+    assert!(
+        refilled <= start.elapsed().as_secs() + 1,
+        "{refilled} refills"
+    );
     assert_eq!(headers["retry-after"], "1");
     assert_eq!(
         serde_json::from_slice::<Json>(&body).unwrap(),
         json!({"error": "rate_limited"})
     );
-    assert_eq!(rig.node.count(), 60);
+    let first = 60 + refilled as usize;
+    assert_eq!(rig.node.count(), first);
     gw.stop().await;
 
     // A configured limit, metered per client address from a trusted header.
@@ -665,7 +698,7 @@ async fn the_rate_limit_triggers_per_client_before_the_node_is_asked() {
         .await;
     assert_eq!(r.0, S::OK);
     assert_eq!(gw.get("/public/v1/health").await.0, S::OK);
-    assert_eq!(rig.node.count(), 60 + 5);
+    assert_eq!(rig.node.count(), first + 5);
     gw.stop().await;
     rig.done().await;
 }
@@ -822,6 +855,98 @@ async fn node_answers_outside_the_contract_fail_closed() {
     assert_eq!(
         serde_json::from_slice::<Json>(&body).unwrap(),
         serde_json::from_str::<Json>(digest).unwrap()
+    );
+    gw.stop().await;
+    server.abort();
+}
+
+/// Answers the digest probe within the contract and every other read with the
+/// given status and body.
+async fn probe_only_node(status: u16, body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
+    let digest = format!("{{\"corpus_digest\":\"{}\"}}", "ab".repeat(32));
+    let probe = move || async move { (S::NOT_FOUND, digest) };
+    let other = move || async move { (S::from_u16(status).unwrap(), body) };
+    let app = Router::new()
+        .route(cc_gateway::PROBE, get(probe))
+        .route("/*any", get(other));
+    serve(app).await
+}
+
+#[tokio::test]
+async fn a_read_that_fails_after_a_good_probe_fails_closed() {
+    let cases = [
+        (401, "{\"error\":\"unauthorized\"}", S::BAD_GATEWAY),
+        (500, "{\"error\":\"boom\"}", S::BAD_GATEWAY),
+        (200, "not json", S::BAD_GATEWAY),
+        (503, "{\"error\":\"busy\"}", S::SERVICE_UNAVAILABLE),
+    ];
+    for (status, body, expected) in cases {
+        let (base, server) = probe_only_node(status, body).await;
+        let gw = gateway(&base, READ, &EAGER).await;
+        let error = if expected == S::BAD_GATEWAY {
+            "bad_gateway"
+        } else {
+            "node_unavailable"
+        };
+        for path in ["/public/v1/snapshot", "/public/v1/support?from=a&to=b"] {
+            assert_eq!(
+                gw.get(path).await,
+                refusal(expected, error),
+                "{status} {path}"
+            );
+        }
+        gw.stop().await;
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn requests_queued_behind_a_hung_probe_share_its_failure() {
+    let probes = Arc::new(AtomicUsize::new(0));
+    let counter = probes.clone();
+    let hang = move || {
+        let counter = counter.clone();
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            "{}"
+        }
+    };
+    let (base, server) = serve(Router::new().route("/*any", get(hang))).await;
+    let timeout = [
+        ("CC_GATEWAY_UPSTREAM_TIMEOUT_MS", "500"),
+        EAGER[0],
+        EAGER[1],
+    ];
+    let gw = gateway(&base, READ, &timeout).await;
+    let snapshot = |base: &str| {
+        let url = format!("{base}/public/v1/snapshot");
+        tokio::spawn(async move {
+            let r = http().get(url).send().await.unwrap();
+            let status = r.status();
+            let body = r.bytes().await.unwrap();
+            (status, serde_json::from_slice::<Json>(&body).unwrap())
+        })
+    };
+    let start = Instant::now();
+    let mut waiters = vec![snapshot(&gw.base)];
+    // Once the first probe is in flight, seven more requests queue behind it.
+    while probes.load(Ordering::SeqCst) == 0 {
+        assert!(start.elapsed() < Duration::from_secs(2), "no probe");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    waiters.extend((0..7).map(|_| snapshot(&gw.base)));
+    for w in waiters {
+        let answer = w.await.unwrap();
+        assert_eq!(answer, refusal(S::SERVICE_UNAVAILABLE, "node_unavailable"));
+    }
+    // The first request's probe timed out; the seven that arrived while it ran
+    // share one more probe rather than timing out one after another.
+    assert_eq!(probes.load(Ordering::SeqCst), 2);
+    assert!(
+        start.elapsed() < Duration::from_millis(2_500),
+        "{:?}",
+        start.elapsed()
     );
     gw.stop().await;
     server.abort();

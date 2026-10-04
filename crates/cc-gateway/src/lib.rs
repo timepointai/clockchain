@@ -100,6 +100,11 @@ struct Inner {
     client_ip_header: Option<HeaderName>,
     cache: Cache,
     limiter: Limiter,
+    /// Held while a digest probe is in flight. It records when the last probe
+    /// started and what it found, so every request that queued behind a probe
+    /// takes that probe's outcome, success or failure, instead of probing
+    /// again: a hung node costs the queue one timeout, not one each.
+    probing: tokio::sync::Mutex<Option<(Instant, Result<String, Failure>)>>,
 }
 
 /// Why a node read produced no answer.
@@ -148,6 +153,7 @@ impl Gateway {
             client_ip_header: config.client_ip_header.clone(),
             cache: Cache::new(config.freshness, config.cache_bytes),
             limiter: Limiter::new(config.rate_per_minute),
+            probing: tokio::sync::Mutex::new(None),
         }))
     }
 }
@@ -344,25 +350,35 @@ impl Gateway {
 
     /// The fresh digest, or one probe read shared by every waiting request.
     async fn current_digest(&self) -> Result<String, Failure> {
+        let arrived = Instant::now();
+        if let Some(d) = self.0.cache.fresh_digest(arrived) {
+            return Ok(d);
+        }
+        let mut last = self.0.probing.lock().await;
+        // A probe that started after this request arrived answers it too.
+        if let Some((started, outcome)) = last.as_ref() {
+            if *started >= arrived {
+                return outcome.clone();
+            }
+        }
         if let Some(d) = self.0.cache.fresh_digest(Instant::now()) {
             return Ok(d);
         }
-        let _one = self.0.cache.probing.lock().await;
-        if let Some(d) = self.0.cache.fresh_digest(Instant::now()) {
-            return Ok(d);
-        }
-        let probe = self.fetch(PROBE, true).await?;
-        match probe {
-            Answer {
+        let started = Instant::now();
+        let outcome = match self.fetch(PROBE, true).await {
+            Ok(Answer {
                 status: 200 | 404,
                 digest: Some(d),
                 ..
-            } => Ok(d),
-            _ => {
+            }) => Ok(d),
+            Ok(_) => {
                 tracing::warn!("node probe named no corpus digest");
                 Err(Failure::BadGateway)
             }
-        }
+            Err(f) => Err(f),
+        };
+        *last = Some((started, outcome.clone()));
+        outcome
     }
 
     /// One `GET` to the node. Only the read key and `Accept` are sent.

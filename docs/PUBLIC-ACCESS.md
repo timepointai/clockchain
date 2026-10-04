@@ -134,9 +134,11 @@ The template ([deploy/public/fly.toml](../deploy/public/fly.toml)) sets
 ## Abuse limits
 
 - **Per-client rate (GCRA).** Each client may burst to
-  `CC_GATEWAY_RATE_PER_MINUTE` requests, then sustain one per
-  `60 s / rate` (1 s at the default), never twice the limit across a window
-  boundary. It runs before the method guard and any node call.
+  `CC_GATEWAY_RATE_PER_MINUTE` requests at once, then sustain that rate, one
+  request per `60 s / rate` (1 s at the default). The sustained rate is the
+  limit; with the burst, any 60 s window holds at most `2 × rate − 1` requests
+  from one client (119 at the default). It runs before the method guard and any
+  node call.
 - **Client key.** IPv4 and IPv4-mapped IPv6 addresses are keyed by full
   address. Other IPv6 addresses are keyed by their /64.
 - **Bounded table.** At most 100000 clients are tracked. When full, idle clients
@@ -146,9 +148,12 @@ The template ([deploy/public/fly.toml](../deploy/public/fly.toml)) sets
   to the gateway machine. The node's own soft 8 / hard 16 also applies, because
   Flycast traffic goes through Fly Proxy.
 - **Body cap.** A node answer over `CC_GATEWAY_MAX_BODY_BYTES` is refused, not
-  truncated. Each in-flight answer is buffered up to that cap, so worst-case
-  memory is roughly hard limit × cap. **Owner decision:** lower the cap or raise
-  VM memory as the corpus grows.
+  truncated. Each in-flight answer is held twice while it is stripped (the
+  node's bytes and the re-emitted ones), so worst-case memory is roughly
+  2 × hard limit × cap plus `CC_GATEWAY_CACHE_BYTES`. The defaults (64 × 32 MiB,
+  64 MiB cache) exceed the template's 256 MB VM; today's snapshot is far below
+  the cap. **Owner decision:** lower the cap or raise VM memory as the corpus
+  grows.
 - **Upstream timeout.** `CC_GATEWAY_UPSTREAM_TIMEOUT_MS` bounds each node
   request, so a slow node cannot hold gateway requests open indefinitely.
 
@@ -170,11 +175,16 @@ one corpus digest, the most recently observed one.
 - **Probe.** When the current digest is older than `CC_GATEWAY_FRESHNESS_MS`, a
   corpus read first asks the node for
   `GET /v1/subjects/<64 zeros>`: no subject has that id, so the answer is 404
-  `subject_unknown` naming the digest. Concurrent requests share one probe. With
-  freshness `0`, every corpus read probes first.
+  `subject_unknown` naming the digest. One probe runs at a time, and every
+  request that arrived before a probe started takes that probe's outcome,
+  success or failure, without probing again. A request therefore waits for at
+  most the probe in flight plus one more: about two upstream timeouts against a
+  hung node, however many requests are queued. With freshness `0`, every
+  corpus read probes first.
 - **Admit visibility.** The gateway cannot see an admit. An admit is visible
-  through it at most one freshness window after it commits. Every answer names
-  its `corpus_digest`, so a client can tell which corpus it was served.
+  through it at most one freshness window after it commits. Every 200 or 404
+  corpus read names its `corpus_digest`, so a client can tell which corpus it
+  was served.
 - **Failure.** A hit needs a digest observed within the freshness window. Once
   the window lapses, a failed probe or read is 502 or 503, never a cached
   answer. Within the window (1 s by default) a hit is served without a node
@@ -183,7 +193,8 @@ one corpus digest, the most recently observed one.
   that digest is still the current generation. 400, 409 and answers without a
   digest are passed through uncached. `health` is never cached.
 - **Byte bound.** Key plus body bytes stay within `CC_GATEWAY_CACHE_BYTES`. A
-  full cache stores nothing more until the next generation; nothing is evicted.
+  full cache evicts its least recently used entries to make room; an answer
+  larger than the whole bound is not stored.
 
 ## Threat model
 
@@ -249,7 +260,8 @@ one corpus digest, the most recently observed one.
 - **Uncached reads cost the node a full fold.** Each probe and each miss is a
   full snapshot fold on the node. Varying `as_of`, subject ids or query
   spellings forces misses, bounded only by the per-IP rate, the number of
-  addresses and the two concurrency limits.
+  addresses and the two concurrency limits. A flood of distinct keys also
+  evicts popular entries, so their next reads miss too.
 - **Staleness.** Up to one freshness window after an admit, the previous
   corpus's answers may be served.
 
@@ -321,10 +333,10 @@ cache had room. Each line spends one of your own rate-limit tokens.
 
 ## Disable
 
-The **one command** that removes public ingress immediately:
+The **one command** that removes public ingress immediately, with `<ipv6>` the
+public address `fly ips list --app <public-app>` shows:
 
 ```sh
-fly ips list --app <public-app>
 fly ips release <ipv6> --app <public-app>
 ```
 

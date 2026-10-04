@@ -1,8 +1,10 @@
 //! Per-client rate limit, GCRA (the generic cell rate algorithm, a token
 //! bucket stated in exact integer time).
 //!
-//! Each client may burst to `rate_per_minute` requests and then sustain one per
-//! `60 s / rate_per_minute`, never twice the limit across a window boundary.
+//! Each client may burst to `rate_per_minute` requests at once and then
+//! sustain `rate_per_minute` a minute, one per `60 s / rate_per_minute`. The
+//! sustained rate is the limit; with the burst, any 60 s window holds at most
+//! `2 * rate_per_minute - 1` requests from one client.
 //!
 //! IPv6 clients are keyed by their /64. One subscriber usually holds a whole
 //! /64, so keying by full address would let a single client mint 2^64 fresh
