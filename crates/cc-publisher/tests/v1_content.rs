@@ -484,6 +484,88 @@ async fn edge_rules_refuse_with_the_publishers_own_checks() {
     r(&k1).unwrap();
 }
 
+/// A contested subject (two corrections of one head) has no single current
+/// reading: no pin, correction or entry edge may be built against it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn contested_endpoints_are_refused() {
+    let k = key(0x81);
+    let n = TestNode::start(vec![author(&k)]).await;
+    let a = n.genesis(&k, "forked").await;
+    let b = n.genesis(&k, "plain").await;
+    let ctx = n.context().await;
+    // Two corrections of the same head, admitted directly: a fork.
+    for text in ["Fork one.\n", "Fork two.\n"] {
+        let c = correction::build(&k, &ctx, correction_input(a, text)).unwrap();
+        let w = n.writer();
+        w.put_body(text.as_bytes()).await.unwrap();
+        let (status, outcome) = w.post_candidate(c.events[0].bytes()).await.unwrap();
+        assert_eq!((status.as_u16(), outcome.state.as_str()), (201, "valid"));
+    }
+    let snap = n.snapshot().await;
+    let reading = snap["subjects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| hash_json(&s["subject"]) == Some(a.0))
+        .cloned()
+        .unwrap();
+    assert_eq!(reading["state"], "contested", "{reading}");
+    let ctx = n.context().await;
+    let refused = |r: anyhow::Result<Packet>| {
+        let e = err(r.map(|_| ()).unwrap_err());
+        assert!(e.contains("a pin needs one resolved head"), "{e}");
+    };
+    refused(edge::build_assert(
+        &k,
+        &ctx,
+        assert_input("influence", b, a),
+    ));
+    refused(edge::build_assert(
+        &k,
+        &ctx,
+        assert_input("influence", a, b),
+    ));
+    refused(correction::build(&k, &ctx, correction_input(a, "Third.\n")));
+    // Control: the resolved subject still pins.
+    assert!(ctx.current(b.0).is_ok());
+}
+
+/// A context is the node's export, verified: a corpus digest that does not
+/// match the envelopes, a tampered envelope, another instance or another fold
+/// is refused before anything is built.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tampered_context_is_refused() {
+    let k = key(0x91);
+    let n = TestNode::start(vec![author(&k)]).await;
+    n.genesis(&k, "one").await;
+    n.genesis(&k, "two").await;
+    let (_, export, ctx) = entry_submit::fetch(&n.writer()).await.unwrap();
+    assert_eq!(ctx.events.len(), 2);
+    let refuse = |e: Value, instance: Hash, want: &str| {
+        let got = err(Context::from_export(instance, &e).map(|_| ()).unwrap_err());
+        assert!(got.contains(want), "want {want:?}, got {got:?}");
+    };
+    // One envelope dropped: the named digest no longer matches.
+    let mut dropped = export.clone();
+    dropped["envelopes"].as_array_mut().unwrap().pop();
+    refuse(dropped, INSTANCE, "corpus digest does not match");
+    let mut digest = export.clone();
+    digest["corpus_digest"] = json!(hex::encode([0u8; 32]));
+    refuse(digest, INSTANCE, "corpus digest does not match");
+    let mut flipped = export.clone();
+    let mut bytes = hex::decode(flipped["envelopes"][0].as_str().unwrap()).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    flipped["envelopes"][0] = json!(hex::encode(bytes));
+    refuse(flipped, INSTANCE, "export envelope 0");
+    refuse(export.clone(), [8; 32], "another instance");
+    let mut fold = export.clone();
+    fold["rule"]["fold_version"] = json!(2);
+    refuse(fold, INSTANCE, "fold differs");
+    // Control: the export as served loads.
+    Context::from_export(INSTANCE, &export).unwrap();
+}
+
 // ---- entry packets ----------------------------------------------------------
 
 fn seed_file(dir: &Path, byte: u8) -> PathBuf {
