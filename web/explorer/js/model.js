@@ -229,6 +229,23 @@ export function pageChecks(report, { id, asOf = null, subjectRead, proseRead = n
   return { ok: problems.length === 0, claim, problems };
 }
 
+// What a view rendered straight from the served snapshot may say about it.
+// Only a verifier report over that same snapshot changes the label, and even
+// "verified" means internal consistency under the keys the server names.
+export function snapshotStatus(report) {
+  if (!report) {
+    return { state: 'not_verified', text: 'Not verified yet: this view shows the served snapshot as served. Run “Verify in your browser” to check it.' };
+  }
+  switch (report.outcome) {
+    case 'verified':
+      return { state: 'verified', text: 'The served snapshot verified in your browser: internally consistent under the curator keys the server names. That is not proof of authorship.' };
+    case 'partial':
+      return { state: 'partial', text: 'The served snapshot partially verified in your browser: no check failed, but some could not run (for example signatures). Internal consistency only.' };
+    default:
+      return { state: 'failed', text: 'The served snapshot FAILED verification in your browser. Do not rely on this view.' };
+  }
+}
+
 export function edgeView(e, ix) {
   const label = (s) => ix.subjects.find((x) => x.id === hex(s))?.label ?? short(s);
   // Every committed edge reading has at least one head's pins; refuse rather

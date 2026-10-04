@@ -111,10 +111,18 @@ function renderIdentity() {
 
 // --- views ------------------------------------------------------------------
 
+// Views drawn straight from the served snapshot carry its verification state.
+function snapshotBanner() {
+  const st = m.snapshotStatus(state.lastReport);
+  return h('p', { class: `banner ${st.state}` }, badge(st.state.replace('_', ' '), st.state), ' ', st.text,
+    st.state === 'not_verified' ? [' ', link('#/verify', 'Verify now')] : null);
+}
+
 function subjectsView() {
   const ix = m.index(state.snapshot.json);
   return section(
     'Subjects',
+    snapshotBanner(),
     h('p', {}, `${ix.subjects.length} subjects, ${state.snapshot.json.rows.length} events in the served snapshot.`),
     h('table', {},
       h('thead', {}, h('tr', {}, ['Subject', 'Kind', 'State', 'Frontier', ''].map((t) => h('th', {}, t)))),
@@ -251,7 +259,7 @@ function edgesView() {
     h('label', {}, ' as of ', h('input', { name: 'asof', placeholder: 'optional', size: 12 })),
     h('button', { type: 'submit' }, 'Query support'),
   );
-  return h('div', {}, section('Edges', edgesTable(m.edgesView(state.snapshot.json))), section('Support query', form, out));
+  return h('div', {}, section('Edges', snapshotBanner(), edgesTable(m.edgesView(state.snapshot.json))), section('Support query', form, out));
 }
 
 function dagView(subject) {
@@ -281,6 +289,7 @@ function dagView(subject) {
     svg.append(node);
   }
   return section(subject ? 'Causal DAG for one subject' : 'Causal DAG',
+    snapshotBanner(),
     h('p', { class: 'muted' }, 'Solid arrows point from an event to its signed parents; dashed arrows from an edge event to the basis events its pins name. Ghost boxes are parents a pending event is missing. Columns are the longest parent chain; event ids order nothing.'),
     h('div', { class: 'scroll' }, svg),
     subject ? link('#/dag', 'Whole corpus') : null);
@@ -294,6 +303,7 @@ async function kindView(id) {
   const tax = await taxonomy();
   const k = m.kindView(v.ttKind(subject.key.kind), tax);
   return section(`TT kind: ${k.kind}`,
+    snapshotBanner(),
     dl([
       ['Subject', subjectLink(id, subject.label)],
       ['In the pinned taxonomy', k.valid ? 'yes' : 'no: not a node id of the pinned TT taxonomy'],
@@ -359,6 +369,7 @@ function reportView(r) {
   return h('div', {},
     h('p', { class: 'outcome' }, 'Outcome: ', badge(r.outcome),
       r.outcome === 'partial' ? ' — nothing failed, but some checks could not run (see below).' : ''),
+    h('p', { class: 'muted' }, 'Verified means internally consistent under the curator keys the server names. It does not authenticate the server or prove authorship; see “Authenticity” under What is not recomputed.'),
     h('table', {},
       h('thead', {}, h('tr', {}, ['Check', 'Result', 'Detail'].map((t) => h('th', {}, t)))),
       h('tbody', {}, r.checks.map((c) => h('tr', {}, h('td', {}, code(c.name)), h('td', {}, badge(c.status)), h('td', {}, c.detail))))),

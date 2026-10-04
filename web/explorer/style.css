@@ -35,6 +35,10 @@ blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--acce
 .badge.fail, .badge.failed, .badge.invalid, .badge.contested, .badge.conflict, .badge.edge_conflict { color: var(--fail); border-color: var(--fail); }
 .badge.not_checked, .badge.partial, .badge.pending, .badge.stale, .badge.missing, .badge.frozen { color: var(--warn); border-color: var(--warn); }
 .error { color: var(--fail); }
+.banner { padding: 4px 8px; border-left: 3px solid var(--warn); background: var(--panel); }
+.banner.verified { border-left-color: var(--pass); }
+.banner.failed { border-left-color: var(--fail); }
+.badge.not_verified { color: var(--warn); border-color: var(--warn); }
 form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 input, select, button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; max-width: 100%; }
 button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; padding: 4px 12px; }

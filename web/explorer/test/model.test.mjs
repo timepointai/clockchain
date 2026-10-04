@@ -150,3 +150,14 @@ test('a page claims prose only when every read is bound and verified', async () 
   // No prose read: nothing is claimed, but the subject read itself can be ok.
   assert.deepEqual(m.pageChecks(ok, { ...base, proseRead: null }), { ok: true, claim: false, problems: [] });
 });
+
+test('views drawn from the served snapshot are labelled by its verification state', () => {
+  assert.equal(m.snapshotStatus(null).state, 'not_verified');
+  assert.match(m.snapshotStatus(null).text, /^Not verified yet/);
+  assert.equal(m.snapshotStatus({ outcome: 'verified' }).state, 'verified');
+  assert.match(m.snapshotStatus({ outcome: 'verified' }).text, /not proof of authorship/);
+  assert.equal(m.snapshotStatus({ outcome: 'partial' }).state, 'partial');
+  assert.equal(m.snapshotStatus({ outcome: 'failed' }).state, 'failed');
+  // Anything unrecognised is treated as a failure, never as verified.
+  assert.equal(m.snapshotStatus({ outcome: 'surprise' }).state, 'failed');
+});

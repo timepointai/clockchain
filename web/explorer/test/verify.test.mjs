@@ -78,6 +78,10 @@ test('the verifier states what it does not recompute, the fold first', () => {
   assert.equal(about.fold_version.manifest, JSON.parse(health).fold_version.manifest);
   assert.match(about.not_recomputed[0], /^The fold itself\./);
   assert.match(about.not_recomputed[0], /wasm-clean projection crate, which is a future owner decision/);
+  const trust = about.not_recomputed.find((t) => t.startsWith('Authenticity.'));
+  assert.match(trust, /does not authenticate the gateway/);
+  assert.match(trust, /internal consistency/);
+  assert.match(trust, /export obtained out of band/);
 });
 
 test('TT kind path and pinned taxonomy check', async () => {

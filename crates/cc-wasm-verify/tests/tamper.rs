@@ -115,6 +115,20 @@ fn untouched_fixture_verifies_every_check() {
         s["corpus_digest"].as_str()
     );
     assert!(r.not_recomputed[0].starts_with("The fold itself."));
+    let authenticity = r
+        .not_recomputed
+        .iter()
+        .find(|t| t.starts_with("Authenticity."))
+        .expect("the trust anchor is stated");
+    for phrase in [
+        "does not authenticate the gateway",
+        "self-consistent forged corpus",
+        "internal consistency",
+        "export obtained out of band",
+        "independently published keys",
+    ] {
+        assert!(authenticity.contains(phrase), "{phrase}");
+    }
 }
 
 #[test]
@@ -439,4 +453,54 @@ fn hostile_snapshot_text_fails_without_panicking() {
         assert_eq!(r.outcome, Outcome::Failed, "{junk:.20}");
         assert_eq!(r.status("snapshot"), Some(Status::Fail), "{junk:.20}");
     }
+}
+
+/// An empty corpus is consistent with its digest and commitment, built here by
+/// the ledger itself, but nothing in it was verified: never `verified`.
+#[test]
+fn empty_corpus_is_nothing_to_verify_not_a_pass() {
+    let filter = cc_testkit::v1::filter();
+    let s = cc_ledger::v1::Snapshot::of(&filter, &Default::default());
+    let h = |x: [u8; 32]| hex::encode(x);
+    let snapshot = json!({
+        "rule": {
+            "fold_version": s.rule.fold_version,
+            "fold_manifest": h(s.rule.fold_manifest),
+            "filter_version": h(s.rule.filter_version),
+        },
+        "corpus_digest": h(s.corpus_digest),
+        "commitment": h(s.commitment),
+        "rows": [], "subjects": [], "revisions": [], "edges": [], "media": [],
+        "authority": {
+            "grants": [], "active": [], "tombstones": [],
+            "effective_revokes": [], "canceled": [], "effects": [],
+        },
+    });
+    let export = json!({
+        "encoding": 1,
+        "rule": {
+            "fold_version": s.rule.fold_version,
+            "fold_manifest": s.rule.fold_manifest,
+            "filter_version": s.rule.filter_version,
+        },
+        "corpus_digest": s.corpus_digest,
+        "commitment": s.commitment,
+        "envelopes": [],
+    });
+    let r = verify(&Input {
+        health: HEALTH.into(),
+        snapshot: snapshot.to_string(),
+        export: Some(export.to_string()),
+        reads: vec![],
+    });
+    assert_eq!(r.outcome, Outcome::Partial, "{r:#?}");
+    let e = r.check("event_ids").unwrap();
+    assert_eq!(e.status, Status::NotChecked);
+    assert_eq!(e.detail, "0 events: nothing to verify");
+    assert_eq!(r.status("corpus_digest"), Some(Status::Pass));
+    assert_eq!(r.status("view_commitment"), Some(Status::Pass));
+    let sig = r.check("signatures").unwrap();
+    assert_eq!(sig.status, Status::NotChecked);
+    assert_eq!(sig.detail, "0 signed envelopes: nothing to verify");
+    assert_eq!(r.recomputed.events, 0);
 }

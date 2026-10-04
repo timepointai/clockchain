@@ -54,6 +54,7 @@ await page.goto(base);
 await page.waitForSelector('main table');
 const subjects = await page.$$eval('main tbody tr', (rows) => rows.length);
 expect(subjects === 3, 'subjects list shows the 3 fixture subjects');
+expect((await page.textContent('main .banner')).includes('Not verified yet'), 'the subjects view is labelled not verified before a run');
 await page.click('text=synthetic/harbour-press');
 await page.waitForSelector('blockquote');
 const claim = await page.textContent('blockquote');
@@ -129,6 +130,9 @@ await page.uncheck('input[name=recorded]');
 await page.click('button.primary');
 await page.waitForFunction(() => document.querySelector('#verify-result .outcome .badge')?.textContent === 'partial');
 expect(true, 'without an export the outcome is partial');
+await page.goto(`${base}#/dag`);
+await page.waitForSelector('main .banner');
+expect((await page.getAttribute('main .banner', 'class')).includes('partial'), 'after a partial run the DAG view is labelled partial');
 await page.screenshot({ path: path.join(explorer, 'dist', 'verify.png'), fullPage: true });
 
 await browser.close();

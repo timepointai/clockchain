@@ -45,9 +45,21 @@
 //! Re-running the fold in the browser needs a wasm-clean projection crate,
 //! which is a future owner decision; see [`NOT_RECOMPUTED`].
 //!
-//! The verifier also cannot know whether the served curator keys are the ones
-//! the owner intended, nor whether a node withheld candidates it never served:
-//! it proves that what was served is self-consistent and is what was committed.
+//! # Trust anchor
+//!
+//! The verifier does not authenticate the server or the origin of the corpus.
+//! `/health`, the rule, the curator keys, the corpus digest and the commitment
+//! all come from the same server. Without a signed export the envelopes'
+//! signatures are unchecked, so a hostile server can serve a fully
+//! self-consistent forged corpus under curator keys it names and still reach
+//! `partial`. Even `verified` (with an export) means internal consistency under
+//! the keys the server names. Authorship needs an export obtained out of band
+//! and the served curator keys compared with the owner's independently
+//! published keys. Nor can the verifier know whether a node withheld
+//! candidates it never served.
+//!
+//! An empty corpus is reported as `not_checked` ("nothing to verify"), never
+//! as a pass; so is an export with no envelopes.
 use cc_core::v1::receipt::FoldRef;
 use cc_core::v1::rule::{corpus_digest, fold_v1, view_commitment};
 use cc_core::v1::{hash, Hash, Signed};
@@ -63,7 +75,7 @@ mod wasm;
 pub const NOT_RECOMPUTED: &[&str] = &[
     "The fold itself. Admission states and reasons, frontiers, revision selection, authority, subject readings, edge and media readings are checked only for consistency with the view commitment; they are not re-derived from the envelopes. Re-running fold_version 1 in the browser needs a wasm-clean projection crate, which is a future owner decision.",
     "Support verdicts. A support read is checked only for naming the verified rule, corpus digest and commitment; its path search and as_of exclusions are not recomputed. (A subject read's as_of visibility is recomputed, from the verified rows.)",
-    "Whether the served curator keys and max_hops are the owner's intended identity. filter_version is recomputed from them; compare the keys with the owner's published keys yourself.",
+    "Authenticity. The verifier does not authenticate the gateway or the origin of the corpus: health, rule, curator keys, corpus digest and commitment all come from the same server. Without a signed export the row envelopes' signatures are unchecked, so a hostile server can serve a fully self-consistent forged corpus under curator keys it names and still reach partial. Even verified, with an export, means internal consistency under the keys the server names, and nothing more. Authorship needs an export obtained out of band and the served curator keys (and max_hops) compared with the owner's independently published keys.",
     "Completeness. The corpus digest proves which candidates the commitment covers, not that the node served every candidate it holds.",
 ];
 
@@ -373,15 +385,26 @@ fn run(c: &mut Checks, r: &mut Recomputed, input: &Input) {
         ids.insert(row.event);
     }
     r.events = s.rows.len();
-    let ids_ok = c.expect(
-        "event_ids",
-        bad.is_empty(),
-        format!(
-            "{} envelopes re-encode to their canonical event ids, strictly ascending",
-            s.rows.len()
-        ),
-        format!("{} of {} rows: {}", bad.len(), s.rows.len(), bad.join("; ")),
-    );
+    let ids_ok = if s.rows.is_empty() {
+        // An empty corpus is consistent with its digest and commitment, but
+        // nothing in it was verified; it never reads as a pass.
+        c.push(
+            "event_ids",
+            Status::NotChecked,
+            "0 events: nothing to verify",
+        );
+        true
+    } else {
+        c.expect(
+            "event_ids",
+            bad.is_empty(),
+            format!(
+                "{} envelopes re-encode to their canonical event ids, strictly ascending",
+                s.rows.len()
+            ),
+            format!("{} of {} rows: {}", bad.len(), s.rows.len(), bad.join("; ")),
+        )
+    };
 
     let corpus = corpus_digest(&ids);
     r.corpus_digest = ids_ok.then(|| hex::encode(corpus));
@@ -485,6 +508,13 @@ fn signatures(
             .iter()
             .all(|row| decoded.get(&row.event).map(|e| e.envelope()) == Some(&row.envelope));
     r.signatures = if same { decoded.len() } else { 0 };
+    if same && decoded.is_empty() {
+        return c.push(
+            "signatures",
+            Status::NotChecked,
+            "0 signed envelopes: nothing to verify",
+        );
+    }
     c.expect(
         "signatures",
         same,

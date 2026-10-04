@@ -64,6 +64,21 @@ the browser needs a wasm-clean projection crate, which is a future owner
 decision. The page shows the module's own statement of these limits
 (`cc_about`), not a paraphrase.
 
+**Trust anchor.** The verifier does not authenticate the gateway or the
+origin of the corpus: `/health`, the rule, the curator keys, the corpus digest
+and the commitment all come from the same server. Without a signed export the
+envelopes' signatures are unchecked, so a hostile server can serve a fully
+self-consistent forged corpus under curator keys it names and still reach
+**partial**. Even **verified** (with an export) means internal consistency
+under the keys the server names. Authorship needs an export obtained out of
+band, and the served curator keys compared with the owner's independently
+published keys. An empty corpus, or an export with no envelopes, is reported as
+**not checked** ("nothing to verify"), never as a pass.
+
+The Subjects, Causal DAG, Edges and TT views render the served snapshot
+directly and carry a banner with its verification state: "Not verified yet"
+until a run, then that run's outcome for the same snapshot.
+
 The verifier is only as independent as the module you run. To check with your
 own build, run `cargo build -p cc-wasm-verify --target
 wasm32-unknown-unknown --release` from source and load the `.wasm` through the
