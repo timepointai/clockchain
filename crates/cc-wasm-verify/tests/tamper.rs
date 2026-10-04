@@ -343,3 +343,78 @@ fn mirror_reproduces_the_pinned_ledger_rows_vector() {
     );
     assert_eq!(hex::encode(commitment), v["view_commitment"]);
 }
+
+const SUBJECT_A_BEFORE: &str = fixture!("subjects/3747936fc819642242de14b93f084f0e4f498cabb05ec218ac20653ff06d00d1.as_of.7fffffffffffffffffffffffffffffffffffffff461a85c00000000000000000.json");
+
+fn with_read(kind: &str, body: String) -> Report {
+    verify(&Input {
+        reads: vec![read(kind, &body)],
+        ..input()
+    })
+}
+
+#[test]
+fn subject_read_visibility_is_recomputed() {
+    // Recorded from the node: the current revision is asserted after as_of.
+    let r = with_read("subject", SUBJECT_A_BEFORE.into());
+    assert_eq!(r.outcome, Outcome::Verified, "{r:#?}");
+    assert_eq!(parse(SUBJECT_A_BEFORE)["visibility"], "after_as_of");
+    // A current read that hides its head revision fails.
+    fails(
+        &with_read("subject", edit(SUBJECT_A, |v| v["revision"] = Value::Null)),
+        "read:subject",
+    );
+    fails(
+        &with_read(
+            "subject",
+            edit(SUBJECT_A, |v| v["visibility"] = "after_as_of".into()),
+        ),
+        "read:subject",
+    );
+    // Claiming visibility before the asserted day fails; so does showing the
+    // revision while saying it is hidden.
+    let current = parse(SUBJECT_A)["revision"].clone();
+    fails(
+        &with_read(
+            "subject",
+            edit(SUBJECT_A_BEFORE, |v| {
+                v["visibility"] = "visible".into();
+                v["revision"] = current.clone();
+            }),
+        ),
+        "read:subject",
+    );
+    fails(
+        &with_read(
+            "subject",
+            edit(SUBJECT_A_BEFORE, |v| v["revision"] = current.clone()),
+        ),
+        "read:subject",
+    );
+    // An unknown subject must carry the empty reading.
+    let unknown = edit(SUBJECT_A, |v| {
+        v["subject"] = "00".repeat(32).into();
+    });
+    fails(&with_read("subject", unknown), "read:subject");
+}
+
+#[test]
+fn repeated_fields_are_refused_not_collapsed() {
+    // The last value is the original, so a last-wins parser would accept it.
+    let tampered_first = SNAPSHOT.replacen(
+        "\"commitment\":",
+        &format!("\"commitment\":\"{}\",\"commitment\":", "00".repeat(32)),
+        1,
+    );
+    assert_ne!(tampered_first, SNAPSHOT);
+    let r = verify(&Input {
+        snapshot: tampered_first,
+        ..input()
+    });
+    fails(&r, "snapshot");
+    assert!(r
+        .check("snapshot")
+        .unwrap()
+        .detail
+        .contains("duplicate field"));
+}

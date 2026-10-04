@@ -1,6 +1,6 @@
-// The /public/v1 client. Every call returns `{status, text, json}`: the exact
-// response text is kept because the verifier checks the bytes that were
-// served, not a re-encoding of them.
+// The /public/v1 client. Every call returns `{status, ok, text, json}`. The
+// response text is kept and handed to the verifier as served, so the values it
+// checks are the values the page displays (it compares JSON values, not bytes).
 //
 // Fixture mode reads a recorded synthetic fixture instead of a gateway. It
 // answers only the requests that were recorded; anything else is a 404 with
@@ -24,12 +24,15 @@ export function client({ base = '/public/v1', fixture = null, fetchImpl = global
     return s ? `?${s}` : '';
   };
   if (fixture !== null) {
-    const f = (path) => get(`${fixture}/${path}`);
+    const f = async (path) => {
+      const r = await get(`${fixture}/${path}`);
+      return r.status === 404 ? notRecorded() : r;
+    };
     return {
       mode: 'fixture',
       health: () => f('health.json'),
       snapshot: () => f('snapshot.json'),
-      subject: (id, asOf = null) => (asOf ? notRecorded() : f(`subjects/${id}.json`)),
+      subject: (id, asOf = null) => f(asOf ? `subjects/${id}.as_of.${asOf}.json` : `subjects/${id}.json`),
       prose: (rev) => f(`revisions/${rev}/prose.json`),
       support: (from, to, asOf = null) => (asOf ? notRecorded() : f(`support/${from}-${to}.json`)),
       export: () => f('export.json'),

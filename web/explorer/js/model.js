@@ -106,8 +106,7 @@ export function renderAssertedTime(t) {
   else if (t.precision === 'month' && d === 1n) text = `${yy}-${mm}`;
   else if (t.precision === 'day') text = `${yy}-${mm}-${dd}`;
   else return null;
-  const back = parseAssertedTime(text);
-  return back && back.coordinate === c && back.precision === t.precision ? text : null;
+  return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +206,9 @@ export function subjectView(snapshot, id, read) {
 
 export function edgeView(e, ix) {
   const label = (s) => ix.subjects.find((x) => x.id === hex(s))?.label ?? short(s);
+  // Every committed edge reading has at least one head's pins; refuse rather
+  // than guess when one does not.
+  if (!e.pins.length) throw new Error('edge reading without pins');
   const p = e.pins[0];
   return {
     id: hex(e.edge),
@@ -286,20 +288,27 @@ export function dag(snapshot, subject = null) {
       if (nodes.has(b)) links.push({ from: id, to: b, type: 'pin' });
     }
   }
+  // Longest parent chain, iteratively (Kahn's order over child -> parent
+  // links), so a deep chain cannot exhaust the call stack.
+  const out = new Map([...nodes.keys()].map((id) => [id, []]));
+  const pending = new Map([...nodes.keys()].map((id) => [id, 0]));
+  for (const l of links) {
+    out.get(l.from).push(l.to);
+    pending.set(l.from, pending.get(l.from) + 1);
+  }
+  const into = new Map([...nodes.keys()].map((id) => [id, []]));
+  for (const l of links) into.get(l.to).push(l.from);
   const depth = new Map();
-  const visiting = new Set();
-  const out = new Map();
-  for (const l of links) out.set(l.from, [...(out.get(l.from) ?? []), l.to]);
-  const d = (id) => {
-    if (depth.has(id)) return depth.get(id);
-    if (visiting.has(id)) throw new Error('cycle in served parents');
-    visiting.add(id);
-    const v = Math.max(-1, ...(out.get(id) ?? []).map(d)) + 1;
-    visiting.delete(id);
-    depth.set(id, v);
-    return v;
-  };
-  for (const id of nodes.keys()) d(id);
+  const ready = [...nodes.keys()].filter((id) => pending.get(id) === 0);
+  while (ready.length) {
+    const id = ready.pop();
+    depth.set(id, Math.max(-1, ...out.get(id).map((p) => depth.get(p))) + 1);
+    for (const child of into.get(id)) {
+      pending.set(child, pending.get(child) - 1);
+      if (pending.get(child) === 0) ready.push(child);
+    }
+  }
+  if (depth.size !== nodes.size) throw new Error('cycle in served parents');
   const lanes = new Map();
   const ordered = [...nodes.values()].sort((a, b) => depth.get(a.id) - depth.get(b.id) || (a.id < b.id ? -1 : 1));
   for (const n of ordered) {

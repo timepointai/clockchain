@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Assemble the static explorer into web/explorer/dist. Local only: it runs
-# cargo against the workspace (no network beyond what cargo already cached)
-# and copies files. The page loads nothing from any CDN.
+# Assemble the static explorer into web/explorer/dist. Local only: cargo runs
+# with --locked --offline (run `cargo fetch --locked` once beforehand if the
+# crates are not cached yet), then files are copied. The page loads nothing
+# from any CDN.
 #
 #   web/explorer/build.sh [--api-base URL] [--fixture]
 #
@@ -28,13 +29,14 @@ esac
 case "$api_base" in *[\"\<\>\'\ ]*) echo "--api-base contains a forbidden character" >&2; exit 2 ;; esac
 
 cargo build --manifest-path "$root/Cargo.toml" -p cc-wasm-verify \
-  --target wasm32-unknown-unknown --release
+  --target wasm32-unknown-unknown --release --locked --offline
+target="${CARGO_TARGET_DIR:-$root/target}"
 dist="$here/dist"
 rm -rf "$dist"
 mkdir -p "$dist/js"
 cp "$here/style.css" "$dist/"
 cp "$here"/js/*.js "$dist/js/"
-cp "$root/target/wasm32-unknown-unknown/release/cc_wasm_verify.wasm" "$dist/"
+cp "$target/wasm32-unknown-unknown/release/cc_wasm_verify.wasm" "$dist/"
 cp "$root/vendor/tt/taxonomy-v2.1.json" "$dist/"
 sed -e "s#connect-src 'self'#connect-src $connect#" \
     -e "s#name=\"cc-api-base\" content=\"/public/v1\"#name=\"cc-api-base\" content=\"$api_base\"#" \

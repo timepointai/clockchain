@@ -17,9 +17,13 @@ origin at runtime. The page is plain ES modules, one stylesheet, the verifier's
 | Causal DAG, whole corpus or one subject | `#/dag`, `#/dag/{id}` | `snapshot` |
 | Edges and support query | `#/edges` | `snapshot`, `support?from=&to=&as_of=` |
 | TT kind path of a subject's kind | `#/kind/{id}` | verifier tables, `taxonomy-v2.1.json` |
-| Verify in your browser | `#/verify` | `health`, `snapshot`, subject and prose reads |
+| Verify in your browser | `#/verify` | `health`, `snapshot`, optional export file |
 
-Served strings reach the page only as text nodes and attribute values. Asserted
+Every page that displays a subject, prose or support read also passes that
+read's exact response text, with the snapshot, to the verifier and shows the
+result next to it: displayed prose is marked as hashing to its committed body
+only when that check passed. Served strings reach the page only as text nodes
+and attribute values. Asserted
 times are rendered from their coordinates (proleptic Gregorian, astronomical
 years, the publisher's `--asserted-time` mapping) for display and to build
 `as_of` queries; the node decides visibility.
@@ -37,12 +41,18 @@ The module recomputes, from the served text:
   `fold_version` 1 and the pinned TT taxonomy hash;
 - the view commitment, over the canonical `cc.view-rows.json.v1` bytes rebuilt
   from the served snapshot;
-- that subject and prose reads agree with the verified snapshot, and that served
-  prose hashes to its revision's body.
+- on each page, that the reads shown name the snapshot's rule, corpus digest and
+  commitment; a subject read's state, frontier, `as_of` visibility and revision
+  are recomputed from the snapshot rows, and served prose must hash to its
+  revision's body.
+
+The served snapshot is parsed strictly (no unknown or repeated fields) and
+compared with its canonical re-encoding as JSON values; whitespace, key order
+and string escapes are not part of the commitment and are not checked.
 
 It does **not** re-run the fold. Admission states, frontiers, revision
-selection, authority, edge and media readings, support verdicts and `as_of`
-visibility are checked only for consistency with the commitment. A node that
+selection, authority, edge and media readings, and support verdicts (with
+their `as_of` exclusions) are checked only for consistency with the commitment. A node that
 folded wrongly but committed to its wrong rows passes. Re-running the fold in
 the browser needs a wasm-clean projection crate, which is a future owner
 decision. The page shows the module's own statement of these limits
@@ -74,7 +84,8 @@ node --test web/explorer/test/*.test.mjs   # CI runs this
 web/explorer/build.sh --fixture && node web/explorer/test/browser-smoke.mjs  # local, needs Playwright
 ```
 
-`fixtures/synthetic/` is recorded from the real v1 node over PostgreSQL by
+`browser-smoke.mjs` also serves a tampered prose response and requires the
+page to flag it. `fixtures/synthetic/` is recorded from the real v1 node over PostgreSQL by
 `crates/cc-wasm-verify/tests/fixture.rs`, which fails whenever the node would
 now serve something different. Re-record with
 `CC_RECORD_FIXTURE=1 cargo test -p cc-wasm-verify --test fixture`. All of it is

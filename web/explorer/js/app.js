@@ -43,6 +43,31 @@ function refusal(r) {
   return h('p', { class: 'error' }, `The read was refused: ${why}.`);
 }
 
+// Cross-check the reads this page is about to display against the served
+// snapshot, in the verifier, using the exact response texts that are shown.
+// Snapshot-level checks run too, so a failing commitment is never hidden
+// behind a passing read.
+async function checkReads(reads) {
+  try {
+    const v = await verifier();
+    const r = v.verify({ health: state.health.text, snapshot: state.snapshot.text, reads });
+    if (r.error) throw new Error(r.error);
+    return r;
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+const SNAPSHOT_CHECKS = ['health', 'fold_version', 'filter_version', 'snapshot', 'snapshot_rule', 'canonical_form', 'event_ids', 'corpus_digest', 'view_commitment'];
+function readStatus(report) {
+  if (report.error) return h('p', { class: 'check' }, badge('not_checked'), ` Reads on this page were not checked: ${report.error}.`);
+  const bad = report.checks.filter((c) => c.status === 'fail' && SNAPSHOT_CHECKS.includes(c.name));
+  const reads = report.checks.filter((c) => c.name.startsWith('read:'));
+  return h('div', { class: 'check' },
+    bad.length ? h('p', {}, badge('fail'), ` The served snapshot does not verify (${bad.map((c) => c.name).join(', ')}); nothing below is consistent with a commitment.`) : null,
+    h('ul', {}, reads.map((c) => h('li', {}, badge(c.status), ' ', code(c.name), ' ', c.detail))),
+  );
+}
+
 async function load(force = false) {
   if (!force && state.snapshot) return;
   const [health, snapshot] = await Promise.all([api.health(), api.snapshot()]);
@@ -111,8 +136,13 @@ async function subjectView(id, asOf) {
   if (!read.ok && read.status !== 404) return refusal(read);
   const v = m.subjectView(state.snapshot.json, id, read.json);
   if (!v) return h('p', { class: 'error' }, 'This subject is not in the served snapshot.');
-  const prose = v.current ? await api.prose(v.current) : null;
+  const prose = m.isHex32(v.current) ? await api.prose(v.current) : null;
   const current = v.revisions.find((r) => r.current);
+  const checked = await checkReads([
+    { kind: 'subject', body: read.text },
+    ...(prose ? [{ kind: 'prose', body: prose.text }] : []),
+  ]);
+  const proseOk = checked.checks?.some((c) => c.name === 'read:prose' && c.status === 'pass');
   const asOfForm = h('form', { class: 'inline', onsubmit: (e) => {
     e.preventDefault();
     const t = e.target.elements.asof.value.trim();
@@ -136,12 +166,15 @@ async function subjectView(id, asOf) {
         ['Causal DAG', link(`#/dag/${v.id}`, 'events and parents')],
       ]),
       asOfForm,
+      readStatus(checked),
     ),
     section('Claim',
       !current ? h('p', {}, read.json?.visibility === 'visible' ? 'No current revision.' : `No visible revision (${read.json?.visibility ?? 'unknown'}).`) :
       h('div', {},
         prose?.json?.availability === 'available'
-          ? h('blockquote', {}, prose.json.prose)
+          ? h('div', {},
+            h('blockquote', {}, prose.json.prose),
+            h('p', { class: 'muted' }, proseOk ? 'This text hashes to the committed body (checked in your browser).' : 'This text was NOT confirmed against the committed body; see the checks below.'))
           : h('p', { class: 'muted' }, `Prose ${prose?.json?.availability ?? 'unavailable'}; the claim is committed by its body hash.`),
         dl([
           ['Asserted time', current.assertedTime ? h('span', {}, current.assertedTime.calendar ?? 'non-calendar coordinate', ` (${current.assertedTime.precision}) `, hash(current.assertedTime.coordinate)) : 'none'],
@@ -201,11 +234,13 @@ function edgesView() {
     const r = await api.support(f.from.value, f.to.value, p?.coordinate ?? null);
     if (!r.ok) return void out.replaceChildren(refusal(r));
     const s = m.supportView(r.json, state.snapshot.json);
+    const checked = await checkReads([{ kind: 'support', body: r.text }]);
     out.replaceChildren(
       h('p', {}, 'Verdict: ', badge(s.verdict), s.asOf ? ` as of ${m.short(s.asOf)}` : ''),
       s.path.length ? h('ol', {}, s.path.map((e) => h('li', {}, `${e.relation}: `, e.sourceLabel ?? '', ' – ', e.targetLabel ?? '', ' ', hash(e.id)))) : null,
       s.reasons.length ? h('ul', {}, s.reasons.map((x) => h('li', {}, code(x.code), x.edge ? [' edge ', hash(x.edge)] : '', x.subject ? [' subject ', hash(x.subject)] : ''))) : null,
-      h('p', { class: 'muted' }, 'Support verdicts are derived by the node’s fold; the in-browser verifier checks only that this read names the verified commitment.'),
+      readStatus(checked),
+      h('p', { class: 'muted' }, 'The verdict is derived by the node’s fold and is not recomputed here; the check above confirms only that this read names the served snapshot’s rule, corpus digest and commitment.'),
     );
   } },
     h('label', {}, 'From ', options('from', 0)), h('label', {}, ' to ', options('to', 1)),
@@ -283,18 +318,9 @@ function verifyView() {
       await load(true);
       let exportText = exportInput.files[0] ? await exportInput.files[0].text() : null;
       if (!exportText && useRecorded?.querySelector('input').checked) exportText = (await api.export()).text;
-      const reads = [];
-      for (const s of state.snapshot.json.subjects.slice(0, 50)) {
-        const id = m.hex(s.subject);
-        const r = await api.subject(id);
-        if (r.text) reads.push({ kind: 'subject', body: r.text });
-        const cur = r.json?.revision ? m.hex(r.json.revision.id) : null;
-        if (cur) {
-          const p = await api.prose(cur);
-          if (p.ok) reads.push({ kind: 'prose', body: p.text });
-        }
-      }
-      const report = v.verify({ health: state.health.text, snapshot: state.snapshot.text, export: exportText, reads });
+      // Two requests: health and snapshot. Subject, prose and support reads are
+      // checked on the page that displays them, from the same response text.
+      const report = v.verify({ health: state.health.text, snapshot: state.snapshot.text, export: exportText, reads: [] });
       if (report.error) throw new Error(report.error);
       state.lastReport = report;
       renderIdentity();
@@ -305,7 +331,7 @@ function verifyView() {
   };
   return h('div', {},
     section('Verify in your browser',
-      h('p', {}, 'The verifier is the cc-wasm-verify WebAssembly module, built from the same cc-core and cc-filter code the node runs. It imports nothing from the page and makes no requests; the page fetches the documents and passes their exact text in.'),
+      h('p', {}, 'The verifier is the cc-wasm-verify WebAssembly module, built from the same cc-core and cc-filter code the node runs. It imports nothing from the page and makes no requests; the page fetches /health and /snapshot and passes their text in. Every subject, prose and support read is also checked against this snapshot on the page that displays it.'),
       h('form', { onsubmit: run },
         h('p', {}, h('label', {}, 'Export manifest (optional, for signatures): ', exportInput)),
         useRecorded ? h('p', {}, useRecorded) : null,

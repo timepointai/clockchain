@@ -21,18 +21,23 @@
 //! - **View commitment.** The served projection is rearranged into the
 //!   canonical `cc.view-rows.json.v1` bytes, and the commitment is recomputed
 //!   from those bytes, the recomputed `filter_version` and the recomputed corpus
-//!   digest. The served document must equal its canonical re-encoding, so no
-//!   field outside the commitment can ride along.
+//!   digest. The served document is parsed strictly (no unknown or repeated
+//!   fields) and must equal its canonical re-encoding as JSON values, so no
+//!   field outside the commitment can ride along. The comparison is over
+//!   values, not bytes: whitespace, key order and string escapes in the served
+//!   text are not committed and are not checked.
 //! - **Reads.** Subject, prose and support reads must name the verified rule,
-//!   corpus digest and commitment. A subject read must agree with the snapshot's
-//!   subject reading and revision; served prose must hash to its revision's body.
+//!   corpus digest and commitment. A subject read's state, frontier, `as_of`
+//!   visibility and revision are recomputed from the verified rows; served
+//!   prose must hash to its revision's committed body.
 //!
 //! # What is NOT recomputed
 //!
 //! The fold. This crate does not re-run `fold_version` 1 over the envelopes.
 //! Admission states and reasons, frontiers, revision selection, authority,
-//! subject readings, edge and media readings, support verdicts and `as_of`
-//! visibility are checked only for consistency with the view commitment: they
+//! subject readings, edge and media readings, and support verdicts with their
+//! `as_of` exclusions are checked only for consistency with the view
+//! commitment: they
 //! are the rows the node committed to, not rows this verifier derived. A node
 //! that folded wrongly but committed to its wrong rows passes every check here.
 //! Re-running the fold in the browser needs a wasm-clean projection crate,
@@ -55,7 +60,7 @@ mod wasm;
 /// What this verifier does not recompute, for the report and the UI.
 pub const NOT_RECOMPUTED: &[&str] = &[
     "The fold itself. Admission states and reasons, frontiers, revision selection, authority, subject readings, edge and media readings are checked only for consistency with the view commitment; they are not re-derived from the envelopes. Re-running fold_version 1 in the browser needs a wasm-clean projection crate, which is a future owner decision.",
-    "Support verdicts and as_of visibility. Both are derived from the fold; a support read is checked only for naming the verified rule, corpus digest and commitment.",
+    "Support verdicts. A support read is checked only for naming the verified rule, corpus digest and commitment; its path search and as_of exclusions are not recomputed. (A subject read's as_of visibility is recomputed, from the verified rows.)",
     "Whether the served curator keys and max_hops are the owner's intended identity. filter_version is recomputed from them; compare the keys with the owner's published keys yourself.",
     "Completeness. The corpus digest proves which candidates the commitment covers, not that the node served every candidate it holds.",
 ];
@@ -307,14 +312,14 @@ fn run(c: &mut Checks, r: &mut Recomputed, input: &Input) {
     };
     r.filter_version = Some(hex::encode(filter_version));
 
-    let served: serde_json::Value = match serde_json::from_str(&input.snapshot) {
-        Ok(v) => v,
-        Err(e) => return c.fail("snapshot", format!("snapshot is not JSON: {e}")),
-    };
-    let s: rows::Snapshot = match serde_json::from_value(served.clone()) {
+    // Typed straight from the text, so a repeated field is refused rather than
+    // collapsed to one of its values.
+    let s: rows::Snapshot = match serde_json::from_str(&input.snapshot) {
         Ok(s) => s,
         Err(e) => return c.fail("snapshot", format!("snapshot is not a v1 snapshot: {e}")),
     };
+    let served: serde_json::Value =
+        serde_json::from_str(&input.snapshot).expect("parsed as a snapshot above");
     c.pass(
         "snapshot",
         format!(
@@ -341,7 +346,7 @@ fn run(c: &mut Checks, r: &mut Recomputed, input: &Input) {
     c.expect(
         "canonical_form",
         canonical == served,
-        "the served snapshot equals its canonical re-encoding".into(),
+        "the served snapshot equals its canonical re-encoding as JSON values".into(),
         "the served snapshot carries values outside its canonical encoding".into(),
     );
 
@@ -494,6 +499,7 @@ struct Named {
 }
 #[derive(Deserialize)]
 struct SubjectRead {
+    as_of: Option<String>,
     subject: String,
     state: String,
     frontier: Vec<String>,
@@ -538,11 +544,24 @@ fn check_read(c: &mut Checks, read: &Read, s: &rows::Snapshot, snapshot_ok: bool
     }
 }
 
+/// The subject read the verified snapshot implies, recomputed: the reading's
+/// state and frontier, and the `as_of` visibility rule (the current revision
+/// is visible only when its asserted coordinate is at or before `as_of`; an
+/// unknown asserted time is not visible). This is the node's
+/// `Snapshot::visibility`, over the verified rows.
 fn subject_read(body: &str, s: &rows::Snapshot) -> Result<String, String> {
     let read: SubjectRead = serde_json::from_str(body).map_err(|e| e.to_string())?;
     let id = hex32(&read.subject).ok_or("subject is not hex")?;
+    let as_of = match &read.as_of {
+        None => None,
+        Some(h) => Some(hex32(h).ok_or("as_of is not hex")?),
+    };
     let Some(reading) = s.subjects.iter().find(|x| x.subject == id) else {
-        return if read.visibility == "subject_unknown" && read.revision.is_none() {
+        return if read.visibility == "subject_unknown"
+            && read.state.is_empty()
+            && read.frontier.is_empty()
+            && read.revision.is_none()
+        {
             Ok(format!(
                 "{} is unknown to the verified snapshot",
                 read.subject
@@ -555,19 +574,36 @@ fn subject_read(body: &str, s: &rows::Snapshot) -> Result<String, String> {
     if read.state != reading.state || read.frontier != frontier {
         return Err("state or frontier differs from the verified snapshot".into());
     }
-    if let Some(rev) = &read.revision {
-        // A served revision must be the one the snapshot's single head selects.
-        let head = (reading.frontier.len() == 1)
-            .then(|| s.rows.iter().find(|r| r.event == reading.frontier[0]))
-            .flatten()
-            .and_then(|r| r.revision);
-        if head != Some(rev.id) || !s.revisions.contains(rev) {
-            return Err("revision is not the verified snapshot's current revision".into());
-        }
+    let (visibility, revision) = if reading.state != "resolved" {
+        (reading.state.clone(), None)
+    } else {
+        let current = s
+            .rows
+            .iter()
+            .find(|r| Some(&r.event) == reading.frontier.first())
+            .and_then(|r| r.revision)
+            .and_then(|id| s.revisions.iter().find(|r| r.id == id))
+            .ok_or("the verified snapshot has no revision for its head")?;
+        let visibility = match (as_of, &current.asserted_time) {
+            (None, _) => "visible",
+            (Some(_), None) => "asserted_time_unknown",
+            (Some(q), Some(t)) if t.coordinate > q => "after_as_of",
+            _ => "visible",
+        };
+        (
+            visibility.to_string(),
+            (visibility == "visible").then_some(current),
+        )
+    };
+    if read.visibility != visibility || read.revision.as_ref() != revision {
+        return Err(format!(
+            "visibility {} and its revision differ from the verified snapshot's ({visibility})",
+            read.visibility
+        ));
     }
     Ok(format!(
-        "state {} and frontier match the verified snapshot; visibility {} is derived from the fold",
-        read.state, read.visibility
+        "state {}, frontier, visibility {visibility} and revision recomputed from the verified snapshot",
+        read.state
     ))
 }
 

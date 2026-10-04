@@ -297,6 +297,15 @@ fn routes(c: &Corpus, snapshot: &Value) -> Vec<(String, String)> {
     for s in [c.a, c.b] {
         let h = hex::encode(s);
         out.push((format!("subjects/{h}.json"), format!("/v1/subjects/{h}")));
+        // Before, on and after the current revision's asserted day, so the
+        // verifier's as_of visibility is checked against the node's.
+        for (y, m, d) in [(1901, 3, 4), (1901, 3, 5), (1903, 1, 1)] {
+            let q = hex::encode(day(y, m, d).coordinate);
+            out.push((
+                format!("subjects/{h}.as_of.{q}.json"),
+                format!("/v1/subjects/{h}?as_of={q}"),
+            ));
+        }
     }
     for r in snapshot["revisions"].as_array().unwrap() {
         let id: Vec<u8> = serde_json::from_value(r["id"].clone()).unwrap();
@@ -381,6 +390,26 @@ async fn recorded_fixture_is_what_the_node_serves_and_verifies() {
         assert_eq!(status, 200, "{path}");
         recorded.push((file, body));
     }
+    // The as_of reads exercise both answers of the visibility rule.
+    let mut visibility: Vec<(String, String)> = recorded
+        .iter()
+        .filter(|(f, _)| f.contains(".as_of."))
+        .map(|(f, b)| {
+            let v: Value = serde_json::from_slice(b).unwrap();
+            let day = &f[f.len() - 69..f.len() - 5];
+            (
+                day.to_string(),
+                v["visibility"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    visibility.sort();
+    let after = visibility
+        .iter()
+        .filter(|(_, v)| v == "after_as_of")
+        .count();
+    let visible = visibility.iter().filter(|(_, v)| v == "visible").count();
+    assert_eq!((after, visible), (3, 3), "{visibility:?}");
     // Not a /public/v1 route: the owner's export, the optional signature input.
     let (status, export) = node.get("/v1/export", WRITE).await;
     assert_eq!(status, 200);

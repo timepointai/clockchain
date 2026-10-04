@@ -4,7 +4,7 @@ import * as m from '../js/model.js';
 import { json, files } from './fixture.mjs';
 
 const snapshot = await json('snapshot.json');
-const [A, B] = (await files('subjects')).map((f) => f.replace('.json', ''));
+const [A, B] = (await files('subjects')).filter((f) => !f.includes('.as_of.')).map((f) => f.replace('.json', ''));
 const subjectA = await json(`subjects/${A}.json`);
 
 test('hex converts canonical byte arrays and rejects other shapes', () => {
@@ -106,4 +106,23 @@ test('kind view takes ids from the verifier path and labels from the taxonomy', 
   assert.deepEqual(v.path.map((n) => n.label), ['Branch', 'Kind']);
   assert.equal(v.retired, false);
   assert.deepEqual(m.kindView({ kind: 'r', valid: true, current: 's', lens: 'A', path: ['r'], taxonomy: 'x' }, null).path[0].label, null);
+});
+
+test('a deep parent chain is laid out without exhausting the stack', () => {
+  const id = (i) => Array.from({ length: 32 }, (_, k) => (k < 4 ? (i >> (8 * (3 - k))) & 255 : 7));
+  const rows = Array.from({ length: 50000 }, (_, i) => ({
+    event: id(i),
+    state: 'superseded',
+    reason: '',
+    envelope: { subject: id(0), parents: i ? [id(i - 1)] : [], payload: { Correction: {} } },
+  }));
+  const g = m.dag({ rows });
+  assert.equal(g.columns, 50000);
+  assert.equal(g.nodes.at(-1).depth, 49999);
+});
+
+test('an edge reading without pins is refused, not guessed', () => {
+  const e = structuredClone(snapshot.edges[0]);
+  e.pins = [];
+  assert.throws(() => m.edgeView(e, m.index(snapshot)), /without pins/);
 });
