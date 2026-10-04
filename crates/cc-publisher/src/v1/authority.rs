@@ -838,9 +838,17 @@ impl AuthorityEvent {
                     .into_iter()
                     .filter(|g| g.status == GrantStatus::Active)
                     .collect();
+                // Non-cascade cancels a direct child of the target issued
+                // outside the revoke's past, with that child's subtree.
                 let kept = active
                     .iter()
-                    .filter(|g| past.contains(&g.issued_by_event))
+                    .filter(|g| {
+                        let at = g.lineage.iter().position(|x| *x == target);
+                        let child = at.and_then(|i| g.lineage.get(i + 1));
+                        child
+                            .and_then(|c| ctx.grant(*c))
+                            .is_some_and(|c| past.contains(&c.issued_by_event))
+                    })
                     .count();
                 line(
                     "descendants",
@@ -851,8 +859,8 @@ impl AuthorityEvent {
                         )
                     } else {
                         format!(
-                            "{kept} active grant(s) below the target issued in this revoke's past \
-                             stay active; {} issued outside it are canceled",
+                            "{kept} active grant(s) below the target stay active; {} under a \
+                             direct delegate issued outside this revoke's past are canceled",
                             active.len() - kept
                         )
                     },

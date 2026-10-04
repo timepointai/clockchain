@@ -432,6 +432,13 @@ async fn submit_unredacted(node: &Node, dir: &Path, allow_untrusted: bool) -> Re
     if already.is_none() {
         // Whatever the flags: the node would refuse an event whose signing
         // grant or target was not issued in its parent's past, and keep it.
+        ensure!(
+            ctx.event(ev.parent()).is_some(),
+            "refusing to submit; nothing was written: parent {} is not an event of subject {} \
+             on the node",
+            hex::encode(ev.parent()),
+            hex::encode(ctx.subject)
+        );
         let mut grants = vec![ev.grant()];
         if let Operation::Revoke { target, .. } = ev.operation() {
             grants.push(target);
@@ -517,8 +524,8 @@ async fn submit_unredacted(node: &Node, dir: &Path, allow_untrusted: bool) -> Re
 /// effect) and, for a fresh admission, the grant change it signs: a
 /// Delegate's grant active, held by the grantee under the signing grant; a
 /// Revoke's target tombstoned and, with cascade, every grant below it
-/// tombstoned too. A rerun reports the current grant state without
-/// requiring it, since later events may have changed it.
+/// tombstoned too. A rerun requires only that the event is retained and
+/// valid, and reports the current state: later events may have changed it.
 fn readback(ctx: &Context, ev: &AuthorityEvent, fresh: bool) -> Result<Value> {
     let row = ctx
         .event(ev.id())
@@ -534,7 +541,7 @@ fn readback(ctx: &Context, ev: &AuthorityEvent, fresh: bool) -> Result<Value> {
         Operation::Revoke { target, .. } if target == ev.grant() && target == root_grant(ctx.subject)
     );
     ensure!(
-        row.effect.is_empty() || (relinquish && row.effect == "root_relinquished"),
+        !fresh || row.effect.is_empty() || (relinquish && row.effect == "root_relinquished"),
         "readback: event is suppressed: {}",
         row.effect
     );
@@ -562,13 +569,13 @@ fn readback(ctx: &Context, ev: &AuthorityEvent, fresh: bool) -> Result<Value> {
                 .grant(target)
                 .context("readback: node no longer lists the target grant")?;
             ensure!(
-                t.status == GrantStatus::Tombstoned,
+                !fresh || t.status == GrantStatus::Tombstoned,
                 "readback: target grant {} is {}, not tombstoned",
                 hex::encode(target),
                 t.status.as_str()
             );
             let below = ctx.descendants(target);
-            if cascade {
+            if cascade && fresh {
                 if let Some(g) = below.iter().find(|g| g.status != GrantStatus::Tombstoned) {
                     bail!(
                         "readback: cascade revoke left grant {} below the target {}",
@@ -617,8 +624,11 @@ pub fn summary(done: &Submitted, dir: &Path) -> Option<Vec<String>> {
     let rb = &r["readback"];
     let effect = match kind {
         "delegate" => format!(
-            "grant {} active for {}",
+            "grant {} {} for {}",
             rb["delegate"]["new_grant"]["grant"]
+                .as_str()
+                .unwrap_or_default(),
+            rb["delegate"]["new_grant"]["status"]
                 .as_str()
                 .unwrap_or_default(),
             rb["delegate"]["new_grant"]["holder"]
@@ -626,8 +636,11 @@ pub fn summary(done: &Submitted, dir: &Path) -> Option<Vec<String>> {
                 .unwrap_or_default()
         ),
         _ => format!(
-            "grant {} tombstoned (cascade {}); {} grant(s) below it",
+            "grant {} {} (cascade {}); {} grant(s) below it",
             rb["revoke"]["target"]["grant"].as_str().unwrap_or_default(),
+            rb["revoke"]["target"]["status"]
+                .as_str()
+                .unwrap_or_default(),
             rb["revoke"]["cascade"],
             rb["revoke"]["descendants"].as_array().map_or(0, Vec::len)
         ),

@@ -46,7 +46,8 @@ lines are the rules; this page restates them where a step depends on them.
 - **Cascade.** The cascade flag is signed into the Revoke
   (`authority.cascade=signed_bool_target_subtree`).
   - `--no-cascade` tombstones the target only. Grants the target issued in the
-    revoke's acknowledged past stay active.
+    revoke's acknowledged past stay active, with their subtrees. A grant the
+    target issued outside that past is canceled, with its subtree.
   - `--cascade` tombstones the target's whole provenance subtree, including
     grants learned later.
   - Grants outside the subtree are never affected.
@@ -163,9 +164,9 @@ output checks are those of `delegate`. In addition it refuses when:
   `--parent` older than either Delegate is refused.
 
 The summary states how many active grants below the target the cascade choice
-revokes. For `--no-cascade` it also states how many were issued in the
-revoke's past and stay active, and how many were issued outside it and are
-canceled. It lists any events outside the revoke's past.
+revokes. For `--no-cascade` it states how many stay active, and how many are
+canceled because they sit under a direct delegate of the target issued outside
+the revoke's past. It lists any events outside the revoke's past.
 
 ### submit
 
@@ -202,9 +203,10 @@ authority path. It needs `CC_NODE_API_KEY`.
    records it in the receipt. The node then decides, and keeps the envelope
    even if it is invalid.
 
-   One refusal holds whatever the flags: a signing grant or Revoke target not
-   issued in the parent's past. The node would refuse that event in every
-   case, and keep the envelope.
+   Two refusals hold whatever the flags: a parent that is not an event of the
+   subject on the node, and a signing grant or Revoke target not issued in the
+   parent's past. The node would never admit such an event, and would keep
+   the envelope.
 5. `POST /v1/candidates`. It requires HTTP 201, state `valid`, this event id,
    and the envelope's SHA-256.
 6. Read back `GET /v1/snapshot`. The event must be valid (`head`,
@@ -215,8 +217,10 @@ authority path. It needs `CC_NODE_API_KEY`.
    - A Revoke's target must be tombstoned. With cascade, every grant below
      the target must be tombstoned too.
    - The subject state is reported. If it is `contested`, stderr says the
-     subject needs a `Resolve`. A rerun reports the current grant state and
-     does not require the new grant to still be active.
+     subject needs a `Resolve`.
+   - A rerun of an admitted event requires only that it is retained and
+     valid. It reports the current state, which later events may have
+     changed (for example, a Delegate whose grant was since revoked).
 7. Write `DIR/receipt.json` (schema `cc.publisher.v1.authority-receipt`) if it
    does not exist. Stdout is the receipt; stderr has the `envelope`,
    `readback` and `receipt` lines.
@@ -401,10 +405,11 @@ the real v1 serving router over real PostgreSQL, with synthetic keys only.
 
 | Test | Shows |
 |---|---|
-| `delegated_key_corrects_and_is_refused_after_revoke` | A hot key's Correction is admitted. After a non-cascade revoke, the hot key is refused offline, by `submit` and by the node (`parent_authority`). Its acknowledged sub-delegate still corrects. |
+| `delegated_key_corrects_and_is_refused_after_revoke` | A hot key's Correction is admitted. After a non-cascade revoke, the hot key is refused offline, by `submit` and by the node (`parent_authority`). Its acknowledged sub-delegate still corrects. A rerun of the Delegate reports its grant `tombstoned`. |
 | `cascade_revokes_the_whole_subtree_and_nothing_else` | Cascade tombstones the target and its descendants. An independent sibling grant survives. |
-| `issuer_scope_is_enforced_offline_by_submit_and_by_the_node` | Upward, sideways and self revokes are refused offline, by `submit`, and by the node (`revocation_scope`). A `--parent` older than the target's or signer's Delegate is refused offline and by `submit`, even with `--allow-untrusted`. A non-root issuer may revoke its own delegate. |
+| `issuer_scope_is_enforced_offline_by_submit_and_by_the_node` | Upward, sideways and self revokes are refused offline, by `submit`, and by the node (`revocation_scope`). A `--parent` older than the target's or signer's Delegate is refused offline and by `submit`, and a parent unknown to the node is refused by `submit`, both even with `--allow-untrusted`. A non-root issuer may revoke its own delegate. |
 | `compromise_revoke_on_the_last_good_parent_suppresses_later_acts` | The playbook restores the last trusted revision. A revoke on the head keeps the hostile one. |
-| `root_relinquishment_is_explicit_and_reads_back` | A root relinquishment needs `--relinquish-root`, is admitted, reads back as `root_relinquished`, and a rerun succeeds. |
+| `root_relinquishment_is_explicit_and_reads_back` | A root relinquishment signed with `--relinquish-root` is admitted and reads back as `root_relinquished`, and a rerun succeeds. (The issuer-scope test shows the flag is required.) |
+| `non_cascade_cancels_only_direct_delegates_issued_outside_its_past` | A non-cascade revoke on an earlier parent keeps the target's acknowledged delegate and that delegate's later sub-grant, and cancels a direct delegate issued outside its past. The summary counts match. |
 | `revoke_on_an_earlier_parent_can_leave_the_subject_contested` | A revoke parented before the root's own later Correction leaves two heads; `submit` reports the subject `contested`. |
 | `cli_grants_delegate_revoke_and_submit` | The CLI round trip. Cascade must be explicit, an ungranted key writes nothing, and tampered grants files and previews are refused. |

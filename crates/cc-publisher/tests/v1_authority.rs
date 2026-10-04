@@ -341,6 +341,18 @@ async fn delegated_key_corrects_and_is_refused_after_revoke() {
     // still the current revision.
     assert_eq!(current(&n, s).await.0, revision_id(s, c.id()));
 
+    // A rerun of the Delegate after its grant was revoked still succeeds and
+    // reports the grant as it is now.
+    let rerun = node::submit(&n.writer(), &tmp.path().join("delegate"), false)
+        .await
+        .unwrap();
+    assert_eq!(rerun.receipt["admission"]["result"], "already_admitted");
+    assert_eq!(
+        rerun.receipt["readback"]["delegate"]["new_grant"]["status"],
+        "tombstoned"
+    );
+    assert!(node::summary(&rerun, &tmp.path().join("delegate"))[1].contains("tombstoned"));
+
     // Offline: the revoked key cannot sign.
     let (_, fresh) = keyfile(tmp.path(), "fresh");
     let refused = authority::delegate(&hot, &ctx, public(&fresh), "x", vec![[1; 32]]);
@@ -569,10 +581,26 @@ async fn issuer_scope_is_enforced_offline_by_submit_and_by_the_node() {
         "{text}"
     );
     assert_eq!(n.candidates().await, before);
-    // Likewise a signing grant issued after the parent.
+    // Likewise a signing grant issued after the parent, offline and by submit.
+    let choice = RevokeChoice {
+        parent: Some(s),
+        ..revoke_choice(d2.id(), false)
+    };
+    let text = err(authority::revoke(&hot1, &ctx, choice, "x", vec![[5; 32]]));
+    assert!(
+        text.contains(&format!("grant {}", hex::encode(d1.id()))),
+        "{text}"
+    );
+    assert!(text.contains("is not in the past of parent"), "{text}");
     let early = unchecked_revoke_on(&hot1, &ctx, d1.id(), d2.id(), s);
     let text = err(submit(&n, &early, tmp.path(), "early-signer", true).await);
     assert!(text.contains("is not in the past of parent"), "{text}");
+    assert_eq!(n.candidates().await, before);
+
+    // A parent the node does not know is refused by name.
+    let unknown = unchecked_revoke_on(&root, &ctx, root_grant(s), d2.id(), [0x99; 32]);
+    let text = err(submit(&n, &unknown, tmp.path(), "unknown-parent", true).await);
+    assert!(text.contains("is not an event of subject"), "{text}");
     assert_eq!(n.candidates().await, before);
 
     // A non-root issuer revokes its own delegate.
@@ -951,5 +979,50 @@ async fn revoke_on_an_earlier_parent_can_leave_the_subject_contested() {
     assert_eq!(ctx.frontier, heads);
     assert_eq!(ctx.event(c_hot.id()).unwrap().effect, "revoked_concurrent");
     assert!(node::summary(&done, &tmp.path().join("r"))[1].contains("it needs a Resolve"));
+    n.cleanup.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn non_cascade_cancels_only_direct_delegates_issued_outside_its_past() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, root) = keyfile(tmp.path(), "root");
+    let keys: Vec<_> = ["h1", "h2", "h3", "h4"]
+        .iter()
+        .map(|k| keyfile(tmp.path(), k).1)
+        .collect();
+    let (h1, h2, h3, h4) = (&keys[0], &keys[1], &keys[2], &keys[3]);
+    let n = TestNode::start(vec![public(&root)]).await;
+    let g = published_genesis(&n, &root, tmp.path()).await;
+    let s = g.subject();
+    // root -> h1 -> h2 -> h3, then h1 -> h4.
+    let d1 = delegate(&root, &n.grants(s).await, h1);
+    submit(&n, &d1, tmp.path(), "d1", false).await.unwrap();
+    let d2 = delegate(h1, &n.grants(s).await, h2);
+    submit(&n, &d2, tmp.path(), "d2", false).await.unwrap();
+    let d3 = delegate(h2, &n.grants(s).await, h3);
+    submit(&n, &d3, tmp.path(), "d3", false).await.unwrap();
+    let d4 = delegate(h1, &n.grants(s).await, h4);
+    submit(&n, &d4, tmp.path(), "d4", false).await.unwrap();
+
+    // Revoke h1 without cascade on the h2 Delegate. h2 was issued in the
+    // revoke's past and h3 under it; h4 is a direct delegate issued outside.
+    let ctx = n.grants(s).await;
+    let choice = RevokeChoice {
+        parent: Some(d2.id()),
+        ..revoke_choice(d1.id(), false)
+    };
+    let r = authority::revoke(&root, &ctx, choice, "Partial", vec![[8; 32]]).unwrap();
+    let summary = r.summary(&ctx);
+    assert!(
+        summary
+            .contains("2 active grant(s) below the target stay active; 1 under a direct delegate"),
+        "{summary}"
+    );
+    submit(&n, &r, tmp.path(), "r", true).await.unwrap();
+    let ctx = n.grants(s).await;
+    assert_eq!(status(&ctx, d1.id()), GrantStatus::Tombstoned);
+    assert_eq!(status(&ctx, d2.id()), GrantStatus::Active);
+    assert_eq!(status(&ctx, d3.id()), GrantStatus::Active);
+    assert_eq!(status(&ctx, d4.id()), GrantStatus::Canceled);
     n.cleanup.cleanup().await;
 }
