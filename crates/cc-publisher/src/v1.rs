@@ -5,6 +5,9 @@
 use cc_core::v1::Hash;
 use serde_json::Value;
 
+pub mod authority;
+pub mod authority_cli;
+pub mod authority_node;
 pub mod cli;
 pub mod genesis;
 pub mod key;
