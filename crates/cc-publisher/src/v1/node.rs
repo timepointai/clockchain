@@ -238,11 +238,11 @@ impl Node {
     }
     /// `GET /v1/export` (write scope): every retained envelope, as hex, with the
     /// node's rule, corpus digest and commitment.
-    pub async fn export(&self) -> Result<Value> {
+    pub async fn export_json(&self) -> Result<Value> {
         self.get_json("v1/export").await
     }
     /// `GET /v1/snapshot` (read scope): the full projection at the node's corpus.
-    pub async fn snapshot(&self) -> Result<Value> {
+    pub async fn snapshot_json(&self) -> Result<Value> {
         self.get_json("v1/snapshot").await
     }
     async fn get_json(&self, path: &str) -> Result<Value> {

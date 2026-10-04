@@ -27,7 +27,7 @@ pub async fn fetch(node: &Node) -> Result<(node::Health, Value, Context)> {
         health.fold_matches(),
         "node fold_version differs from this build's fold_v1()"
     );
-    let served = node.export().await?;
+    let served = node.export_json().await?;
     let mut export = serde_json::Map::new();
     for k in [
         "encoding",
@@ -183,7 +183,7 @@ async fn submit_unredacted(node: &Node, dir: &Path, approve: Hash) -> Result<Val
         admitted.push(j);
     }
     // 6. Read back: every packet event is retained and valid in the snapshot.
-    let snap = node.snapshot().await?;
+    let snap = node.snapshot_json().await?;
     let rows = snap["rows"].as_array().context("snapshot lacks rows")?;
     for e in &p.events {
         let row = rows
