@@ -13,7 +13,7 @@ one entry: the inaugural Engelbart 1968 Genesis. `fold_version` 1 is frozen. The
 follow-ups. The [launch evidence](docs/LAUNCH-EVIDENCE.md) maps each
 [issue #6](https://github.com/timepointai/clockchain/issues/6) gate to merged PRs
 and named tests; disposing of #6 is the owner's decision. The post-launch program
-is Stage (g), whose contract is `docs/design/STAGE-G.md`.
+is [Stage (g)](docs/design/STAGE-G.md).
 
 For v1 work, read in this order:
 
