@@ -898,6 +898,14 @@ async fn a_read_that_fails_after_a_good_probe_fails_closed() {
         gw.stop().await;
         server.abort();
     }
+    // The control: the same probe, and a read within the contract, is served.
+    let answer = "{\"corpus_digest\":\"abababababababababababababababababababababababababababababababab\",\"n\":1}";
+    let (base, server) = probe_only_node(200, answer).await;
+    let gw = gateway(&base, READ, &EAGER).await;
+    let (status, read) = gw.get("/public/v1/snapshot").await;
+    assert_eq!((status, read["n"].clone()), (S::OK, json!(1)));
+    gw.stop().await;
+    server.abort();
 }
 
 #[tokio::test]
@@ -908,13 +916,13 @@ async fn requests_queued_behind_a_hung_probe_share_its_failure() {
         let counter = counter.clone();
         async move {
             counter.fetch_add(1, Ordering::SeqCst);
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(Duration::from_secs(6)).await;
             "{}"
         }
     };
     let (base, server) = serve(Router::new().route("/*any", get(hang))).await;
     let timeout = [
-        ("CC_GATEWAY_UPSTREAM_TIMEOUT_MS", "500"),
+        ("CC_GATEWAY_UPSTREAM_TIMEOUT_MS", "1500"),
         EAGER[0],
         EAGER[1],
     ];
@@ -941,13 +949,59 @@ async fn requests_queued_behind_a_hung_probe_share_its_failure() {
         assert_eq!(answer, refusal(S::SERVICE_UNAVAILABLE, "node_unavailable"));
     }
     // The first request's probe timed out; the seven that arrived while it ran
-    // share one more probe rather than timing out one after another.
+    // share one more probe rather than timing out one after another (which
+    // would take eight timeouts, 12 s).
     assert_eq!(probes.load(Ordering::SeqCst), 2);
     assert!(
-        start.elapsed() < Duration::from_millis(2_500),
+        start.elapsed() < Duration::from_millis(4_500),
         "{:?}",
         start.elapsed()
     );
+    gw.stop().await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_client_that_disconnects_cannot_cancel_the_probe() {
+    let probes = Arc::new(AtomicUsize::new(0));
+    let counter = probes.clone();
+    let digest = format!("{{\"corpus_digest\":\"{}\"}}", "cd".repeat(32));
+    let slow_probe = {
+        let digest = digest.clone();
+        move || {
+            let (counter, digest) = (counter.clone(), digest.clone());
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                (S::NOT_FOUND, digest)
+            }
+        }
+    };
+    let read = move || {
+        let digest = digest.clone();
+        async move { (S::OK, digest) }
+    };
+    let app = Router::new()
+        .route(cc_gateway::PROBE, get(slow_probe))
+        .route("/*any", get(read));
+    let (base, server) = serve(app).await;
+    let fresh = [("CC_GATEWAY_FRESHNESS_MS", "60000"), EAGER[0]];
+    let gw = gateway(&base, READ, &fresh).await;
+    // A client that gives up while the probe is in flight.
+    let impatient = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_millis(100))
+        .build()
+        .unwrap();
+    let url = format!("{}/public/v1/snapshot", gw.base);
+    assert!(impatient.get(&url).send().await.is_err());
+    assert_eq!(probes.load(Ordering::SeqCst), 1);
+    // The probe finishes anyway and its digest is recorded, so the next
+    // request within the freshness window does not probe again.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let (status, cache, _) = gw.cached("/public/v1/snapshot").await;
+    assert_eq!((status, cache.as_str()), (S::OK, "miss"));
+    assert_eq!(probes.load(Ordering::SeqCst), 1);
     gw.stop().await;
     server.abort();
 }

@@ -52,7 +52,8 @@ impl Limiter {
 
     pub fn with_capacity(rate_per_minute: u32, max_tracked: usize) -> Limiter {
         let rate = rate_per_minute.max(1);
-        let interval = Duration::from_secs(60) / rate;
+        // Rounded up, so `rate` intervals never fit in less than a minute.
+        let interval = Duration::from_nanos(60_000_000_000u64.div_ceil(u64::from(rate)));
         Limiter {
             interval,
             tolerance: interval * (rate - 1),
@@ -108,6 +109,22 @@ mod tests {
         let later = t + Duration::from_secs(20);
         assert!(l.check_at(ip("192.0.2.1"), later).is_ok());
         assert!(l.check_at(ip("192.0.2.1"), later).is_err());
+    }
+
+    #[test]
+    fn no_sixty_second_window_holds_twice_the_rate() {
+        // 60 s does not divide evenly by 7, so the interval must round up.
+        let l = Limiter::new(7);
+        let t = Instant::now();
+        let mut admitted = 0;
+        while l.check_at(ip("192.0.2.1"), t).is_ok() {
+            admitted += 1;
+        }
+        let edge = t + Duration::from_secs(60) - Duration::from_nanos(1);
+        while l.check_at(ip("192.0.2.1"), edge).is_ok() {
+            admitted += 1;
+        }
+        assert_eq!(admitted, 2 * 7 - 1);
     }
 
     #[test]

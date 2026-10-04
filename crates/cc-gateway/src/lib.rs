@@ -100,11 +100,23 @@ struct Inner {
     client_ip_header: Option<HeaderName>,
     cache: Cache,
     limiter: Limiter,
-    /// Held while a digest probe is in flight. It records when the last probe
-    /// started and what it found, so every request that queued behind a probe
-    /// takes that probe's outcome, success or failure, instead of probing
-    /// again: a hung node costs the queue one timeout, not one each.
-    probing: tokio::sync::Mutex<Option<(Instant, Result<String, Failure>)>>,
+    probe: std::sync::Mutex<Probe>,
+}
+
+type Outcome = Result<String, Failure>;
+
+/// The digest probe, shared. A probe runs in its own task and records its
+/// outcome when it ends, whether or not the request that started it is still
+/// waiting, so a client that disconnects cannot cancel it. A request takes the
+/// outcome of any probe that started after it arrived; otherwise it waits for
+/// the probe in flight and then joins or starts the next one. So a request
+/// waits for at most two probes, however many requests are queued or dropped.
+#[derive(Default)]
+struct Probe {
+    /// When the last finished probe started, and what it found.
+    last: Option<(Instant, Outcome)>,
+    /// The probe in flight: when it started, and where its outcome will appear.
+    inflight: Option<(Instant, tokio::sync::watch::Receiver<Option<Outcome>>)>,
 }
 
 /// Why a node read produced no answer.
@@ -153,7 +165,7 @@ impl Gateway {
             client_ip_header: config.client_ip_header.clone(),
             cache: Cache::new(config.freshness, config.cache_bytes),
             limiter: Limiter::new(config.rate_per_minute),
-            probing: tokio::sync::Mutex::new(None),
+            probe: std::sync::Mutex::new(Probe::default()),
         }))
     }
 }
@@ -348,24 +360,56 @@ impl Gateway {
         }
     }
 
-    /// The fresh digest, or one probe read shared by every waiting request.
-    async fn current_digest(&self) -> Result<String, Failure> {
+    /// The fresh digest, or the outcome of a shared probe (see [`Probe`]).
+    async fn current_digest(&self) -> Outcome {
         let arrived = Instant::now();
         if let Some(d) = self.0.cache.fresh_digest(arrived) {
             return Ok(d);
         }
-        let mut last = self.0.probing.lock().await;
-        // A probe that started after this request arrived answers it too.
-        if let Some((started, outcome)) = last.as_ref() {
-            if *started >= arrived {
-                return outcome.clone();
+        loop {
+            let mut rx = {
+                let mut p = self.0.probe.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some((started, outcome)) = &p.last {
+                    if *started >= arrived {
+                        return outcome.clone();
+                    }
+                }
+                if let Some((_, rx)) = &p.inflight {
+                    rx.clone()
+                } else {
+                    if let Some(d) = self.0.cache.fresh_digest(Instant::now()) {
+                        return Ok(d);
+                    }
+                    let (tx, rx) = tokio::sync::watch::channel(None);
+                    let started = Instant::now();
+                    p.inflight = Some((started, rx.clone()));
+                    let gw = self.clone();
+                    tokio::spawn(async move {
+                        let outcome = gw.probe().await;
+                        let mut p = gw.0.probe.lock().unwrap_or_else(|e| e.into_inner());
+                        p.last = Some((started, outcome.clone()));
+                        p.inflight = None;
+                        drop(p);
+                        let _ = tx.send(Some(outcome));
+                    });
+                    rx
+                }
+            };
+            if rx.wait_for(Option::is_some).await.is_err() {
+                // The probe task ended without an outcome; never wait on it again.
+                self.0
+                    .probe
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .inflight = None;
+                return Err(Failure::BadGateway);
             }
         }
-        if let Some(d) = self.0.cache.fresh_digest(Instant::now()) {
-            return Ok(d);
-        }
-        let started = Instant::now();
-        let outcome = match self.fetch(PROBE, true).await {
+    }
+
+    /// One digest read from the node.
+    async fn probe(&self) -> Outcome {
+        match self.fetch(PROBE, true).await {
             Ok(Answer {
                 status: 200 | 404,
                 digest: Some(d),
@@ -376,9 +420,7 @@ impl Gateway {
                 Err(Failure::BadGateway)
             }
             Err(f) => Err(f),
-        };
-        *last = Some((started, outcome.clone()));
-        outcome
+        }
     }
 
     /// One `GET` to the node. Only the read key and `Accept` are sent.

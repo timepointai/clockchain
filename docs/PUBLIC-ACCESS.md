@@ -135,7 +135,7 @@ The template ([deploy/public/fly.toml](../deploy/public/fly.toml)) sets
 
 - **Per-client rate (GCRA).** Each client may burst to
   `CC_GATEWAY_RATE_PER_MINUTE` requests at once, then sustain that rate, one
-  request per `60 s / rate` (1 s at the default). The sustained rate is the
+  request per `60 s / rate`, rounded up to the nanosecond (1 s at the default). The sustained rate is the
   limit; with the burst, any 60 s window holds at most `2 × rate − 1` requests
   from one client (119 at the default). It runs before the method guard and any
   node call.
@@ -148,9 +148,11 @@ The template ([deploy/public/fly.toml](../deploy/public/fly.toml)) sets
   to the gateway machine. The node's own soft 8 / hard 16 also applies, because
   Flycast traffic goes through Fly Proxy.
 - **Body cap.** A node answer over `CC_GATEWAY_MAX_BODY_BYTES` is refused, not
-  truncated. Each in-flight answer is held twice while it is stripped (the
-  node's bytes and the re-emitted ones), so worst-case memory is roughly
-  2 × hard limit × cap plus `CC_GATEWAY_CACHE_BYTES`. The defaults (64 × 32 MiB,
+  truncated. While an answer is stripped it is held about three times (the
+  node's bytes, the parsed values and the re-emitted bytes), so worst-case
+  memory is roughly 3 × hard limit × cap plus `CC_GATEWAY_CACHE_BYTES` plus
+  per-entry map overhead (keys are counted once against the bound, but stored
+  twice). The defaults (64 × 32 MiB,
   64 MiB cache) exceed the template's 256 MB VM; today's snapshot is far below
   the cap. **Owner decision:** lower the cap or raise VM memory as the corpus
   grows.
@@ -175,11 +177,13 @@ one corpus digest, the most recently observed one.
 - **Probe.** When the current digest is older than `CC_GATEWAY_FRESHNESS_MS`, a
   corpus read first asks the node for
   `GET /v1/subjects/<64 zeros>`: no subject has that id, so the answer is 404
-  `subject_unknown` naming the digest. One probe runs at a time, and every
-  request that arrived before a probe started takes that probe's outcome,
-  success or failure, without probing again. A request therefore waits for at
-  most the probe in flight plus one more: about two upstream timeouts against a
-  hung node, however many requests are queued. With freshness `0`, every
+  `subject_unknown` naming the digest. One probe runs at a time, in its own
+  task, and records its outcome when it ends even if the request that started
+  it has gone. A request takes the outcome, success or failure, of any probe
+  that started after it arrived; otherwise it waits for the probe in flight and
+  then joins or starts the next. So the digest wait is at most two upstream
+  timeouts against a hung node, however many requests are queued or dropped;
+  a miss then adds its own read, up to one more. With freshness `0`, every
   corpus read probes first.
 - **Admit visibility.** The gateway cannot see an admit. An admit is visible
   through it at most one freshness window after it commits. Every 200 or 404
