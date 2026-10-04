@@ -143,13 +143,13 @@ release.
 ### Failure handling and rollback
 
 There is **no automatic rollback**. `FAILED` says whether the failure came
-before or after the deploy.
+before the deploy or after it started.
 
 - **Before the deploy** (local gates, acceptance, identity gate, observations,
   backup before): production is unchanged. The only remote side effect is a
   temporary dump file on the DB machine, removed after transfer. Fix the cause
   and rerun with a fresh evidence directory.
-- **After the deploy** ("after" includes a failed `flyctl deploy` itself):
+- **After the deploy started** (this includes a failed `flyctl deploy` itself):
   check which digest the app runs (`flyctl machines list`). If `provision-v1`
   failed, Fly aborted the deploy and the old image still runs; FIRST-ENTRY
   section 9 lists its exit codes. If the new image runs and a post check
