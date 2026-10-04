@@ -701,6 +701,9 @@ async fn the_cache_serves_hits_and_invalidates_after_a_new_admit() {
     assert_eq!(visible["visibility"], "visible");
     assert_ne!(visible["corpus_digest"], unknown["corpus_digest"]);
     assert_eq!((status, visible), (S::OK, rig.direct(private).await.1));
+    // Caching resumes under the new digest.
+    let (status, cache, _) = gw.cached(&path).await;
+    assert_eq!((status, cache.as_str()), (S::OK, "hit"));
     let (_, cache, fresh) = gw.cached("/public/v1/snapshot").await;
     assert_eq!(cache, "miss");
     assert_eq!(fresh, rig.direct("/v1/snapshot").await.1);
