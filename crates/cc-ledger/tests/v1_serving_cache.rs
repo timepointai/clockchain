@@ -164,6 +164,33 @@ async fn every_admission_invalidates_the_cache() {
     cleanup.cleanup().await;
 }
 
+/// Two stores over one database hold separate caches, as two node processes
+/// do during a rolling deploy. An admission through one never reaches the
+/// other's invalidation, so only the key keeps the other from answering with
+/// the corpus it cached before.
+#[tokio::test]
+async fn a_cache_never_answers_for_a_corpus_another_store_changed() {
+    let (pool, cleanup, store) = bound().await;
+    let other = Store::open(pool.clone(), INSTANCE, filter()).await.unwrap();
+    let reference = store.clone().uncached();
+    for e in view_fixture() {
+        let before = store.snapshot(None).await.unwrap();
+        assert!(store.cached_key().is_some());
+        other.admit(e.bytes()).await.unwrap();
+        // Still filled: the other store's admission did not invalidate it.
+        assert!(store.cached_key().is_some());
+        let after = store.snapshot(None).await.unwrap();
+        assert_ne!(after.corpus_digest, before.corpus_digest);
+        assert_identical(
+            &after,
+            &reference.snapshot(None).await.unwrap(),
+            "cross-store",
+        );
+    }
+    pool.close().await;
+    cleanup.cleanup().await;
+}
+
 /// The key includes a digest of the retained bytes: a candidate row changed
 /// behind the append-only trigger is re-verified and refused, never answered
 /// from the cache.
