@@ -28,3 +28,10 @@ ledger identity, or signed evidence during cleanup. Missing checks remain NOT RU
 
 Legacy repair and Railway scripts are historical utilities. Do not use them against
 production based on their presence here. Current deployment uses Fly only.
+
+## Operating the live v1 node
+
+Update releases (`deploy-fly.sh --v1-update`), scheduled verified backups
+(`schedule_backups.py`), monitoring (`monitor_v1.py`), proxy ownership
+(`fly_proxy.py`, `owner_jobs.py`), restore drills and the Fly-native alternative
+are in [OPERATIONS](../docs/OPERATIONS.md).
