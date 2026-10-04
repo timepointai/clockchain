@@ -8,6 +8,13 @@ runs this from a clean exact-main checkout with local Fly/GitHub authentication.
 identity (`CC_V1_INSTANCE`, `CC_V1_CURATORS`, `CC_V1_MAX_HOPS`) comes from the
 operator environment; acceptance runs the exact image against synthetic v1
 data locally; production only receives the deploy and read-only checks.
+
+`--v1-update` releases a new image over the bound, populated v1 store. The
+expected identity is checked the same way; acceptance runs the W3 sequence on
+the new image and then an update scenario (the current production image
+populates a synthetic store, the new image takes it over, and every
+commitment and the export must stay byte-identical). Production then gets the
+identity-gated, backed-up, read-only-checked deploy in `deploy_digest.py`.
 """
 import argparse
 import json
@@ -21,9 +28,10 @@ import time
 
 from local_acceptance import accept
 from deployed_checks import request
-from deploy_digest import check_config
-from v1_acceptance import accept_v1
+from deploy_digest import NODE_SEED, check_config, check_secret_names, previous_image
+from v1_acceptance import accept_v1, accept_v1_update, pinned_image
 from v1_identity import Expected
+from verify_fly_machines import group
 
 
 def output(*args):
@@ -31,8 +39,8 @@ def output(*args):
 
 
 def mode_flag(args):
-    for flag in ('v1_fresh', 'empty_corpus', 'zero_events'):
-        if getattr(args, flag):
+    for flag in ('v1_fresh', 'v1_update', 'empty_corpus', 'zero_events'):
+        if getattr(args, flag, False):
             return ['--' + flag.replace('_', '-')]
     return []
 
@@ -46,6 +54,8 @@ def main():
     modes.add_argument('--zero-events', action='store_true', help='verify a completely empty uninitialized production ledger')
     modes.add_argument('--empty-corpus', action='store_true', help='verify genesis-only production without media fixtures')
     modes.add_argument('--v1-fresh', action='store_true', help='release v1 onto a fresh database; the entry stays with the owner')
+    modes.add_argument('--v1-update', action='store_true',
+                       help='release a new image over the bound, populated v1 store; never writes')
     parser.add_argument('--evidence', type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r'registry\.fly\.io/' + re.escape(args.app) + r'@sha256:[0-9a-f]{64}', args.image):
@@ -63,17 +73,18 @@ def main():
         parser.error('a successful exact-SHA CI run is required')
     required = ('CC_NODE_API_KEY', 'CC_NODE_READ_KEY',
                 'CC_BACKUP_DB_APP', 'CC_BACKUP_DATABASE', 'CC_BACKUP_USER')
-    if not (args.empty_corpus or args.zero_events or args.v1_fresh):
+    v1 = args.v1_fresh or args.v1_update
+    if not (args.empty_corpus or args.zero_events or v1):
         required += ('CC_SMOKE_ENTITY',)
     if any(not os.environ.get(name) for name in required):
         parser.error('operator environment needs: ' + ', '.join(required))
     if os.environ['CC_NODE_API_KEY'] == os.environ['CC_NODE_READ_KEY']:
         parser.error('distinct full and read-only credentials required')
     try:
-        if args.v1_fresh:
+        if v1:
             # Values stay in the environment; only their validity is checked here.
             Expected.from_env(production=True)
-        check_config(args.config, args.v1_fresh)
+        check_config(args.config, v1)
     except ValueError as error:
         parser.error(str(error))
     args.evidence = args.evidence.resolve()
@@ -87,7 +98,14 @@ def main():
     with lockpath.open('a') as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         output('flyctl', 'auth', 'docker')
-        (accept_v1 if args.v1_fresh else accept)(args.image, sha, args.evidence / 'acceptance')
+        (accept_v1 if v1 else accept)(args.image, sha, args.evidence / 'acceptance')
+        if args.v1_update:
+            # Read-only: the image production runs now, and whether the optional
+            # node seed secret is set (names only), so acceptance mirrors both.
+            machines = json.loads(output('flyctl', 'machines', 'list', '--app', args.app, '--json'))
+            current = pinned_image(previous_image(group(machines, 'app')), args.app)
+            accept_v1_update(current, args.image, sha, args.evidence / 'acceptance-update',
+                             node_seed=NODE_SEED in check_secret_names(args.app))
         if output('git', 'ls-remote', 'origin', 'refs/heads/main').split()[0] != sha:
             raise RuntimeError('main advanced during acceptance; no promotion performed')
         # A private service must not regain public ingress during deployment.
@@ -130,6 +148,8 @@ def main():
     print('Owner release verified:', sha)
     if args.v1_fresh:
         print('v1 store bound and empty. The inaugural entry remains the owner\'s step.')
+    if args.v1_update:
+        print('v1 store updated; identity, commitments and export unchanged.')
 
 
 if __name__ == '__main__':
