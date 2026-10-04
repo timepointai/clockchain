@@ -26,6 +26,8 @@ hex.workspace = true
 cc-ledger.workspace = true
 cc-testkit.workspace = true
 cc-node = { path = "../cc-node" }
+# The G5 gateway, served in front of the node for the integration test.
+cc-gateway = { path = "../cc-gateway" }
 axum.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

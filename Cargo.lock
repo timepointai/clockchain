@@ -428,6 +428,7 @@ dependencies = [
  "axum",
  "cc-core",
  "cc-filter",
+ "cc-gateway",
  "cc-ledger",
  "cc-node",
  "cc-testkit",
