@@ -422,6 +422,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc-wasm-verify"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "cc-core",
+ "cc-filter",
+ "cc-ledger",
+ "cc-node",
+ "cc-testkit",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
