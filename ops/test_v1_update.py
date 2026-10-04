@@ -436,12 +436,31 @@ class UpdateFlyTests(unittest.TestCase):
 
     def test_allowed_commands_call_through(self):
         allowed = (('machines', 'list', '--app', 'x', '--json'), ('secrets', 'list', '--app', 'x', '--json'),
-                   ('deploy', '--app', 'x', '--image', NEW),
                    ('scale', 'count', '1', '--process-group', 'app', '--app', 'x', '--yes'))
         with patch.object(deploy_digest, 'fly', return_value='synthetic output') as fly:
             for args in allowed:
                 self.assertEqual(deploy_digest.update_fly(*args), 'synthetic output')
             self.assertEqual([c.args for c in fly.call_args_list], list(allowed))
+
+    def test_deploy_must_be_the_exact_expected_argv(self):
+        expected = deploy_digest.deploy_argv('x', 'fly.toml', NEW)
+        self.assertEqual(expected, ('deploy', '--app', 'x', '--config', 'fly.toml', '--ha=false',
+                                    '--no-public-ips', '--image', NEW))
+        other = 'registry.fly.io/timepoint-clockchain-prod@sha256:' + 'c' * 64
+        refused = ((expected, None),  # no expectation bound: never a deploy
+                   (('deploy', '--app', 'x', '--image', NEW), expected),  # a prefix is not enough
+                   (deploy_digest.deploy_argv('x', 'fly.toml', other), expected),
+                   (deploy_digest.deploy_argv('y', 'fly.toml', NEW), expected),
+                   (expected + ('--skip-release-command',), expected),
+                   (expected[:-2], expected))
+        with patch.object(deploy_digest, 'fly', return_value='ok') as fly:
+            for args, bound in refused:
+                with self.subTest(args=args, bound=bound), \
+                        self.assertRaisesRegex(RuntimeError, 'refuses a flyctl deploy'):
+                    deploy_digest.update_fly(*args, expected_deploy=bound)
+            fly.assert_not_called()
+            self.assertEqual(deploy_digest.update_fly(*expected, expected_deploy=expected), 'ok')
+            self.assertEqual([c.args for c in fly.call_args_list], [expected])
 
     def test_rollout_waits_for_the_new_build_only(self):
         node = FakeNode()
@@ -477,7 +496,7 @@ class PromoteV1UpdateTests(unittest.TestCase):
 
     def promote(self, raises=None, *, after=None, health=None, stored=(STORED, STORED),
                 prints=(FINGERPRINT, FINGERPRINT), backups=(BACKUP, BACKUP), secrets=SECRETS, extra=(),
-                env=None):
+                env=None, deploy_error=None):
         self.runs += 1
         self.evidence = self.tmp / f'evidence-{self.runs}'
         self.events, self.fly_calls = [], []
@@ -496,6 +515,8 @@ class PromoteV1UpdateTests(unittest.TestCase):
             if args[:2] == ('secrets', 'list'):
                 return json.dumps(secrets)
             if args[0] == 'deploy':
+                if deploy_error is not None:
+                    raise deploy_error
                 node.deployed = True
                 node.health = dict(node.health, build=SHA[:12])
             return ''
@@ -554,8 +575,10 @@ class PromoteV1UpdateTests(unittest.TestCase):
         """Every request is a body-less GET to the node; every flyctl call is allow-listed."""
         for method, host, path, auth, data in self.node.seen:
             self.assertEqual((method, host, data), ('GET', 'node.invalid', None), path)
+        exact_deploy = deploy_digest.deploy_argv('production', base.FLY, NEW)
         for args in self.fly_calls:
-            self.assertTrue(any(args[:len(a)] == a for a in deploy_digest.UPDATE_FLY), args)
+            self.assertTrue(args == exact_deploy or
+                            any(args[:len(a)] == a for a in deploy_digest.UPDATE_FLY), args)
             self.assertFalse(any('cc-publisher' in str(a) for a in args), args)
             self.assertNotIn('--skip-release-command', args)
         self.assertLessEqual(len(self.deploys()), 1)
@@ -634,6 +657,21 @@ class PromoteV1UpdateTests(unittest.TestCase):
                 self.assertEqual(self.deploys(), [])
                 self.assertNotIn('/v1/export', self.events)
                 self.assert_failed('before', [], False)
+
+    def test_failed_or_interrupted_deploy_is_reported_as_possibly_started(self):
+        # The flag is set before the call: a deploy that raised may still have rolled out.
+        failures = (subprocess.CalledProcessError(1, ['flyctl', 'deploy']), KeyboardInterrupt())
+        for failure in failures:
+            with self.subTest(type(failure).__name__):
+                self.promote(type(failure), deploy_error=failure)
+                self.assertIn('v1 update failed after the deploy started',
+                              (self.evidence / 'FAILED').read_text())
+                recovery = self.evidence_json('recovery.json')
+                self.assertEqual((recovery['deployed'], recovery['error']),
+                                 (True, type(failure).__name__))
+                self.assertEqual(self.deploys(), [deploy_digest.deploy_argv('production', base.FLY, NEW)])
+                self.assertNotIn('scale', self.events)
+                self.assert_failed('after', ['backup-before'], True)
 
     def test_commitment_change_after_deploy_is_refused(self):
         m = self.promote(CommitmentChanged, after={

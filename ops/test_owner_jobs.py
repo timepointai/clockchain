@@ -323,6 +323,51 @@ class PlistTests(TempDirTest):
         self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
 
 
+class InterpreterTests(TempDirTest):
+    """The interpreter a plist pins must be able to run the job; a broken pyexpat must not stop a run."""
+
+    def test_working_interpreter_passes_with_the_job_imports(self):
+        self.assertEqual(owner_jobs.check_interpreter(
+            sys.executable, ('plistlib', 'pyexpat', 'monitor_v1', 'schedule_backups')), sys.executable)
+
+    def test_missing_import_is_refused_with_an_actionable_message(self):
+        with self.assertRaises(ConfigError) as caught:
+            owner_jobs.check_interpreter(sys.executable, ('plistlib', 'cc_no_such_module_9f2'))
+        message = str(caught.exception)
+        self.assertIn('cc_no_such_module_9f2', message)
+        self.assertIn('import plistlib, cryptography', message)
+        self.assertIn('ops/requirements.txt', message)
+
+    def test_job_imports_name_plistlib_pyexpat_and_cryptography(self):
+        self.assertTrue({'plistlib', 'pyexpat', 'cryptography'} <= set(owner_jobs.JOB_IMPORTS))
+
+    def test_a_broken_pyexpat_does_not_stop_a_scheduled_run(self):
+        # Simulate a Python whose pyexpat cannot load: importing it raises.
+        code = ("import sys; sys.modules['pyexpat'] = None\n"
+                "import owner_jobs, monitor_v1, schedule_backups\n"
+                "try:\n"
+                "    owner_jobs.plist('l', 'x', 'e', '/tmp', interval=900)\n"
+                "except ImportError:\n"
+                "    print('plist-refused')\n")
+        result = subprocess.run([sys.executable, '-c', code], cwd=str(owner_jobs.ROOT / 'ops'),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'plist-refused')
+
+    def test_install_checks_the_interpreter_before_writing_anything(self):
+        state = self.dir / 'state'
+        env = self.env_file(f'CC_FLY_APP=cc-test-app\nCC_OPS_STATE_DIR={state}\n'
+                            f'CC_V1_INSTANCE={"ab" * 32}\nCC_V1_CURATORS={CURATORS[0]}\n'
+                            'CC_V1_MAX_HOPS=4\n')
+        refusal = ConfigError('interpreter cannot run this job')
+        with patch.object(owner_jobs, 'check_interpreter', side_effect=refusal) as check, \
+                patch.object(owner_jobs, 'install') as install:
+            with self.assertRaises(ConfigError):
+                monitor_v1.main(['install', '--env-file', str(env)])
+        check.assert_called_once_with(sys.executable, owner_jobs.JOB_IMPORTS + ('monitor_v1',))
+        install.assert_not_called()
+
+
 class LaunchctlTests(TempDirTest):
     LABEL = 'local.clockchain.test'
 

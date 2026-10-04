@@ -133,6 +133,18 @@ class FlyProxyProcessTests(unittest.TestCase):
             proc.wait(timeout=0.3)
         self.assertIsNone(proc.poll())
 
+    def reported_argv(self, proc, port, app=APP):
+        """The process's command line as `ps` reports it, split into argv.
+
+        Derived rather than assumed: macOS framework Python re-executes through
+        Python.app, so `ps` shows that binary, not `sys.executable`.
+        """
+        argv = command_line(proc.pid).split(' ')
+        tail = [self.flyctl, *proxy_args(port, app)]
+        self.assertEqual(argv[-len(tail):], tail)
+        self.assertGreater(len(argv), len(tail))  # an interpreter precedes the script
+        return argv[:-len(tail)], argv
+
     def foreign_proxy(self, prefix=()):
         """A running proxy-looking process this FlyProxy did not start."""
         port = free_port()
@@ -186,19 +198,20 @@ class FlyProxyProcessTests(unittest.TestCase):
 
     def test_pidfile_naming_a_live_process_with_other_argv_spares_it(self):
         foreign, port = self.foreign_proxy(prefix=(sys.executable,))
-        real = [sys.executable, self.flyctl, *proxy_args(port)]
-        self.assertEqual(command_line(foreign.pid), ' '.join(real))
+        interpreter, real = self.reported_argv(foreign, port)
         cases = {
-            'different port': [sys.executable, self.flyctl, *proxy_args(port + 1)],
+            'different port': [*interpreter, self.flyctl, *proxy_args(port + 1)],
             'missing interpreter': [self.flyctl, *proxy_args(port)],
-            'different app': [sys.executable, self.flyctl, *proxy_args(port, 'other-app')],
+            'different app': [*interpreter, self.flyctl, *proxy_args(port, 'other-app')],
         }
+        self.assertTrue(all(argv != real for argv in cases.values()))
         for name, argv in cases.items():
             with self.subTest(name):
                 self.write_pidfile({'pid': foreign.pid, 'argv': argv})
                 proxy = self.proxy()
                 with proxy:
                     self.assertEqual(proxy.reaped, 'stale_pidfile_removed')
+                    self.assertIsNone(proxy.orphan_pid)
                     record = json.loads(self.pidfile().read_text())
                     self.assertEqual(record['pid'], proxy.started_pid)
                 self.assertFalse(self.pidfile().exists())
@@ -227,11 +240,12 @@ class FlyProxyProcessTests(unittest.TestCase):
         argv = [sys.executable, self.flyctl, *proxy_args(port)]
         orphan = self.spawn(argv)
         self.assertTrue(wait_for_health(f'http://127.0.0.1:{port}'))
-        self.assertEqual(command_line(orphan.pid), ' '.join(argv))
-        self.write_pidfile({'pid': orphan.pid, 'argv': argv})
+        _, recorded = self.reported_argv(orphan, port)
+        self.write_pidfile({'pid': orphan.pid, 'argv': recorded})
         proxy = self.proxy()
         with proxy as url:
             self.assertEqual(proxy.reaped, 'orphan_left_running')
+            self.assertEqual(proxy.orphan_pid, orphan.pid)
             self.assertEqual(json.loads(self.pidfile().read_text())['pid'], proxy.started_pid)
             self.assertEqual(health(url), 200)
         self.assertFalse(self.pidfile().exists())

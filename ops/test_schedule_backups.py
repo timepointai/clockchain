@@ -134,6 +134,13 @@ class BackupRunTests(unittest.TestCase):
         self.events.append(('proxy', app, state, job))
         return self.proxy_context()
 
+    def orphan_proxy(self, pid):
+        def proxy(app, state, job):
+            context = self.proxy(app, state, job)
+            context.orphan_pid = pid
+            return context
+        return proxy
+
     def capture(self, db_app, database, user, bundle, expected, *, export=None, image=None):
         self.events.append('capture')
         self.captures.append(dict(db_app=db_app, database=database, user=user, bundle=bundle,
@@ -214,6 +221,16 @@ class BackupRunTests(unittest.TestCase):
                                        'proxy closed', 'capture'])
         export_req = [r for r in self.node.requests if r[1] == '/v1/export']
         self.assertEqual(export_req[0][2], 'Bearer ' + API_KEY)
+        self.assertNotIn('proxy_orphan', doc)
+
+    def test_orphaned_proxy_is_recorded_and_notified(self):
+        code, stderr = self.run_backup(proxy=self.orphan_proxy(31337))
+        self.assertEqual((code, stderr), (0, ''))
+        doc, _ = self.status()
+        self.assertEqual((doc['result'], doc['proxy_orphan']), ('ok', 31337))
+        self.assertEqual(len(self.notes), 1)
+        self.assertEqual(self.notes[0][0], 'Clockchain backup')
+        self.assertIn('pid 31337', self.notes[0][1])
 
     def test_retention_keeps_newest_30_verified_and_5_failed_only(self):
         self.backups.mkdir(mode=0o700)
@@ -236,6 +253,11 @@ class BackupRunTests(unittest.TestCase):
         (self.backups / 'cc_v1-20000104T000000Z').mkdir()                     # no manifest at all
         (self.backups / 'cc_v1-20000105T000000Z' / 'manifest.json').parent.mkdir()
         (self.backups / 'cc_v1-20000105T000000Z' / 'manifest.json').write_text('not json')
+        # Verified manifests under names this job never generates: never counted, never pruned.
+        for name in ('owner-copy', 'cc_v1-manual', 'cc_v1-0-manual', 'cc_v1-20000106T000000Z-copy',
+                     'old-cc_v1-20000107T000000Z'):
+            (self.backups / name).mkdir()
+            (self.backups / name / 'manifest.json').write_text(manifest)
         (self.backups / 'notes').mkdir()
         (self.backups / 'cc_v1-latest').mkdir()
         (self.backups / 'cc_v1-20000101T000000Z.tar').write_text('archive')
@@ -260,6 +282,9 @@ class BackupRunTests(unittest.TestCase):
         untouched_after = sorted(p.name for p in self.backups.iterdir()
                                  if p.name not in old and p.name not in failed and p.name != new)
         self.assertEqual(untouched_after, untouched_before)
+        for name in ('owner-copy', 'cc_v1-manual', 'cc_v1-0-manual', 'cc_v1-20000106T000000Z-copy',
+                     'old-cc_v1-20000107T000000Z'):
+            self.assertTrue((self.backups / name / 'manifest.json').is_file(), name)
         self.assertTrue((outside / 'manifest.json').exists())
         doc, _ = self.status()
         self.assertEqual(doc['kept'], 30)

@@ -242,12 +242,21 @@ def promote_v1(args):
 # (`capture_v1`) add `ssh console`/`ssh sftp get` on the database app: a
 # read-only psql session, `pg_dump` into a temporary file, its download and
 # removal. Node HTTP is GET-only through ReadOnlyNode.
-UPDATE_FLY = (('machines', 'list'), ('secrets', 'list'), ('deploy',), ('scale', 'count', '1'))
+# `deploy` is allowed only as the exact argv `deploy_argv` builds for this run.
+UPDATE_FLY = (('machines', 'list'), ('secrets', 'list'), ('scale', 'count', '1'))
 ROLLOUT_ATTEMPTS = 12
 
 
-def update_fly(*args):
-    if not any(tuple(args[:len(allowed)]) == allowed for allowed in UPDATE_FLY):
+def deploy_argv(app, config, image):
+    return ('deploy', '--app', app, '--config', config, '--ha=false', '--no-public-ips',
+            '--image', image)
+
+
+def update_fly(*args, expected_deploy=None):
+    if args[:1] == ('deploy',):
+        if expected_deploy is None or tuple(args) != tuple(expected_deploy):
+            raise RuntimeError('v1-update refuses a flyctl deploy other than the exact digest')
+    elif not any(tuple(args[:len(allowed)]) == allowed for allowed in UPDATE_FLY):
         raise RuntimeError('v1-update refuses flyctl ' + ' '.join(args[:2]))
     return fly(*args)
 
@@ -304,6 +313,7 @@ def promote_v1_update(args):
               'automatic_rollback': False, 'secret_names': secret_names,
               'node_seed': 'present' if NODE_SEED in secret_names else 'absent'}
     (evidence / 'rollback.json').write_text(json.dumps(record, indent=2))
+    expected_deploy = deploy_argv(args.app, args.config, args.image)
     deployed = False
     try:
         # 1. Identity gate: expected == stored rule identity == /health.
@@ -325,9 +335,10 @@ def promote_v1_update(args):
         if backup['state'] != 'bound' or backup['commitment'] != pre['commitment']:
             raise CommitmentChanged('pre-deploy backup does not hold the observed commitment')
         # 3. Exact-digest deploy; `cc-node provision-v1` runs as the release command.
+        # Set before the call: a deploy that fails or is interrupted may still
+        # have started a rollout, so it is reported as such.
         deployed = True
-        update_fly('deploy', '--app', args.app, '--config', args.config, '--ha=false',
-                   '--no-public-ips', '--image', args.image)
+        update_fly(*expected_deploy, expected_deploy=expected_deploy)
         update_fly('scale', 'count', '1', '--process-group', 'app', '--app', args.app, '--yes')
         # 4. Read-only post checks.
         fleet, health_after = wait_for_rollout(args.app, node, args.sha, args.image.split('@')[1])
@@ -360,7 +371,7 @@ def promote_v1_update(args):
                                                          'commitment_basis', 'dump_sha256')}}
         (evidence / 'acceptance.json').write_text(json.dumps(result, indent=2))
         return result
-    except Exception as error:
+    except BaseException as error:  # KeyboardInterrupt too: the record must exist
         (evidence / 'FAILED').write_text(
             'v1 update failed ' + ('after the deploy started' if deployed else 'before the deploy') + '. '
             'No automatic rollback: see docs/OPERATIONS.md.\n')

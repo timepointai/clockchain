@@ -206,6 +206,11 @@ python3 ops/schedule_backups.py remove                                          
 - `install` writes `~/Library/LaunchAgents/local.clockchain.backup.plist`, then
   boots out any loaded copy and bootstraps the new one. Rerun it to change the
   time.
+- The plist pins the interpreter that ran `install`, so install with one where
+  `python3 -c "import plistlib, cryptography"` succeeds and
+  `pip install -r ops/requirements.txt` has run. `install` checks this first
+  (plistlib, pyexpat, cryptography and the job's own imports) and refuses with
+  an actionable message otherwise; some Homebrew builds cannot load pyexpat.
 - The plist names only the interpreter, the script, the env file and a log
   file (`<CC_OPS_STATE_DIR>/local.clockchain.backup.log`). It also captures the
   install-time `PATH`, so `flyctl` and `docker` must be on it. Install with the
@@ -275,7 +280,7 @@ the run exits 0 silently.
 | --- | --- |
 | `identity_drift` | `/health` identity differs, is malformed or is not JSON |
 | `not_ready` | `/ready` non-200 (after `busy` retries) or not serving |
-| `unreachable` | Proxy exited or `/health` never answered 200 within 30 s (a node answering 503 lands here), or a network error |
+| `unreachable` | Proxy exited or `/health` never answered 200 within the proxy's 30 attempts (each a probe of up to 5 s plus 1 s, so up to about 180 s; a node answering 503 lands here), or a network error |
 | `configuration` | Env file or state directory unsafe or incomplete |
 | `error` | Anything else |
 
@@ -286,7 +291,7 @@ an external uptime check.
 
 - Scheduled jobs use `fly_proxy.FlyProxy`:
   `flyctl proxy <random port>:80 <app>.flycast -a <app> --bind-addr 127.0.0.1`
-  on a fresh loopback port, up to 30 s for `/health` 200, stopped through its
+  on a fresh loopback port, up to 30 attempts (about 180 s at most) for `/health` 200, stopped through its
   own Popen handle (terminate, then kill after 10 s).
 - An existing proxy, your interactive one included, is never reused or
   touched. Nothing signals by name or port (no `pkill` or `killall`).
@@ -295,8 +300,9 @@ an external uptime check.
   pidfile found at start was left by a crashed run of the same job. That
   process is **never signalled**: this run did not start it. If it is alive
   and its `ps` command line equals the recorded argv (random port included),
-  the log records `previous proxy pid <pid> is still running` for you to stop
-  by hand; the stale pidfile is removed either way. launchd normally removes
+  the log records `previous proxy pid <pid> is still running`, the job's status
+  JSON gets `proxy_orphan: <pid>` and a notification asks you to stop it by
+  hand; the stale pidfile is removed either way. launchd normally removes
   such a child with the job's process group.
 - The proxy log is started afresh once it exceeds 1 MiB.
 - The release opens its own random-port loopback proxy and stops it in a

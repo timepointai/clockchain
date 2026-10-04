@@ -75,10 +75,15 @@ def run(env_file, *, proxy=FlyProxy, notify=owner_jobs.notify, stderr=sys.stderr
         with owner_jobs.JobLock(state, 'monitor') as locked:
             if not locked:
                 return 0  # the previous check is still running; it will report
-            with proxy(app, state, 'monitor') as url:
+            tunnel = proxy(app, state, 'monitor')
+            with tunnel as url:
                 result = check(url, expected)
+        orphan = owner_jobs.proxy_orphan(tunnel)
         owner_jobs.write_status(state / STATUS, {
-            'schema': SCHEMA, 'result': 'ok', 'checked_at': started.isoformat(), **result})
+            'schema': SCHEMA, 'result': 'ok', 'checked_at': started.isoformat(), **result,
+            **orphan})
+        if orphan:
+            notify('Clockchain monitor', owner_jobs.orphan_message(orphan))
         return 0
     except Exception as error:
         kind = classify(error)
@@ -110,6 +115,8 @@ def main(argv=None):
     Expected.from_env(env, production=True)
     owner_jobs.require(env, 'CC_FLY_APP')
     state = owner_jobs.private_dir(owner_jobs.require(env, 'CC_OPS_STATE_DIR')[0])
+    if args.command == 'install':
+        owner_jobs.check_interpreter(sys.executable, owner_jobs.JOB_IMPORTS + ('monitor_v1',))
     data = owner_jobs.plist(LABEL, __file__, args.env_file, state, interval=INTERVAL)
     if args.command == 'generate':
         sys.stdout.write(data.decode())

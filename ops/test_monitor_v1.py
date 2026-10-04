@@ -93,6 +93,19 @@ class FakeProxy:
             self.open -= 1
 
 
+class OrphanReportingProxy(FakeProxy):
+    """A proxy that found a previous run's proxy still running (pid only; never signalled)."""
+
+    def __init__(self, pid):
+        super().__init__()
+        self.pid = pid
+
+    def __call__(self, app, state, job):
+        context = super().__call__(app, state, job)
+        context.orphan_pid = self.pid
+        return context
+
+
 class MonitorRunTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -161,6 +174,17 @@ class MonitorRunTests(unittest.TestCase):
         self.assertIs(doc['ready'], True)
         self.assertEqual(node.paths(), ['/health', '/ready'])
         self.assertEqual(self.proxy.calls, [(APP, self.state, 'monitor')])
+        self.assertNotIn('proxy_orphan', doc)
+
+    def test_orphaned_proxy_is_recorded_and_notified(self):
+        code, stderr = self.run_monitor(FakeNode(), proxy=OrphanReportingProxy(4242))
+        self.assertEqual((code, stderr), (0, ''))
+        doc, _ = self.status()
+        self.assertEqual((doc['result'], doc['proxy_orphan']), ('ok', 4242))
+        self.assertEqual(len(self.notes), 1)
+        self.assertEqual(self.notes[0][0], 'Clockchain monitor')
+        self.assertIn('pid 4242', self.notes[0][1])
+        self.assertIn('left alone', self.notes[0][1])
 
     def test_identity_drift_alerts(self):
         cases = {'instance': health_doc(instance='22' * 32),

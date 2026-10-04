@@ -99,7 +99,8 @@ def backup(env, backup_dir, state, *, proxy=FlyProxy, capture=capture_v1, machin
     app = env['CC_FLY_APP']
     image = deployed_image(app, machines)
     auth()
-    with proxy(app, state, 'backup') as url:
+    tunnel = proxy(app, state, 'backup')
+    with tunnel as url:
         node = ReadOnlyNode(url)
         status, raw = node.get('/health')
         if status != 200:
@@ -125,7 +126,7 @@ def backup(env, backup_dir, state, *, proxy=FlyProxy, capture=capture_v1, machin
         except OSError:
             pass  # the original error matters more than the rename
         raise
-    return bundle, report, image
+    return bundle, report, image, owner_jobs.proxy_orphan(tunnel)
 
 
 def run(env_file, *, notify=owner_jobs.notify, stderr=sys.stderr, **kwargs):
@@ -139,7 +140,7 @@ def run(env_file, *, notify=owner_jobs.notify, stderr=sys.stderr, **kwargs):
         with owner_jobs.JobLock(state, 'backup') as locked:
             if not locked:
                 raise RuntimeError('another backup run holds the lock')
-            bundle, report, image = backup(env, backup_dir, state, **kwargs)
+            bundle, report, image, orphan = backup(env, backup_dir, state, **kwargs)
             retention = prune(backup_dir)
         owner_jobs.write_status(state / STATUS, {
             'schema': SCHEMA, 'result': 'ok', 'started_at': started.isoformat(),
@@ -147,7 +148,10 @@ def run(env_file, *, notify=owner_jobs.notify, stderr=sys.stderr, **kwargs):
             'state': report['state'], 'counts': report['counts'],
             'corpus_digest': report.get('corpus_digest'), 'commitment': report['commitment'],
             'commitment_basis': report.get('commitment_basis'),
-            'dump_sha256': report['dump_sha256'], 'restore_verified': True, **retention})
+            'dump_sha256': report['dump_sha256'], 'restore_verified': True, **retention,
+            **orphan})
+        if orphan:
+            notify('Clockchain backup', owner_jobs.orphan_message(orphan))
         return 0
     except Exception as error:
         message = owner_jobs.redact(f'{type(error).__name__}: {error}', env)
@@ -184,6 +188,8 @@ def main(argv=None):
     Expected.from_env(env, production=True)
     owner_jobs.private_dir(env['CC_BACKUP_DIR'])
     state = owner_jobs.private_dir(env['CC_OPS_STATE_DIR'])
+    if args.command == 'install':
+        owner_jobs.check_interpreter(sys.executable, owner_jobs.JOB_IMPORTS + ('schedule_backups',))
     data = owner_jobs.plist(LABEL, __file__, args.env_file, state, calendar=when)
     if args.command == 'generate':
         sys.stdout.write(data.decode())

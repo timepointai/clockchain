@@ -13,7 +13,6 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import plistlib
 import re
 import subprocess
 import sys
@@ -78,6 +77,37 @@ def private_dir(path, root=ROOT):
     if info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ConfigError(f'{path.name} must be owned by this user with mode 0700')
     return path
+
+
+def proxy_orphan(tunnel):
+    """`{'proxy_orphan': pid}` when the proxy found a previous run's proxy still running."""
+    pid = getattr(tunnel, 'orphan_pid', None)
+    return {'proxy_orphan': pid} if type(pid) is int else {}
+
+
+def orphan_message(orphan):
+    return (f'a previous fly proxy (pid {orphan["proxy_orphan"]}) is still running; '
+            'it was not started by this run and was left alone. Stop it by hand.')
+
+
+# Imports a scheduled run needs, checked in the interpreter the plist will pin.
+JOB_IMPORTS = ('plistlib', 'pyexpat', 'cryptography')
+
+
+def check_interpreter(python, modules, runner=subprocess.run):
+    """The interpreter launchd will run must import everything the job needs.
+
+    Some Python builds cannot load pyexpat (so plistlib fails), and a venv may
+    lack `ops/requirements.txt`; either would only surface at 09:00.
+    """
+    code = 'import ' + ', '.join(modules)
+    result = runner([python, '-c', code], cwd=str(ROOT / 'ops'), capture_output=True, text=True)
+    if result.returncode:
+        detail = (result.stderr or '').strip().splitlines()[-1:] or ['unknown error']
+        raise ConfigError(f'{python} cannot run this job ({detail[0]}). Install with an '
+                          'interpreter where `python3 -c "import plistlib, cryptography"` succeeds '
+                          'and `pip install -r ops/requirements.txt` has run.')
+    return python
 
 
 def redact(text, env):
@@ -154,6 +184,7 @@ def parse_time(value):
 def plist(label, script, env_file, log_dir, *, calendar=None, interval=None, python=None,
           path_env=None):
     """A LaunchAgent plist. It names files only; values stay in the env file."""
+    import plistlib  # lazily: a broken pyexpat must not stop a scheduled run
     if (calendar is None) == (interval is None):
         raise ValueError('a job has exactly one schedule')
     doc = {'Label': label,

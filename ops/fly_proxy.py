@@ -13,8 +13,9 @@ loopback port. Ownership rules:
   so a pidfile they find was left by a previous run of the same job that died
   before its cleanup ran. That process is never signalled: this run did not
   start it. When the recorded pid is alive with exactly the recorded argv, it
-  is reported as `orphan_left_running` (and logged with its pid) so the owner
-  can stop it; the pidfile is removed either way.
+  is reported as `orphan_left_running`: its pid is logged and exposed as
+  `orphan_pid`, which the jobs put in their status JSON and notify about, so
+  the owner can stop it. The pidfile is removed either way.
 """
 import json
 import os
@@ -75,6 +76,7 @@ class FlyProxy:
         self.argv = None
         self.url = None
         self.reaped = None
+        self.orphan_pid = None
 
     @property
     def pidfile(self):
@@ -93,6 +95,7 @@ class FlyProxy:
         if type(pid) is int and pid > 1 and isinstance(argv, list) and alive(pid) and \
                 command_line(pid, self.runner) == ' '.join(argv):
             outcome = 'orphan_left_running'
+            self.orphan_pid = pid
             with open(self.log_path, 'a') as log:
                 log.write(f'previous proxy pid {pid} is still running; not started by this run, '
                           'left alone\n')
