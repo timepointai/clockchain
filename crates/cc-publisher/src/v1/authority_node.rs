@@ -13,10 +13,10 @@ use super::node::{writable, Health, Node, Submitted, RECEIPT_FILE};
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use cc_core::v1::rule::fold_v1;
 use cc_core::v1::{hash, root_grant, Hash, Payload};
-use cc_ledger::v1::{EventReading, Grant, SubjectReading};
+use cc_ledger::v1::{Effect, EventReading, Grant, SubjectReading};
 use reqwest::{Method, StatusCode};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub const RECEIPT_SCHEMA: &str = "cc.publisher.v1.authority-receipt";
@@ -31,6 +31,8 @@ pub struct Snapshot {
     pub active: BTreeSet<Hash>,
     pub tombstones: BTreeSet<Hash>,
     pub canceled: BTreeSet<Hash>,
+    /// Non-empty authority effects by event.
+    pub effects: BTreeMap<Hash, String>,
 }
 
 fn part<T: serde::de::DeserializeOwned>(v: &mut Value, path: &[&str]) -> Result<T> {
@@ -66,6 +68,11 @@ impl Node {
             active: part(&mut v, &["authority", "active"])?,
             tombstones: part(&mut v, &["authority", "tombstones"])?,
             canceled: part(&mut v, &["authority", "canceled"])?,
+            effects: part::<Vec<(Hash, Effect)>>(&mut v, &["authority", "effects"])?
+                .into_iter()
+                .filter(|(_, e)| !e.reason.is_empty())
+                .map(|(id, e)| (id, e.reason))
+                .collect(),
         })
     }
 }
@@ -165,6 +172,7 @@ impl Snapshot {
                 parents: r.envelope.parents.0.clone(),
                 state: state_name(r),
                 reason: r.reason.clone(),
+                effect: self.effects.get(&r.event).cloned().unwrap_or_default(),
             })
             .collect();
         let ctx = Context {
@@ -422,6 +430,14 @@ async fn submit_unredacted(node: &Node, dir: &Path, allow_untrusted: bool) -> Re
     let (trust, failures) = check(&health, &ctx, &ev);
     let mut warnings = failures.identity;
     if already.is_none() {
+        // Whatever the flags: the node would refuse an event whose signing
+        // grant or target was not issued in its parent's past, and keep it.
+        let mut grants = vec![ev.grant()];
+        if let Operation::Revoke { target, .. } = ev.operation() {
+            grants.push(target);
+        }
+        super::authority::issued_in_past(&ctx, ev.parent(), &grants)
+            .map_err(|e| anyhow!("refusing to submit; nothing was written: {e}"))?;
         warnings.extend(failures.authority);
     }
     if !warnings.is_empty() && !allow_untrusted {
@@ -463,7 +479,7 @@ async fn submit_unredacted(node: &Node, dir: &Path, allow_untrusted: bool) -> Re
         .snapshot()
         .await?
         .context(node, &health, ev.subject())?;
-    let readback = readback(&after, &ev)?;
+    let readback = readback(&after, &ev, already.is_none())?;
     let mut receipt = json!({
         "schema": RECEIPT_SCHEMA,
         "node": node.url(),
@@ -496,24 +512,31 @@ async fn submit_unredacted(node: &Node, dir: &Path, allow_untrusted: bool) -> Re
     })
 }
 
-/// After admission the node must show the event valid and eligible and the
-/// grant change it signs: a Delegate's grant active, held by the grantee
-/// under the signing grant; a Revoke's target tombstoned and, with cascade,
-/// every grant below it tombstoned too.
-fn readback(ctx: &Context, ev: &AuthorityEvent) -> Result<Value> {
+/// After admission the node must show the event valid and authority-eligible
+/// (a root relinquishment is eligible as `root_relinquished`, its terminal
+/// effect) and, for a fresh admission, the grant change it signs: a
+/// Delegate's grant active, held by the grantee under the signing grant; a
+/// Revoke's target tombstoned and, with cascade, every grant below it
+/// tombstoned too. A rerun reports the current grant state without
+/// requiring it, since later events may have changed it.
+fn readback(ctx: &Context, ev: &AuthorityEvent, fresh: bool) -> Result<Value> {
     let row = ctx
         .event(ev.id())
         .context("readback: node does not retain the event after admission")?;
     ensure!(
-        matches!(row.state.as_str(), "head" | "superseded"),
-        "readback: event is {} ({:?}), not an eligible subject event",
+        matches!(row.state.as_str(), "head" | "superseded" | "branch"),
+        "readback: event is {} ({:?}), not a valid subject event",
         row.state,
         row.reason
     );
+    let relinquish = matches!(
+        ev.operation(),
+        Operation::Revoke { target, .. } if target == ev.grant() && target == root_grant(ctx.subject)
+    );
     ensure!(
-        row.reason.is_empty(),
+        row.effect.is_empty() || (relinquish && row.effect == "root_relinquished"),
         "readback: event is suppressed: {}",
-        row.reason
+        row.effect
     );
     let grant_json = |g: &GrantRow| json!({"grant": hex::encode(g.grant), "holder": hex::encode(g.holder), "status": g.status.as_str()});
     let op = match ev.operation() {
@@ -527,7 +550,7 @@ fn readback(ctx: &Context, ev: &AuthorityEvent) -> Result<Value> {
                 hex::encode(g.grant)
             );
             ensure!(
-                g.status == GrantStatus::Active,
+                !fresh || g.status == GrantStatus::Active,
                 "readback: new grant {} is {}",
                 hex::encode(g.grant),
                 g.status.as_str()
@@ -558,12 +581,13 @@ fn readback(ctx: &Context, ev: &AuthorityEvent) -> Result<Value> {
                 "target": grant_json(t),
                 "cascade": cascade,
                 "descendants": below.iter().map(|g| grant_json(g)).collect::<Vec<_>>(),
-                "relinquished_root": target == root_grant(ctx.subject),
+                "relinquished_root": relinquish,
             })
         }
     };
     Ok(json!({
         "event_state": row.state,
+        "event_effect": row.effect,
         "frontier": ctx.frontier.iter().map(hex::encode).collect::<Vec<_>>(),
         "event_is_head": ctx.frontier.contains(&ev.id()),
         "subject_state": ctx.state,
@@ -615,7 +639,13 @@ pub fn summary(done: &Submitted, dir: &Path) -> Option<Vec<String>> {
             dir.join(ENVELOPE_FILE).display()
         ),
         format!(
-            "readback  {effect}; frontier [{}]",
+            "readback  {effect}; subject {}{}; frontier [{}]",
+            rb["subject_state"].as_str().unwrap_or_default(),
+            if rb["subject_state"] == "contested" {
+                " (more than one head: it needs a Resolve)"
+            } else {
+                ""
+            },
             rb["frontier"]
                 .as_array()
                 .map(|f| f

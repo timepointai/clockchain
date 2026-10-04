@@ -39,7 +39,8 @@ pub enum Command {
         /// A directory written by `genesis`, `delegate` or `revoke`.
         #[arg(long)]
         dir: PathBuf,
-        /// Submit even when the instance, fold, curator or filter check fails.
+        /// Submit even when a trust check fails (for a delegate or revoke,
+        /// also the grant, parent and scope checks; see docs/KEYS.md).
         #[arg(long)]
         allow_untrusted: bool,
     },

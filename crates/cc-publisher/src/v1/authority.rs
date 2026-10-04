@@ -89,8 +89,12 @@ pub struct EventRow {
     pub parents: Vec<Hash>,
     /// Projection state: head, superseded, branch, pending or invalid.
     pub state: String,
-    /// Admission refusal or authority suppression reason; empty when eligible.
+    /// The node's projection reason: an admission refusal, an authority
+    /// suppression, or a frontier reading such as `contested`.
     pub reason: String,
+    /// The authority effect alone: empty when authority-eligible, else the
+    /// suppression (`revoked_concurrent`, `revoked_ancestor`, ...).
+    pub effect: String,
 }
 
 /// A subject's authority as one node served it: the grants file.
@@ -175,7 +179,7 @@ impl Context {
     pub fn root_grant(&self) -> Hash {
         root_grant(self.subject)
     }
-    /// Active grants whose lineage strictly contains `grant`.
+    /// Every grant, in any status, whose lineage strictly contains `grant`.
     pub fn descendants(&self, grant: Hash) -> Vec<&GrantRow> {
         self.grants
             .iter()
@@ -291,6 +295,7 @@ impl Context {
                 "parents": hexes(&e.parents),
                 "state": e.state,
                 "reason": e.reason,
+                "effect": e.effect,
             })).collect::<Vec<_>>(),
         })
     }
@@ -341,6 +346,7 @@ impl Context {
                     parents: h32_list(e, "parents")?,
                     state: string(e, "state")?,
                     reason: string(e, "reason")?,
+                    effect: string(e, "effect")?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -599,14 +605,15 @@ pub fn revoke(
             );
             // A suppressed parent would suppress the revoke as its descendant.
             ensure!(
-                e.reason.is_empty(),
+                e.effect.is_empty(),
                 "--parent {} is suppressed ({}); choose an eligible event",
                 hex::encode(p),
-                e.reason
+                e.effect
             );
             p
         }
     };
+    issued_in_past(ctx, parent, &[signer, target.grant])?;
     let mut d = decision(Kind::Revoke, rationale, evidence, parent)?;
     d.old = Value::ActiveGrant(target.grant);
     d.new = Value::RevokedGrant {
@@ -626,6 +633,28 @@ pub fn revoke(
             },
         ),
     )
+}
+
+/// The node checks the signing grant and a Revoke's target in the authority
+/// view of the parent's causal past (`classify`), so each must have been
+/// issued in that past. A root grant is issued by the Genesis, which every
+/// subject event descends from.
+pub fn issued_in_past(ctx: &Context, parent: Hash, grants: &[Hash]) -> Result<()> {
+    let past = ctx.past(parent);
+    for g in grants {
+        let row = ctx
+            .grant(*g)
+            .with_context(|| format!("grant {} is not on this subject", hex::encode(g)))?;
+        ensure!(
+            past.contains(&row.issued_by_event),
+            "grant {} was issued by event {}, which is not in the past of parent {}; \
+             the node would refuse this event",
+            hex::encode(g),
+            hex::encode(row.issued_by_event),
+            hex::encode(parent)
+        );
+    }
+    Ok(())
 }
 
 /// The operation a signed authority event performs.
@@ -803,18 +832,28 @@ impl AuthorityEvent {
             Operation::Revoke { target, cascade } => {
                 line("target", hex::encode(target));
                 line("cascade", cascade.to_string());
-                let below = ctx.descendants(target);
-                let active = below
-                    .iter()
+                let past = ctx.past(self.parent());
+                let active: Vec<_> = ctx
+                    .descendants(target)
+                    .into_iter()
                     .filter(|g| g.status == GrantStatus::Active)
+                    .collect();
+                let kept = active
+                    .iter()
+                    .filter(|g| past.contains(&g.issued_by_event))
                     .count();
                 line(
                     "descendants",
                     if cascade {
-                        format!("{active} active grant(s) below the target are revoked with it")
+                        format!(
+                            "{} active grant(s) below the target are revoked with it",
+                            active.len()
+                        )
                     } else {
                         format!(
-                            "{active} active grant(s) below the target in this revoke's past stay active"
+                            "{kept} active grant(s) below the target issued in this revoke's past \
+                             stay active; {} issued outside it are canceled",
+                            active.len() - kept
                         )
                     },
                 );

@@ -449,7 +449,15 @@ async fn cascade_revokes_the_whole_subtree_and_nothing_else() {
 /// A Revoke built without the publisher's scope check, as a hostile or
 /// mistaken tool would sign it.
 fn unchecked_revoke(k: &SecretKey, ctx: &Context, grant: Hash, target: Hash) -> AuthorityEvent {
-    let parent = ctx.frontier[0];
+    unchecked_revoke_on(k, ctx, grant, target, ctx.frontier[0])
+}
+fn unchecked_revoke_on(
+    k: &SecretKey,
+    ctx: &Context,
+    grant: Hash,
+    target: Hash,
+    parent: Hash,
+) -> AuthorityEvent {
     let parents = Set(vec![parent]);
     let signed = Signed::sign(
         k,
@@ -543,6 +551,29 @@ async fn issuer_scope_is_enforced_offline_by_submit_and_by_the_node() {
     let ctx = n.grants(s).await;
     assert_eq!(status(&ctx, d1.id()), GrantStatus::Active);
     assert_eq!(status(&ctx, d2.id()), GrantStatus::Active);
+
+    // A parent before the target's Delegate: the node checks scope in the
+    // parent's past, where the target does not exist yet. Refused offline,
+    // and by submit even with --allow-untrusted, before anything is written.
+    let choice = RevokeChoice {
+        parent: Some(d1.id()),
+        ..revoke_choice(d2.id(), false)
+    };
+    let text = err(authority::revoke(&root, &ctx, choice, "x", vec![[5; 32]]));
+    assert!(text.contains("is not in the past of parent"), "{text}");
+    let early = unchecked_revoke_on(&root, &ctx, root_grant(s), d2.id(), d1.id());
+    let before = n.candidates().await;
+    let text = err(submit(&n, &early, tmp.path(), "early", true).await);
+    assert!(
+        text.contains("nothing was written") && text.contains("is not in the past of parent"),
+        "{text}"
+    );
+    assert_eq!(n.candidates().await, before);
+    // Likewise a signing grant issued after the parent.
+    let early = unchecked_revoke_on(&hot1, &ctx, d1.id(), d2.id(), s);
+    let text = err(submit(&n, &early, tmp.path(), "early-signer", true).await);
+    assert!(text.contains("is not in the past of parent"), "{text}");
+    assert_eq!(n.candidates().await, before);
 
     // A non-root issuer revokes its own delegate.
     let r = revoke(&hot1, &ctx, d2.id(), false);
@@ -845,5 +876,80 @@ async fn cli_grants_delegate_revoke_and_submit() {
     assert_eq!(code, 1);
     assert!(err_text.contains("nothing was written"), "{err_text}");
     assert!(err_text.contains("is tombstoned"), "{err_text}");
+    n.cleanup.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn root_relinquishment_is_explicit_and_reads_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, root) = keyfile(tmp.path(), "root");
+    let (_, hot) = keyfile(tmp.path(), "hot");
+    let n = TestNode::start(vec![public(&root)]).await;
+    let g = published_genesis(&n, &root, tmp.path()).await;
+    let s = g.subject();
+    let d = delegate(&root, &n.grants(s).await, &hot);
+    submit(&n, &d, tmp.path(), "d", false).await.unwrap();
+    let ctx = n.grants(s).await;
+    let choice = RevokeChoice {
+        relinquish_root: true,
+        ..revoke_choice(root_grant(s), false)
+    };
+    let r = authority::revoke(&root, &ctx, choice, "Relinquish", vec![[6; 32]]).unwrap();
+    let done = submit(&n, &r, tmp.path(), "r", false).await.unwrap();
+    assert_eq!(done.receipt["admission"]["result"], "admitted");
+    assert_eq!(
+        done.receipt["readback"]["revoke"]["relinquished_root"],
+        true
+    );
+    assert_eq!(
+        done.receipt["readback"]["event_effect"],
+        "root_relinquished"
+    );
+    assert_eq!(
+        status(&n.grants(s).await, root_grant(s)),
+        GrantStatus::Tombstoned
+    );
+    // A rerun reports it and still reads back.
+    let again = node::submit(&n.writer(), &tmp.path().join("r"), false)
+        .await
+        .unwrap();
+    assert_eq!(again.receipt["admission"]["result"], "already_admitted");
+    n.cleanup.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoke_on_an_earlier_parent_can_leave_the_subject_contested() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, root) = keyfile(tmp.path(), "root");
+    let (_, hot) = keyfile(tmp.path(), "hot");
+    let n = TestNode::start(vec![public(&root)]).await;
+    let g = published_genesis(&n, &root, tmp.path()).await;
+    let s = g.subject();
+    let d = delegate(&root, &n.grants(s).await, &hot);
+    submit(&n, &d, tmp.path(), "d", false).await.unwrap();
+    // The root's own Correction after the Delegate, then the hot key's.
+    let ctx = n.grants(s).await;
+    let mine = b"The root's own correction.\n";
+    let c_root = correction(&root, &ctx, root_grant(s), d.id(), hash(&g.body), mine);
+    assert_eq!(post(&n, &c_root, mine).await.0, StatusCode::CREATED);
+    let bad = b"Hostile body.\n";
+    let c_hot = correction(&hot, &ctx, d.id(), c_root.id(), hash(mine), bad);
+    assert_eq!(post(&n, &c_hot, bad).await.0, StatusCode::CREATED);
+    // Revoking on the Delegate leaves the root's Correction outside the
+    // revoke's past but eligible: two heads. The publisher reports it.
+    let ctx = n.grants(s).await;
+    let choice = RevokeChoice {
+        parent: Some(d.id()),
+        ..revoke_choice(d.id(), true)
+    };
+    let r = authority::revoke(&root, &ctx, choice, "Too early", vec![[7; 32]]).unwrap();
+    let done = submit(&n, &r, tmp.path(), "r", true).await.unwrap();
+    assert_eq!(done.receipt["readback"]["subject_state"], "contested");
+    let ctx = n.grants(s).await;
+    let mut heads = vec![c_root.id(), r.id()];
+    heads.sort();
+    assert_eq!(ctx.frontier, heads);
+    assert_eq!(ctx.event(c_hot.id()).unwrap().effect, "revoked_concurrent");
+    assert!(node::summary(&done, &tmp.path().join("r"))[1].contains("it needs a Resolve"));
     n.cleanup.cleanup().await;
 }
