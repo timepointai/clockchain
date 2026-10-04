@@ -17,11 +17,13 @@ This document records evidence. It does not close, resolve or dispose of any gat
   checked by grepping that line for the name.
 - **Kinds.** *PG* is an integration test against a real PostgreSQL database
   (`cc_testkit` ephemeral databases; CI and the local gate use PostgreSQL 18).
-  *HTTP* drives a real router over a socket. *Pure* runs the in-memory fold.
-  *Oracle* compares Rust against the Stage 0 Python reference model. *Unit* is a
-  plain `cc-core` test.
-- **Assertions.** Every test listed asserts a specific outcome: a status, reason
-  code, commitment or byte comparison. The Stage 0 checker additionally
+  *HTTP* drives a real router over a socket. *Binary* runs the built `cc-node`
+  executable. *Pure* runs the in-memory fold. *Oracle* compares Rust against the
+  Stage 0 Python reference model. *Unit* is a test with no database. *Census*
+  checks that a list covers every route.
+- **Assertions.** Every test listed asserts a specific outcome, such as a
+  status, reason code, commitment or byte comparison; the one weaker test is
+  marked under Gate 7. The Stage 0 checker additionally
   requires each of its seven one-rule mutants to be killed
   (`docs/design/stage0/mutants.py:22`).
 - **PRs.** The stage PRs, merge commits and `main` CI runs are listed in the
@@ -62,7 +64,7 @@ order authority, frontiers or revocation (fold manifest
 | --- | --- | --- | --- |
 | `i2_parent_authority_and_surviving_join_grant` | `crates/cc-ledger/tests/v1_projection_differential.rs:414` | PG, oracle | An unauthorized author, wrong grant, branch-only delegate or revoked resolver is invalid with `parent_authority` |
 | `i6_asserted_time_and_receipt_noninterference` | `crates/cc-ledger/tests/v1_projection_differential.rs:603` | Pure, PG | Re-signing with different asserted times changes ids but no decision; forged receipts and bodies leave the snapshot unchanged |
-| `as_of_reads_follow_the_fold_and_never_reauthorize` | `crates/cc-ledger/tests/v1_invariants.rs:243` | PG | A backdated out-of-cut correction stays `revoked_concurrent` at every `as_of` |
+| `as_of_reads_follow_the_fold_and_never_reauthorize` | `crates/cc-ledger/tests/v1_invariants.rs:243` | PG | A backdated out-of-cut correction is `revoked_concurrent`, and `as_of` never changes the frontier |
 | `receipts_are_separate_untrusted_observations_and_cannot_install_authority` | `crates/cc-ledger/tests/v1_authority.rs:117` | PG | A receipt cannot change authority, and event ingress refuses receipts |
 | `stage_b_grants_revocations_suppression_acknowledgment_and_time_match_model` | `crates/cc-ledger/tests/v1_authority_differential.rs:149` | Oracle | Rust authority equals the reference model across DAGs and asserted-time variants |
 | `v1_curator_root_is_not_subject_authority` | `crates/cc-ledger/tests/v1_invariants.rs:105` | Pure | A curator correcting another author's subject is `parent_authority` |
@@ -126,7 +128,7 @@ subject authority. **PRs:** #7, #9, #10, #16.
 | `concurrent_arrival_recomputes_effective_tombstones_and_replay` | `crates/cc-ledger/tests/v1_authority.rs:173` | PG | Effective revocations are recomputed as arrivals change |
 | `freeze_and_counterclaim_have_independent_subject_authority` | `crates/cc-ledger/tests/v1_projection.rs:168` | Pure | A frozen subject has no current body; a counterclaim is a separate subject |
 | `cascade_is_required_canonical_and_signed` | `crates/cc-core/tests/v1_encoding.rs:150` | Unit | The cascade flag is signed and canonical |
-| `the_v1_credential_scope_matrix_holds_in_both_postures` | `crates/cc-node/tests/credential_scope.rs:534` | PG, HTTP | A bearer credential grants route scope only |
+| `the_v1_credential_scope_matrix_holds_in_both_postures` | `crates/cc-node/tests/credential_scope.rs:534` | PG, HTTP | Each credential reaches exactly its scoped routes, live and frozen |
 | `every_v1_route_appears_in_the_v1_matrix` | `crates/cc-node/tests/credential_scope.rs:610` | Census | No v1 route escapes the scope matrix |
 | `every_route_is_scoped_and_refused_writes_store_nothing` | `crates/cc-node/tests/v1_serving.rs:229` | PG, HTTP | A refused write stores nothing |
 
@@ -156,7 +158,7 @@ grant. An ordinary Attestation has no resolution or delegation power.
 
 | Test | Location | Kind | Asserts |
 | --- | --- | --- | --- |
-| `v1_decision_payload_matches_transition` | `crates/cc-ledger/tests/v1_invariants.rs:151` | Pure | Changing any decided field on any transition is `decision_mismatch` |
+| `v1_decision_payload_matches_transition` | `crates/cc-ledger/tests/v1_invariants.rs:151` | Pure | Changing a decision's old value, new value or kind on Correction, Delegate, Revoke, Resolve, EdgeAssert or EdgeReaffirm, or its rationale, evidence or parents on Correction, is `decision_mismatch` |
 | `v1_canonical_author_bound_roundtrip` | `crates/cc-core/tests/v1_encoding.rs:101` | Unit | Author, grant, parents and decisions are signed identity |
 | `exact_parent_grants_scope_decisions_and_inherited_body` | `crates/cc-ledger/tests/v1_authority.rs:10` | Pure | Decision mutations are invalid |
 | `resolve_and_media_are_checked_while_stage_e_cannot_grant_readiness` | `crates/cc-ledger/tests/v1_admission.rs:165` | PG | An Attestation is valid but carries no authority |
@@ -167,8 +169,11 @@ grant. An ordinary Attestation has no resolution or delegation power.
 **Decision.** One `admit()` for HTTP, import, restore and publisher submission.
 v0 and raw-supersedes ingress are excluded from v1. **PRs:** #8, #16, #14.
 
-`Store::admit` is `crates/cc-ledger/src/v1.rs:480`. Import and restore call it
-for each envelope and are compiled only with the `review` feature. The v1 HTTP
+`Store::admit` is `crates/cc-ledger/src/v1.rs:480`. Raw import and restore call
+it for each envelope and are compiled only with the `review` feature. Verified
+restore, `Store::restore_export` (`crates/cc-ledger/src/v1/rule.rs:314`), is not
+feature-gated: it checks the fold, rule identity, instance, corpus digest and
+commitment, then admits each envelope through the same `admit`. The v1 HTTP
 handler calls it (`crates/cc-node/src/serve_v1.rs:376`). The publisher submits
 only over that HTTP route.
 
@@ -182,12 +187,17 @@ only over that HTTP route.
 | `a_database_with_v0_tables_is_refused` | `crates/cc-node/tests/v1_provision.rs:228` | PG | Provisioning refuses a database holding v0 tables |
 | `v1_fresh_store_refuses_even_empty_v0_projection` | `crates/cc-ledger/tests/v1_admission.rs:154` | PG | A v1 store refuses even an empty v0 schema |
 | `i3_total_auditable_classification` | `crates/cc-ledger/tests/v1_invariants.rs:28` | PG | Legacy canon-version-0 bytes are invalid and retained as a rejection |
-| `v1_no_legacy_ingress` | `crates/cc-core/tests/v1_encoding.rs:189` | Unit | A v0 version word fails `Signed::decode` |
+| `v1_strict_versions_sets_utf8_and_bounds` | `crates/cc-core/tests/v1_encoding.rs:119` | Unit | A changed canon version word is `unsupported_encoding`; a changed constants word is `unsupported_constants` |
+| `v1_no_legacy_ingress` | `crates/cc-core/tests/v1_encoding.rs:189` | Unit | Weak: an all-zero buffer fails to decode, and the canon constants are 1 (v1) and 0 (legacy) |
 
 **Limits.** The I7 differential drives the test-only review router; the serving
 router's admission is covered separately by the 201/202/422 test, and both call
-the same `Store::admit`. `v1_no_legacy_ingress` checks decoding only; the
-route and database exclusions are the provisioning and mount tests above.
+the same `Store::admit`. Despite its name, `v1_no_legacy_ingress` overwrites only
+the length prefix of a zero buffer, not the version word, and checks no reason
+code. The real version-word evidence is `i3_total_auditable_classification`
+(a canon-version-0 envelope through `admit`) and
+`v1_strict_versions_sets_utf8_and_bounds`. The route and database exclusions
+are the provisioning and mount tests above.
 
 ## Byte-identical commitments
 
@@ -274,7 +284,11 @@ Tests of this tooling:
 | `test_production_default_never_writes` | `ops/test_v1_checks.py:269` | Production checks are read-only by default |
 
 `ops/test_v1_e2e.py` skips unless `TEST_DATABASE_URL` and v1-capable debug
-binaries are present; `ops/test_v1_backup.py` skips without `TEST_DATABASE_URL`.
+binaries are present, and skips its dump/restore half unless `pg_dump`,
+`pg_restore` and `psql` are version 18. `ops/test_v1_backup.py` skips without
+`TEST_DATABASE_URL` and, for its restore cases, without version 18 client
+tools. A green CI run therefore does not by itself show that the restore halves
+ran.
 
 ## What ran at launch
 

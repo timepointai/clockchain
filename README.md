@@ -42,9 +42,10 @@ part of the v1 service. Nothing here removes them.
   rest) and `cc-node migrate`, which v1 mode refuses.
 - **`cc-anchor-tick`.** The hourly v0 seal and anchor job. v1 runs no tick.
 - **`cc-migrator`.** The v0 exhibit replay writer.
-- **v0 publisher commands.** Every `cc-publisher` command outside `cc-publisher v1`
-  (`validate`, `brief-stage`, `candidate-stage`, `approve-*`, `publish`, `pause`,
-  `resume`, `status` and the rest). They write v0 events straight to a database.
+- **v0 publisher commands.** Every `cc-publisher` command outside
+  `cc-publisher v1` (`validate`, `brief-stage`, `candidate-stage`, `approve-*`,
+  `publish`, `pause`, `resume`, `status` and the rest). Apart from the offline
+  `validate`, they act on the v0 database; `publish` writes v0 events.
 - **The v0 database.** It is kept untouched as an archive. No v1 tool reads or
   writes it.
 
