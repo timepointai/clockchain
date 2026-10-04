@@ -1005,3 +1005,81 @@ async fn a_client_that_disconnects_cannot_cancel_the_probe() {
     gw.stop().await;
     server.abort();
 }
+
+#[tokio::test]
+async fn spoofed_client_ip_headers_are_ignored_without_a_configured_header() {
+    let answer: &'static str =
+        Box::leak(format!("{{\"corpus_digest\":\"{}\"}}", "ab".repeat(32)).into_boxed_str());
+    let (base, server) = odd_node(200, answer, None).await;
+    let limit = [("CC_GATEWAY_RATE_PER_MINUTE", "3")];
+    let statuses = |gw: Gw, spoof: bool| async move {
+        let mut seen = Vec::new();
+        for i in 1..=6 {
+            let ip = format!("192.0.2.{i}");
+            let claims = [
+                ("x-forwarded-for", ip.as_str()),
+                ("fly-client-ip", ip.as_str()),
+                ("x-client-ip", ip.as_str()),
+                ("x-real-ip", ip.as_str()),
+            ];
+            let headers: &[(&str, &str)] = if spoof { &claims } else { &[] };
+            seen.push(
+                gw.raw(Method::GET, "/public/v1/health", headers, vec![])
+                    .await
+                    .0,
+            );
+        }
+        gw.stop().await;
+        seen
+    };
+    let limited = [S::OK, S::OK, S::OK]
+        .into_iter()
+        .chain([S::TOO_MANY_REQUESTS; 3])
+        .collect::<Vec<_>>();
+    // From one socket peer, unspoofed requests get the configured three.
+    let plain = statuses(gateway(&base, READ, &limit).await, false).await;
+    assert_eq!(plain, limited);
+    // Claiming a different client on every request changes nothing, because
+    // no client-IP header is configured: all six share the peer's bucket.
+    let spoofed = statuses(gateway(&base, READ, &limit).await, true).await;
+    assert_eq!(spoofed, limited);
+    server.abort();
+}
+
+#[tokio::test]
+async fn the_cache_key_separates_queries() {
+    let rig = rig().await;
+    let (g, b) = (prose_genesis(), subject(1, 50, 51));
+    rig.admit(&g).await;
+    rig.admit(&b).await;
+    let fresh = [EAGER[0], ("CC_GATEWAY_FRESHNESS_MS", "60000")];
+    let gw = gateway(&rig.node.base, READ, &fresh).await;
+    let (gid, bid) = (hex::encode(g.id()), hex::encode(b.id()));
+    let at = hex::encode([60; 32]);
+    let pairs = [
+        (
+            format!("/public/v1/support?from={gid}&to={bid}"),
+            format!("/public/v1/support?from={bid}&to={gid}"),
+        ),
+        (
+            format!("/public/v1/subjects/{gid}?as_of={at}"),
+            format!("/public/v1/subjects/{gid}"),
+        ),
+    ];
+    for (first, second) in &pairs {
+        let (status, cache, one) = gw.cached(first).await;
+        assert_eq!((status, cache.as_str()), (S::OK, "miss"), "{first}");
+        // Same route, same digest, different query: a different answer, read
+        // from the node rather than served from the first one's entry.
+        let (status, cache, two) = gw.cached(second).await;
+        assert_eq!((status, cache.as_str()), (S::OK, "miss"), "{second}");
+        assert_ne!(one, two, "{first} vs {second}");
+        let private = second.trim_start_matches("/public");
+        assert_eq!(two, rig.direct(private).await.1, "{second}");
+        // Both are cached, each under its own query.
+        assert_eq!(gw.cached(first).await, (S::OK, "hit".into(), one));
+        assert_eq!(gw.cached(second).await, (S::OK, "hit".into(), two));
+    }
+    gw.stop().await;
+    rig.done().await;
+}
