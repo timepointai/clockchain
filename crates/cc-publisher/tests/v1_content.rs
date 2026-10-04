@@ -621,6 +621,11 @@ async fn entry_packet_builds_deterministic_envelopes() {
     std::fs::remove_file(&body).unwrap();
     std::fs::write(&body, "other").unwrap();
     assert!(Packet::load_dir(&t).is_err());
+    // An unlisted file riding along is refused too.
+    let x = tmp.path().join("extra");
+    one.packet.write_dir(&x).unwrap();
+    std::fs::write(x.join("events/02.bin"), b"unreviewed").unwrap();
+    assert!(err(Packet::load_dir(&x).map(|_| ()).unwrap_err()).contains("does not list"));
 
     // Submission needs the exact approved digest; nothing is written otherwise.
     let wrong = entry_submit::submit(&n.writer(), &d1, [0; 32]).await;

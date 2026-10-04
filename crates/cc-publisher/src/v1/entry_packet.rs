@@ -394,11 +394,48 @@ impl Packet {
             manifest,
         };
         p.check()?;
+        p.only_listed_files(dir)?;
         ensure!(
             p.render()? == raw,
             "{PACKET_FILE} does not match the packet's envelopes and bodies"
         );
         Ok(p)
+    }
+
+    /// A packet directory holds exactly the files `write_dir` writes, so
+    /// nothing unreviewed rides along.
+    fn only_listed_files(&self, dir: &Path) -> Result<()> {
+        let names = |d: &Path| -> Result<Vec<String>> {
+            let mut v = fs::read_dir(d)
+                .with_context(|| format!("read {}", d.display()))?
+                .map(|e| Ok(e?.file_name().to_string_lossy().into_owned()))
+                .collect::<Result<Vec<_>>>()?;
+            v.sort();
+            Ok(v)
+        };
+        let mut top = vec![PACKET_FILE.to_owned(), EVENTS_DIR.into(), BODIES_DIR.into()];
+        if self.manifest.is_some() {
+            top.push(MANIFEST_FILE.into());
+        }
+        top.sort();
+        let found = names(dir)?;
+        let mut events: Vec<_> = (0..self.events.len())
+            .map(|i| format!("{i:02}.bin"))
+            .collect();
+        events.sort();
+        let bodies: Vec<_> = self
+            .bodies
+            .keys()
+            .map(|k| format!("{}.bin", h(k)))
+            .collect();
+        ensure!(
+            found == top
+                && names(&dir.join(EVENTS_DIR))? == events
+                && names(&dir.join(BODIES_DIR))? == bodies,
+            "{} holds files the packet does not list",
+            dir.display()
+        );
+        Ok(())
     }
 
     /// The review summary every build command prints.
