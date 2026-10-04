@@ -22,7 +22,7 @@
 //! Long-running work is a subcommand invoked by the platform's job primitive.
 
 use cc_node::{
-    config::{Config, Ledger, V1Config},
+    config::{Config, Ledger, V1Config, V1Serving},
     router, serve_v1,
     state::AppState,
 };
@@ -96,7 +96,12 @@ async fn run_provision_v1() {
 /// the stored identity is verified first, and any mismatch stops the process.
 /// It never provisions or binds; `provision-v1` does that.
 async fn run_server_v1() {
-    let (config, v1) = match Config::from_env().and_then(|c| Ok((c, V1Config::from_env()?))) {
+    let configured = Config::from_env().and_then(|c| {
+        let v1 = V1Config::from_env()?;
+        let serving = V1Serving::from_env(&v1)?;
+        Ok((c, v1, serving))
+    });
+    let (config, v1, serving) = match configured {
         Ok(c) => c,
         Err(e) => {
             eprintln!("cc-node: refusing to start — {e}");
@@ -111,6 +116,8 @@ async fn run_server_v1() {
         }
     };
     let state = serve_v1::V1State::build(store, &readiness, &config, &v1);
+    let read_concurrency = serving.read_concurrency;
+    let serving = serve_v1::Serving::from_config(serving);
 
     tracing::info!(
         bind = %config.bind,
@@ -119,6 +126,9 @@ async fn run_server_v1() {
         ledger = "v1",
         instance = %hex::encode(v1.instance),
         filter_version = %hex::encode(v1.filter.version()),
+        read_concurrency,
+        // The public key only, or "off"; the seed is never formatted.
+        node_key = %serving.node_key().map_or("off".into(), hex::encode),
         "cc-node starting"
     );
 
@@ -130,7 +140,7 @@ async fn run_server_v1() {
         }
     };
 
-    axum::serve(listener, serve_v1::router(state))
+    axum::serve(listener, serve_v1::router_with(state, serving))
         .await
         .expect("serve");
 }

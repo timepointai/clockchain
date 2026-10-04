@@ -4,8 +4,10 @@ The same sequence `v1_acceptance.accept_v1` runs inside Docker, with the
 workspace's debug `cc-node` and `cc-publisher` as local processes instead of the
 exact image: refused migrate, idempotent provision, zero check, synthetic
 Genesis through the publisher, populated check, `pg_dump -n cc_v1` restore with
-an identity check and equal commitment, and `backup_restore.py --v1`. Skipped
-unless TEST_DATABASE_URL is set and both binaries implement v1.
+an identity check and equal commitment, and `backup_restore.py --v1`; and the
+update scenario `v1_acceptance.accept_v1_update` runs, with the same binary
+standing in for the new image. Skipped unless TEST_DATABASE_URL is set and both
+binaries implement v1.
 """
 import json
 import os
@@ -23,9 +25,10 @@ from urllib.parse import urlsplit, urlunsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v1_acceptance import (IDENTITY_MISMATCH, MIGRATE_REFUSED, SYNTHETIC_BODY, SYNTHETIC_KIND,
                            check_provision)
-from v1_backup import RELATIONS
+from v1_backup import RELATIONS, fingerprint_v1
 from v1_checks import check_v1_populated, check_v1_zero, http, load_entry
 from v1_identity import Expected
+from v1_update import ReadOnlyNode, observe, require_identity, require_ready, require_unchanged
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = ROOT / 'target/debug/cc-node'
@@ -101,9 +104,9 @@ class V1EndToEnd(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
-    def serve(self, url):
+    def serve(self, url, **extra):
         port = free_port()
-        process = subprocess.Popen([str(NODE), 'serve'], env=self.node_env(url, PORT=str(port)),
+        process = subprocess.Popen([str(NODE), 'serve'], env=self.node_env(url, PORT=str(port), **extra),
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.processes.append(process)
         base = f'http://127.0.0.1:{port}'
@@ -115,6 +118,21 @@ class V1EndToEnd(unittest.TestCase):
                 pass
             time.sleep(0.1)
         self.fail('node did not serve')
+
+    def stop_last(self):
+        process = self.processes.pop()
+        process.terminate()
+        process.wait(timeout=10)
+
+    def sql(self, url):
+        """`psql -At`-style output of a read-only session: rows by newline, columns by '|'."""
+        def run(query):
+            with self.psycopg.connect(url) as conn:
+                conn.read_only = True
+                rows = conn.execute(query).fetchall()
+            text = lambda c: c.decode() if isinstance(c, bytes) else str(c)  # SQL_ASCII returns bytes
+            return '\n'.join('|'.join(text(c) for c in row) for row in rows)
+        return run
 
     def test_release_sequence_and_backup(self):
         self.key, self.read_key, self.instance = (secrets.token_hex(32) for _ in range(3))
@@ -192,6 +210,57 @@ class V1EndToEnd(unittest.TestCase):
         self.assertEqual(manifest['commitment'], populated['commitment'])
         self.assertEqual(manifest['counts']['candidates'], 1)
         self.assertTrue(all(v == 'proven' for v in manifest['guards'].values()))
+
+
+    def test_update_over_populated_store_keeps_commitments(self):
+        self.key, self.read_key, self.instance = (secrets.token_hex(32) for _ in range(3))
+        self.curator = self.publisher('keygen', '--out', str(self.tmp / 'curator.seed')).strip()
+        expected = Expected(self.instance, self.curator, '4')
+        _, source = self.database()
+        first = self.node('provision-v1', env=self.node_env(source))
+        self.assertEqual(first.returncode, 0, first.stderr)
+        identity = check_provision(json.loads(first.stdout), expected)
+        base = self.serve(source)
+        (self.tmp / 'body.txt').write_bytes(SYNTHETIC_BODY)
+        out = self.tmp / 'genesis'
+        self.publisher('genesis', '--key', str(self.tmp / 'curator.seed'), '--instance',
+                       self.instance, '--kind', SYNTHETIC_KIND, '--namespace', 'cc.test',
+                       '--value', 'e2e-' + secrets.token_hex(4), '--body', str(self.tmp / 'body.txt'),
+                       '--asserted-time', '2000-01-01', '--out', str(out))
+        self.publisher('submit', '--node', base, '--dir', str(out), env={'CC_NODE_API_KEY': self.key})
+
+        fingerprint = lambda: fingerprint_v1(self.sql(source))
+        old = ReadOnlyNode(base)
+        served = require_identity(old.json('/health'), expected)
+        before = observe(old, self.key, self.read_key)
+        self.assertNotEqual(before['commitment'], expected.empty_commitment)
+        rows = fingerprint()
+        self.assertEqual({t: v['rows'] for t, v in rows.items()},
+                         {'bodies': 1, 'candidates': 1, 'identity': 1, 'receipts': 0,
+                          'rejections': 0, 'rule_identity': 1})
+        self.stop_last()
+        with self.assertRaises(OSError):  # the previous node no longer answers
+            http(base, 'GET', '/health')
+
+        # The new image's release command over the populated store: a no-op.
+        again = self.node('provision-v1', env=self.node_env(source))
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(json.loads(again.stdout), identity)
+        self.assertEqual(fingerprint(), rows)
+        refused = self.node('provision-v1', env=self.node_env(source, CC_V1_INSTANCE=secrets.token_hex(32)))
+        self.assertEqual(refused.returncode, IDENTITY_MISMATCH, refused.stderr)
+        self.assertEqual(fingerprint(), rows)
+
+        # The new node, with a synthetic node seed, serves the same view byte for byte.
+        node = ReadOnlyNode(self.serve(source, CC_V1_NODE_SEED=secrets.token_hex(32)))
+        self.assertEqual(require_identity(node.json('/health'), expected), served)
+        require_ready(node)
+        after = observe(node, self.key, self.read_key)
+        unchanged = require_unchanged(before, after)
+        self.assertEqual(unchanged['commitment'], before['commitment'])
+        self.assertEqual(after['export'], before['export'])
+        self.assertEqual(fingerprint(), rows)
+        self.assertEqual({method for method, _ in old.requests + node.requests}, {'GET'})
 
 
 if __name__ == '__main__':

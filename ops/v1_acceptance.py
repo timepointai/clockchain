@@ -13,6 +13,12 @@ Sequence: empty database; `migrate` refused in v1 mode; `provision-v1`
 Genesis + `submit`; `check_v1_populated`; `pg_dump -n cc_v1` restored into a
 fresh empty database; `provision-v1` identity check; equal snapshot commitment
 and byte-equal export from the restored node.
+
+`accept_v1_update` is the update scenario: the image production runs now
+provisions and serves a synthetic store holding one synthetic Genesis; then
+the new image's `provision-v1` must leave every row untouched (a no-op), a
+mismatched identity must still be refused, and the new image must serve the
+same identity, corpus digest, view commitment and byte-identical export.
 """
 import argparse
 import hashlib
@@ -28,8 +34,9 @@ import time
 import uuid
 
 from v1_checks import check_v1_populated, check_v1_zero, http, load_entry
-from v1_backup import RELATIONS, prove_guards
+from v1_backup import RELATIONS, fingerprint_v1, prove_guards
 from v1_identity import TABLES, Expected, hexbytes
+from v1_update import ReadOnlyNode, observe, require_identity, require_unchanged, summary
 
 PREFIX = 'cc-accept-v1-'
 MIGRATE_REFUSED = 78
@@ -68,7 +75,7 @@ def envfile(directory, name, values):
 
 def synthetic_node(app):
     """The only node a synthetic write may target: this run's own container."""
-    if not re.fullmatch(re.escape(PREFIX) + r'[0-9a-f]{12}-(app|restored)', app):
+    if not re.fullmatch(re.escape(PREFIX) + r'[0-9a-f]{12}-(app|restored|previous)', app):
         raise ValueError('synthetic writes only target a temporary acceptance node')
     return f'http://{app}:8080'
 
@@ -327,6 +334,155 @@ def accept_v1(image, sha, evidence):
                 marker.write('cleanup failed: ' + ', '.join(failures) + '\n')
             raise RuntimeError('temporary acceptance cleanup failed: ' + ', '.join(failures))
 
+
+
+def pinned_image(image, app):
+    """`registry.fly.io/<app>[:tag]@sha256:<hex>` as the tagless digest reference."""
+    name, _, digest = image.partition('@')
+    repo, _, tag = name.rpartition(':') if ':' in name.rsplit('/', 1)[-1] else (name, '', '')
+    pinned = f'{repo}@{digest}'
+    if not re.fullmatch(r'registry\.fly\.io/' + re.escape(app) + r'@sha256:[0-9a-f]{64}', pinned):
+        raise ValueError('current production image is not a pinned digest of the target app')
+    return pinned
+
+
+def accept_v1_update(previous, image, sha, evidence, *, node_seed=False):
+    """An image upgrade over a populated synthetic store keeps every commitment.
+
+    `previous` (the image production runs now) provisions, serves and admits one
+    synthetic Genesis; `image` then takes the same database over. Its
+    `provision-v1` must be a no-op (every table's rows identical), it must
+    still refuse a mismatched identity, and it must serve the same identity,
+    corpus digest, view commitment and byte-identical export. With
+    `node_seed`, the new node runs with a random synthetic CC_V1_NODE_SEED, as
+    production would. Everything is local, synthetic and removed afterwards.
+    """
+    for ref in (previous, image):
+        if not re.fullmatch(r'.+@sha256:[0-9a-f]{64}', ref):
+            raise ValueError('update acceptance requires immutable image digests')
+    if not re.fullmatch(r'[0-9a-f]{40}', sha):
+        raise ValueError('acceptance requires the full source SHA')
+    evidence = Path(evidence)
+    evidence.mkdir(parents=True, mode=0o700, exist_ok=False)
+    ident = PREFIX + uuid.uuid4().hex[:12]
+    db, old, app = ident + '-db', ident + '-previous', ident + '-app'
+    key, read_key, password, instance = [secrets.token_hex(32) for _ in range(4)]
+    owned = []
+    work = Path(tempfile.mkdtemp(prefix='cc-accept-v1-'))
+    private = Path(tempfile.mkdtemp(prefix='cc-accept-v1-env-'))
+    user = f'{os.getuid()}:{os.getgid()}'
+    try:
+        for ref in dict.fromkeys((previous, image)):
+            docker('pull', '--platform', 'linux/amd64', ref)
+            if ref not in json.loads(docker('image', 'inspect', ref))[0].get('RepoDigests', []):
+                raise ValueError('pulled image digest differs from requested image')
+        docker('network', 'create', '--label', 'cc.acceptance=true', ident)
+        owned.append(('network', ident))
+
+        def publisher(*args, network='none', env=None):
+            extra = ('--env-file', env) if env else ()
+            return docker('run', '--rm', '--platform', 'linux/amd64', '--network', network,
+                          '--user', user, '-v', f'{work}:/work', *extra, image,
+                          'cc-publisher', 'v1', *args)
+        curator = single_key(publisher('keygen', '--out', '/work/curator.seed'))
+        expected = Expected(instance, curator, '4')
+        base = {'POSTGRES_PASSWORD': password, 'POSTGRES_DB': 'clockchain',
+                'CC_NODE_API_KEY': key, 'CC_NODE_READ_KEY': read_key,
+                'CC_NODE_POSTURE': 'live', 'PORT': '8080', 'CC_NODE_LEDGER': 'v1',
+                'CC_V1_INSTANCE': instance, 'CC_V1_CURATORS': curator, 'CC_V1_MAX_HOPS': '4',
+                'DATABASE_URL': f'postgres://postgres:{password}@{db}:5432/clockchain'}
+        env = envfile(private, 'node.env', base)
+        new_env = envfile(private, 'update.env', {
+            **base, **({'CC_V1_NODE_SEED': secrets.token_hex(32)} if node_seed else {})})
+        wrong_instance = envfile(private, 'wrong-instance.env', {
+            **base, 'CC_V1_INSTANCE': secrets.token_hex(32)})
+        submit_env = envfile(private, 'submit.env', {'CC_NODE_API_KEY': key})
+
+        owned.append(('container', db))
+        docker('run', '-d', '--name', db, '--network', ident, '--label', 'cc.acceptance=true',
+               '--env-file', env, PG_IMAGE)
+        wait_pg(db)
+        if relation_count(db, 'clockchain'):
+            raise AssertionError('temporary database is not empty')
+        fingerprint = lambda: fingerprint_v1(lambda q: psql(db, 'clockchain', q))
+
+        # 1. The current image provisions, serves and admits one synthetic Genesis.
+        first = check_provision(provision(previous, ident, env), expected)
+        old_url = serve(previous, old, ident, env, owned)
+        (work / 'body.txt').write_bytes(SYNTHETIC_BODY)
+        publisher('genesis', '--key', '/work/curator.seed', '--instance', instance,
+                  '--kind', SYNTHETIC_KIND, '--namespace', SYNTHETIC_NAMESPACE,
+                  '--value', ident, '--body', '/work/body.txt', '--asserted-time', SYNTHETIC_TIME,
+                  '--evidence', hashlib.sha256(b'synthetic acceptance evidence').hexdigest(),
+                  '--out', '/work/genesis')
+        entry = load_entry(work / 'genesis')
+        publisher('submit', '--node', synthetic_node(old), '--dir', '/work/genesis',
+                  network=ident, env=submit_env)
+        old_node = ReadOnlyNode(old_url)
+        identity = require_identity(old_node.json('/health'), expected)
+        before = observe(old_node, key, read_key)
+        stored = counts(db, 'clockchain')
+        if stored['candidates'] != 1:
+            raise AssertionError('the synthetic Genesis was not admitted')
+        rows = fingerprint()
+        docker('rm', '-f', '-v', old)
+        owned.remove(('container', old))
+
+        # 2. The new image's release command is a no-op on the matching store.
+        if check_provision(provision(image, ident, new_env), expected) != first:
+            raise AssertionError('new image provisions a different identity')
+        if fingerprint() != rows:
+            raise AssertionError('new image provision-v1 wrote to a matching store')
+        refused = provision(image, ident, wrong_instance, expect_ok=False)
+        if fingerprint() != rows:
+            raise AssertionError('refused provision-v1 wrote to the store')
+
+        # 3. The new image serves the same identity, commitments and export bytes.
+        url = serve(image, app, ident, new_env, owned)
+        populated = check_v1_populated(url, sha, key, read_key, expected, entry)
+        node = ReadOnlyNode(url)
+        if require_identity(node.json('/health'), expected) != identity:
+            raise AssertionError('identity changed across the upgrade')
+        after = observe(node, key, read_key)
+        unchanged = require_unchanged(before, after)
+        if (populated['corpus_digest'], populated['commitment']) != (before['corpus_digest'],
+                                                                    before['commitment']):
+            raise AssertionError('populated check names another view')
+        if fingerprint() != rows:
+            raise AssertionError('serving the new image wrote to the store')
+        result = {'schema': 'cc.local-acceptance-v1-update.v1', 'previous_image': previous,
+                  'image': image, 'sha': sha, 'result': 'pass', 'counts': stored,
+                  'provision_v1': 'no-op (store fingerprint identical)',
+                  'mismatch_refusal': refused, 'unchanged': unchanged,
+                  'before': summary(before), 'after': summary(after),
+                  'checks': populated['checks'], 'node_seed': bool(node_seed),
+                  'isolation': 'temporary Docker network/PG18, loopback HTTP',
+                  'synthetic_fixture': True}
+        (evidence / 'v1-update.json').write_text(json.dumps(result, indent=2) + '\n')
+        return result
+    except BaseException as error:
+        for container in (old, app, db):
+            logs = subprocess.run(['docker', 'logs', container], capture_output=True, text=True)
+            (evidence / (container + '.log')).write_text(logs.stdout + logs.stderr)
+        detail = getattr(error, 'stderr', None) or ''
+        (evidence / 'FAILED').write_text(type(error).__name__ + ': ' + str(error) + '\n'
+                                         + detail[-4000:])
+        raise
+    finally:
+        failures = []
+        for kind, name in reversed(owned):
+            command = ['docker', 'rm', '-f', '-v', name] if kind == 'container' else ['docker', kind, 'rm', name]
+            if subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+                failures.append(name)
+        for directory in (work, private):
+            shutil.rmtree(directory, ignore_errors=True)
+            if directory.exists():
+                failures.append('temporary directory')
+        (evidence / 'cleanup.json').write_text(json.dumps({'removed': not failures, 'remaining': failures}) + '\n')
+        if failures:
+            with open(evidence / 'FAILED', 'a') as marker:
+                marker.write('cleanup failed: ' + ', '.join(failures) + '\n')
+            raise RuntimeError('temporary acceptance cleanup failed: ' + ', '.join(failures))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
