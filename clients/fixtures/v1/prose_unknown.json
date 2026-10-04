@@ -1,0 +1,12 @@
+{
+  "body": {
+    "error": "revision_unknown"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/revisions/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/prose",
+    "query": {}
+  },
+  "status": 404
+}

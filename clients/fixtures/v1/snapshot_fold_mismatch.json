@@ -1,0 +1,15 @@
+{
+  "body": {
+    "error": "unsupported_fold_version"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/snapshot",
+    "query": {
+      "fold_manifest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "fold_version": "1"
+    }
+  },
+  "status": 409
+}

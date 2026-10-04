@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clockchain-public"
+version = "0.1.0"
+description = "Typed client for the Clockchain v1 public read API (/public/v1)"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools]
+packages = ["clockchain_public"]

@@ -1,0 +1,93 @@
+{
+  "schema": "cc.clients.legacy-probes.v1",
+  "probes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/search?q=synthetic",
+      "credential": "x-service-key",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/moments/synthetic/path",
+      "credential": "none",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/browse",
+      "credential": "x-service-key",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/graph/neighbors/synthetic/path",
+      "credential": "x-service-key",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/figures/search?q=synthetic",
+      "credential": "x-service-key",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/figures/resolve/batch",
+      "credential": "x-service-key",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/index",
+      "credential": "admin-bearer-unknown",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/search?q=synthetic",
+      "credential": "read",
+      "status": 404,
+      "error": "no_such_route",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/entities/1?as_of=0",
+      "credential": "read",
+      "status": 404,
+      "error": "no_such_route",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/mcp/",
+      "credential": "none",
+      "status": 401,
+      "error": "unauthorized",
+      "ledger": null
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "credential": "none",
+      "status": 200,
+      "error": null,
+      "ledger": "v1"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "body": {
+    "error": "no_such_route"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/receipts/8d1760a8aed92c3781ca450658f66e9f5d331805598792171c63ab5ef0c344f5",
+    "query": {}
+  },
+  "status": 404
+}

@@ -1,0 +1,14 @@
+{
+  "body": {
+    "error": "invalid_fold_request"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/snapshot",
+    "query": {
+      "fold_version": "1"
+    }
+  },
+  "status": 400
+}
