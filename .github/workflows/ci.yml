@@ -70,6 +70,19 @@ jobs:
           cargo build -p cc-wasm-vectors --target wasm32-unknown-unknown
           node crates/cc-wasm-vectors/check.mjs target/wasm32-unknown-unknown/debug/cc_wasm_vectors.wasm
 
+      # Stage (g) G6: the in-browser verifier keeps a wasm-clean runtime tree
+      # (no database, runtime, network or RNG crate), builds for wasm32, and the
+      # explorer's tests drive that build against the recorded synthetic fixture
+      # (including an empty host-import table).
+      - name: Wasm verifier and explorer
+        run: |
+          tree="$(cargo tree -p cc-wasm-verify -e normal --target wasm32-unknown-unknown --prefix none)"
+          if printf '%s\n' "$tree" | grep -E '^(sqlx|tokio|reqwest|hyper|axum|getrandom|rand|cc-ledger|cc-node|cc-testkit) '; then
+            echo "cc-wasm-verify runtime tree is not wasm-clean" >&2; exit 1
+          fi
+          cargo build -p cc-wasm-verify --target wasm32-unknown-unknown --release
+          node --test web/explorer/test/*.test.mjs
+
       # The stdlib reference must reproduce the committed vectors byte for byte.
       - name: Rule-vector reference reproduces committed vectors
         run: |

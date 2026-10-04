@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Same-origin only: scripts, styles, the verifier module and the reads.
+     build.sh rewrites connect-src and cc-api-base for a gateway on another
+     origin. 'wasm-unsafe-eval' lets the page compile the verifier module. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="cc-api-base" content="/public/v1">
+<title>Clockchain explorer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1><a href="#/">Clockchain explorer</a></h1>
+  <nav>
+    <a href="#/">Subjects</a>
+    <a href="#/dag">Causal DAG</a>
+    <a href="#/edges">Edges &amp; support</a>
+    <a href="#/verify">Verify in your browser</a>
+  </nav>
+  <p class="source">Read-only. Source: <span id="source"></span></p>
+  <p id="identity" class="identity"></p>
+</header>
+<main id="view"><p>Loading the public reads…</p></main>
+<footer>
+  <p>Every value on this page is what the read API served. “Verify in your browser” recomputes event ids, signatures (given signed bytes), the corpus digest, filter_version and the view commitment. It does not re-run the fold.</p>
+</footer>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
