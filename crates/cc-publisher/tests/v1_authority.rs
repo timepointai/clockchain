@@ -550,6 +550,16 @@ async fn issuer_scope_is_enforced_offline_by_submit_and_by_the_node() {
     let ctx = n.grants(s).await;
     assert_eq!(status(&ctx, d2.id()), GrantStatus::Tombstoned);
     assert_eq!(status(&ctx, d1.id()), GrantStatus::Active);
+    // A revoke failing two checks at once (tombstoned target, out of scope)
+    // is refused with both, before anything is written.
+    let both = unchecked_revoke(&sib, &ctx, d3.id(), d2.id());
+    let before = n.candidates().await;
+    let text = err(submit(&n, &both, tmp.path(), "both", false).await);
+    assert!(
+        text.contains("is tombstoned") && text.contains(scope),
+        "{text}"
+    );
+    assert_eq!(n.candidates().await, before);
     n.cleanup.cleanup().await;
 }
 
@@ -611,6 +621,24 @@ async fn compromise_revoke_on_the_last_good_parent_suppresses_later_acts() {
         .unwrap();
     assert!(ok, "{report}");
     assert_eq!(report["revision"]["id"], hex::encode(g.revision()));
+
+    // A suppressed event is refused as a revoke parent offline.
+    let (_, other) = keyfile(tmp.path(), "other");
+    let ctx = n.grants(s).await;
+    let d_other = delegate(&root, &ctx, &other);
+    submit(&n, &d_other, tmp.path(), "d-other", false)
+        .await
+        .unwrap();
+    let ctx = n.grants(s).await;
+    let choice = RevokeChoice {
+        parent: Some(c.id()),
+        ..revoke_choice(d_other.id(), false)
+    };
+    let text = err(authority::revoke(&root, &ctx, choice, "x", vec![[4; 32]]));
+    assert!(
+        text.contains("is suppressed (revoked_concurrent)"),
+        "{text}"
+    );
 
     // Control: the same compromise revoked on the head keeps the hostile body.
     let tmp2 = tempfile::tempdir().unwrap();

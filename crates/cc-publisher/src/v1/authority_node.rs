@@ -234,20 +234,6 @@ pub struct Trust {
     pub operation: bool,
 }
 impl Trust {
-    fn failures(&self) -> usize {
-        [
-            self.instance,
-            self.fold,
-            self.filter,
-            self.root_is_curator,
-            self.grant_active_and_held,
-            self.parent_current,
-            self.operation,
-        ]
-        .iter()
-        .filter(|ok| !**ok)
-        .count()
-    }
     fn to_json(&self, allow_untrusted: bool, overridden: &[String]) -> Value {
         json!({
             "instance_matches": self.instance,
@@ -263,8 +249,15 @@ impl Trust {
     }
 }
 
+/// Failure messages of [`check`]: the node identity checks, which apply to
+/// any event, and the authority checks, which apply before admission only.
+pub struct Failures {
+    pub identity: Vec<String>,
+    pub authority: Vec<String>,
+}
+
 /// Run every check on `ev` against the node's view; one message per failure.
-pub fn check(h: &Health, ctx: &Context, ev: &AuthorityEvent) -> (Trust, Vec<String>) {
+pub fn check(h: &Health, ctx: &Context, ev: &AuthorityEvent) -> (Trust, Failures) {
     let mut out = Vec::new();
     let instance = h.instance == ev.instance();
     if !instance {
@@ -291,6 +284,7 @@ pub fn check(h: &Health, ctx: &Context, ev: &AuthorityEvent) -> (Trust, Vec<Stri
             hex::encode(h.filter_version)
         ));
     }
+    let identity = std::mem::take(&mut out);
     let root_is_curator = h.curators.contains(&ctx.root_holder);
     if !root_is_curator {
         out.push(format!(
@@ -397,8 +391,13 @@ pub fn check(h: &Health, ctx: &Context, ev: &AuthorityEvent) -> (Trust, Vec<Stri
         parent_current,
         operation,
     };
-    debug_assert_eq!(trust.failures(), out.len());
-    (trust, out)
+    (
+        trust,
+        Failures {
+            identity,
+            authority: out,
+        },
+    )
 }
 
 /// `submit` for a `delegate` or `revoke` directory. The token is redacted
@@ -420,20 +419,11 @@ async fn submit_unredacted(node: &Node, dir: &Path, allow_untrusted: bool) -> Re
     // A retained event is reported, never re-posted, and is not re-checked
     // against a state it has itself changed.
     let already = ctx.event(ev.id()).cloned();
-    let (trust, warnings) = check(&health, &ctx, &ev);
-    let warnings = if already.is_some() {
-        // Only the identity checks still apply to an admitted event.
-        warnings
-            .into_iter()
-            .filter(|w| {
-                w.starts_with("instance mismatch")
-                    || w.starts_with("fold_version mismatch")
-                    || w.starts_with("node filter_version")
-            })
-            .collect()
-    } else {
-        warnings
-    };
+    let (trust, failures) = check(&health, &ctx, &ev);
+    let mut warnings = failures.identity;
+    if already.is_none() {
+        warnings.extend(failures.authority);
+    }
     if !warnings.is_empty() && !allow_untrusted {
         bail!(
             "refusing to submit; nothing was written:\n  - {}",

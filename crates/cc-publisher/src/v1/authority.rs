@@ -597,6 +597,13 @@ pub fn revoke(
                 e.state,
                 e.reason
             );
+            // A suppressed parent would suppress the revoke as its descendant.
+            ensure!(
+                e.reason.is_empty(),
+                "--parent {} is suppressed ({}); choose an eligible event",
+                hex::encode(p),
+                e.reason
+            );
             p
         }
     };
