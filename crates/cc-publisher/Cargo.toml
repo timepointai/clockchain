@@ -9,6 +9,7 @@ cc-core.workspace = true
 cc-filter.workspace = true
 cc-ledger.workspace = true
 anyhow.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true

@@ -36,13 +36,20 @@ pub enum Command {
     Submit {
         #[arg(long)]
         node: String,
-        /// A directory written by `genesis`.
+        /// A directory written by `genesis`, `delegate` or `revoke`.
         #[arg(long)]
         dir: PathBuf,
-        /// Submit even when the instance, fold, curator or filter check fails.
+        /// Submit even when a trust check fails (for a delegate or revoke,
+        /// also the grant, parent and scope checks; see docs/KEYS.md).
         #[arg(long)]
         allow_untrusted: bool,
     },
+    /// Read-only: a subject's grants from a node; `--out` writes the grants file.
+    Grants(super::authority_cli::GrantsArgs),
+    /// Sign a Delegate offline from a grants file (`docs/KEYS.md`).
+    Delegate(super::authority_cli::DelegateArgs),
+    /// Sign a Revoke offline from a grants file (`docs/KEYS.md`).
+    Revoke(super::authority_cli::RevokeArgs),
     /// Read-only check that a node serves a subject's current revision intact.
     Verify {
         #[arg(long)]
@@ -125,7 +132,7 @@ impl GenesisArgs {
     }
 }
 
-fn token(primary: &str, fallback: Option<&str>) -> Result<String> {
+pub(crate) fn token(primary: &str, fallback: Option<&str>) -> Result<String> {
     let names = [Some(primary), fallback];
     for name in names.into_iter().flatten() {
         if let Ok(v) = std::env::var(name) {
@@ -192,6 +199,9 @@ pub async fn run(cmd: Command) -> Result<()> {
                 eprintln!("{line}");
             }
         }
+        Command::Grants(a) => super::authority_cli::grants(a).await?,
+        Command::Delegate(a) => super::authority_cli::delegate(a)?,
+        Command::Revoke(a) => super::authority_cli::revoke(a)?,
         Command::Verify { node, subject, dir } => {
             let token = token(READ_TOKEN_ENV, Some(WRITE_TOKEN_ENV))?;
             let node = Node::new(&node, Some(&token))?;

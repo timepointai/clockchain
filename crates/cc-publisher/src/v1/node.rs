@@ -28,9 +28,9 @@ pub struct Node {
     /// Sent only to authenticated routes, and redacted from every error.
     token: Option<String>,
 }
-struct Reply {
-    status: StatusCode,
-    body: Vec<u8>,
+pub(crate) struct Reply {
+    pub(crate) status: StatusCode,
+    pub(crate) body: Vec<u8>,
 }
 /// Plain http only where a bearer token cannot cross the public internet:
 /// loopback addresses, `localhost`, and single-label host names such as a
@@ -140,7 +140,7 @@ impl Node {
             .map(|c| if c.is_control() { ' ' } else { c })
             .collect()
     }
-    fn json(&self, reply: &Reply, what: &str) -> Result<Value> {
+    pub(crate) fn json(&self, reply: &Reply, what: &str) -> Result<Value> {
         serde_json::from_slice(&reply.body).with_context(|| {
             format!(
                 "{what}: response is not JSON: {}",
@@ -148,7 +148,7 @@ impl Node {
             )
         })
     }
-    fn unexpected(&self, what: &str, reply: &Reply) -> anyhow::Error {
+    pub(crate) fn unexpected(&self, what: &str, reply: &Reply) -> anyhow::Error {
         anyhow::anyhow!(
             "{what}: HTTP {}: {}",
             reply.status,
@@ -157,7 +157,7 @@ impl Node {
     }
 
     /// `authenticated` sends the bearer token; public routes never get it.
-    async fn send(
+    pub(crate) async fn send(
         &self,
         method: Method,
         path: &str,
@@ -379,7 +379,7 @@ impl Admission {
                 .into(),
         })
     }
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "event": self.event.map(hex::encode),
             "input_digest": hex::encode(self.input_digest),
@@ -452,7 +452,7 @@ impl Trust {
 }
 
 /// Node states in which no write is attempted, trusted or not.
-fn writable(h: &Health) -> Result<()> {
+pub(crate) fn writable(h: &Health) -> Result<()> {
     ensure!(
         h.ledger == "v1",
         "node reports ledger {:?}, not \"v1\"",
@@ -479,6 +479,9 @@ pub struct Submitted {
 
 /// One human-readable line per step of a completed `submit`.
 pub fn summary(done: &Submitted, dir: &Path) -> Vec<String> {
+    if let Some(lines) = super::authority_node::summary(done, dir) {
+        return lines;
+    }
     let r = &done.receipt;
     let body = match r["body"]["result"].as_str() {
         Some("stored") => "stored (HTTP 201)".to_owned(),
@@ -510,10 +513,15 @@ pub fn summary(done: &Submitted, dir: &Path) -> Vec<String> {
     ]
 }
 
-/// Check, write and read back one Genesis directory. See `docs/PUBLISHER-V1.md`.
+/// Check, write and read back one Genesis directory. See `docs/PUBLISHER-V1.md`;
+/// a `delegate` or `revoke` directory goes to `authority_node::submit`.
 /// The token is redacted from the error, the receipt and the warnings, which
 /// can quote what the node sent.
 pub async fn submit(node: &Node, dir: &Path, allow_untrusted: bool) -> Result<Submitted> {
+    // A `delegate` or `revoke` directory (`docs/KEYS.md`).
+    if super::authority::is_authority_dir(dir) {
+        return super::authority_node::submit(node, dir, allow_untrusted).await;
+    }
     let mut done = submit_unredacted(node, dir, allow_untrusted)
         .await
         .map_err(|e| anyhow::anyhow!(node.redact(&format!("{e:#}"))))?;
