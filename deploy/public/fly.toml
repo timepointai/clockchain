@@ -1,0 +1,70 @@
+# Fly.io template for the public read gateway (cc-gateway). NOT DEPLOYED.
+#
+# A separate app from the node. It serves the read-only `/public/v1` API and
+# reaches the private node over Flycast. Opening it to the internet is an
+# owner decision and an owner-run step: docs/PUBLIC-ACCESS.md.
+#
+# `<public-app>` and `<node-app>` are placeholders. Replace both before use.
+app = "<public-app>"
+# Match the node's region so the Flycast hop stays local.
+primary_region = "sjc"
+
+[build]
+  # Build context is the repo root (run `fly deploy` from there). The deploy
+  # command in docs/PUBLIC-ACCESS.md also passes
+  # `--dockerfile deploy/public/Dockerfile`, so the node's root Dockerfile is
+  # never picked up whichever way this path is resolved.
+  dockerfile = "Dockerfile"
+
+[env]
+  # The node, over Fly's private Flycast route (port 80 through Fly Proxy).
+  # The node app needs a Flycast private IPv6 (`fly ips allocate-v6 --private`,
+  # an owner step), and this app must be in the node's Fly organization.
+  CC_GATEWAY_NODE_URL = "http://<node-app>.flycast"
+  # Fly Proxy sets this header on every request it forwards. Trusted only
+  # because of that; see "Threat model" in docs/PUBLIC-ACCESS.md.
+  CC_GATEWAY_CLIENT_IP_HEADER = "fly-client-ip"
+  CC_GATEWAY_RATE_PER_MINUTE = "60"
+  CC_GATEWAY_FRESHNESS_MS = "1000"
+  PORT = "8080"
+  # Kept for parity with the node. The gateway's subscriber is built without
+  # tracing-subscriber's `env-filter` feature, so the level is INFO either way.
+  RUST_LOG = "info"
+  # CC_GATEWAY_READ_KEY is a Fly secret only. Never put it in this file.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Bounds simultaneous requests through Fly Proxy to this machine. Not a
+  # per-client limit; the per-client limit is CC_GATEWAY_RATE_PER_MINUTE.
+  # Each in-flight node answer is buffered up to CC_GATEWAY_MAX_BODY_BYTES
+  # (default 32 MiB); size the VM or lower that cap as the corpus grows.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 32
+    hard_limit = 64
+
+  # Proxies to the node's anonymous /health, so it fails while the node is
+  # down or unreachable. That is intended: the gateway cannot serve without
+  # the node.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/public/v1/health"
+    interval = "15s"
+    timeout = "10s"
+    grace_period = "30s"
+
+# Public ingress needs an owner-allocated public IPv6
+# (`fly ips allocate-v6 --app <public-app>`). This template allocates no IPv4
+# and no IPv6; deploy with `--no-public-ips` so the first deploy does not
+# allocate any either.
+#
+# One machine. The rate limit and cache are per process, so a second machine
+# doubles each client's limit and splits the cache.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
