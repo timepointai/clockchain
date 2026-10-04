@@ -264,9 +264,9 @@ the packet's own events do not count as a corpus change. Stdout is a
 it and from every error. No receipt file is written; redirect stdout to keep
 the report.
 
-A directory written by `genesis` still goes through `submit`
-([PUBLISHER-V1.md](PUBLISHER-V1.md)). `submit` reloads one Genesis
-directory and checks its read-back against a single subject; a packet holds
+A directory written by `genesis`, `delegate` or `revoke` still goes through
+`submit` ([PUBLISHER-V1.md](PUBLISHER-V1.md), [KEYS.md](KEYS.md)). `submit`
+reloads one such single-event directory and checks its own read-back; a packet holds
 several events of several kinds, bound to a context and an approved digest,
 so it has its own entry point over the same node client, `writable` check
 and trust checks.
