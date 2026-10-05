@@ -306,12 +306,16 @@ Every stage merge commit has a passing `main` CI run, listed in the
 build, rule-vector agreement, `cargo test --all` against PostgreSQL, the Python
 operator tests, and the Stage 0 checker and mutants.
 
-## Open items that touch the gates
+## Stage (g) follow-up and remaining limits
 
-- No v1 hot-key commands (Gate 4): G2 in [STAGE-G.md](design/STAGE-G.md).
-- No signed node receipts at runtime; receipts are excluded from authority by
-  design (Gate 1): G4.
-- No external anchoring of commitments: a MULTI-SIGNER non-goal; sealing
-  options are G4.
+- v1 hot-key commands (Gate 4) were merged in PR #20. See
+  [Keys](KEYS.md) for `grants`, `delegate`, `revoke` and the owner ceremony.
+- Optional signed node receipts (Gate 1) were merged in PR #25. Runtime
+  receipts require `CC_V1_NODE_SEED`; they remain excluded from authority and
+  commitments. See [Operations](OPERATIONS.md#optional-cc_v1_node_seed-g4-receipts).
+- These merged capabilities do not establish an instance's deployment or key
+  custody. Dated operational evidence remains in the owner's private handoff.
+- External anchoring of commitments remains unimplemented. See the
+  [sealing options](design/SEALING.md).
 
 Disposition of #6 is the owner's decision.
