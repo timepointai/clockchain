@@ -1,0 +1,34 @@
+[package]
+name = "cc-wasm-verify"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "In-browser verifier for served v1 reads: signatures, event ids, corpus digest, filter_version and view commitment. No I/O; native + wasm32."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Runtime tree: the two wasm-clean internal crates plus pure JSON and hex
+# codecs. No sqlx, no runtime, no clock, no RNG, no network. CI checks this
+# tree and the artifact's empty host-import table.
+[dependencies]
+cc-core.workspace = true
+cc-filter.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+
+# Native tests only. They never reach the wasm32 artifact: the differential
+# checks against the shipped projection and the recorded fixture need the real
+# ledger and node over real PostgreSQL.
+[dev-dependencies]
+cc-ledger.workspace = true
+cc-testkit.workspace = true
+cc-node = { path = "../cc-node" }
+# The G5 gateway, served in front of the node for the integration test.
+cc-gateway = { path = "../cc-gateway" }
+axum.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+reqwest.workspace = true

@@ -34,20 +34,31 @@ snapshot.
 | `GET /public/v1/subjects/{id}?as_of=` | |
 | `GET /public/v1/revisions/{rev}/prose` | |
 | `GET /public/v1/support?from=&to=&as_of=` | |
-| `GET /public/v1/receipts/{event}` | only once G4 has merged; else 404 |
+| `GET /public/v1/receipts/{event}` | served since G4 merged: `{event, receipts}`, or 404 `no_receipt` |
 
 - `health` calls the node's anonymous `/health` without the read key. It is not
   cached and carries no `x-cache`.
 - The other four are corpus reads, sent with the read key, cached by corpus
   digest, and answered with `x-cache: hit` or `x-cache: miss`.
-- `receipts` is not mounted: it is `404 {"error":"no_such_route"}` until the
-  node serves receipts (G4) and the route is added.
+- `receipts` proxies the node's `GET /v1/receipts/{event}` with the read key.
+  It is never cached and carries no `x-cache`. A receipt names no corpus
+  digest, and the node can retain one with no corpus change (an imported
+  receipt), so no digest could tell a cached answer from a stale one. Each
+  request is one node read, with no digest probe. The answer is the node's
+  JSON (it has no top-level `instance`; the instance inside each signed
+  `receipt` is part of the signed bytes and stays). An event the node holds
+  no receipt for is `404 {"error":"no_receipt"}`, which passes through as
+  404. A node without `CC_V1_NODE_SEED` issues no new receipts, but it still
+  serves any it retained (from an earlier seeded run, or imported). The node's
+  `503` answers here (`busy` from its read limit, or
+  `receipt_verification_failed`) become `503 node_unavailable` like any node
+  503, without the node's `Retry-After`.
 - The query string is forwarded verbatim. The node refuses an unknown,
   misspelled or repeated parameter with `400 invalid_query`.
 - A path parameter is forwarded only if it is 1–128 ASCII alphanumerics.
   Anything else is replaced by the fixed token `invalid`, which the node
-  refuses as it would the original (`400 invalid_subject_id` or
-  `400 invalid_revision_id`).
+  refuses as it would the original (`400 invalid_subject_id`,
+  `400 invalid_revision_id` or `400 invalid_event_id`).
 - `HEAD` is served like `GET` without a body, at the same node cost.
 
 ### Status mapping
@@ -195,7 +206,8 @@ one corpus digest, the most recently observed one.
   call, so hits can continue for up to one window after the node fails.
 - **What is stored.** Only 200 and 404 answers that name a digest, and only if
   that digest is still the current generation. 400, 409 and answers without a
-  digest are passed through uncached. `health` is never cached.
+  digest are passed through uncached. `health` and `receipts` are never
+  cached, so every request to them reaches the node.
 - **Byte bound.** Key plus body bytes stay within `CC_GATEWAY_CACHE_BYTES`. A
   full cache evicts its least recently used entries to make room; an answer
   larger than the whole bound is not stored.
@@ -204,7 +216,7 @@ one corpus digest, the most recently observed one.
 
 ### Assets
 
-- **The read key.** It opens every node read route (and receipts once G4 lands).
+- **The read key.** It opens every node read route, receipts included.
   It does not open `/v1/export` or any write: those need the write key.
 - **Node availability.** The node is the single ledger writer on a small VM.
 - **Integrity of served data.** The gateway is **not** a trust anchor. It strips
@@ -229,13 +241,13 @@ one corpus digest, the most recently observed one.
   sensitive header value (`set_sensitive`), behind a redacting `Debug`
   (`ReadKey(<redacted>)`), with no `Display`. No client header, cookie or
   credential is forwarded: apart from what the HTTP client adds to every request
-  (`host`), the node receives only `Accept` and, for corpus reads,
-  `Authorization`. No node header is returned. The HTTP client ignores
+  (`host`), the node receives only `Accept` and, for every route except
+  `health`, `Authorization`. No node header is returned. The HTTP client ignores
   environment proxy settings (`no_proxy`) and follows no redirect, so the key
   cannot be sent to a host it was not issued for. The gateway logs no request
   lines, paths or client addresses.
 - **Writes are unreachable.** The method guard refuses everything but GET, HEAD
-  and OPTIONS. The gateway only ever issues `GET`. Only the five read paths are
+  and OPTIONS. The gateway only ever issues `GET`. Only the six read paths are
   mapped; no route reaches `/v1/candidates`, `/v1/bodies` or `/v1/export`. The
   binary has no `cc-node`, `cc-ledger` or `sqlx` dependency (the tests use them
   as dev-dependencies). The read key is
@@ -265,7 +277,9 @@ one corpus digest, the most recently observed one.
   full snapshot fold on the node. Varying `as_of`, subject ids or query
   spellings forces misses, bounded only by the per-IP rate, the number of
   addresses and the two concurrency limits. A flood of distinct keys also
-  evicts popular entries, so their next reads miss too.
+  evicts popular entries, so their next reads miss too. `receipts` reads are
+  never cached: each is one node read (a store query, not a fold) and holds
+  one of the node's read permits while it runs.
 - **Staleness.** Up to one freshness window after an admit, the previous
   corpus's answers may be served.
 
@@ -328,7 +342,7 @@ curl -sSi "$PUBLIC_BASE/public/v1/snapshot" | grep -i '^x-cache'         # miss
 curl -sSi "$PUBLIC_BASE/public/v1/snapshot" | grep -i '^x-cache'         # hit, same digest
 curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$PUBLIC_BASE/public/v1/snapshot"       # 405
 curl -sS -o /dev/null -w '%{http_code}\n' "$PUBLIC_BASE/v1/export"                        # 404
-curl -sS -o /dev/null -w '%{http_code}\n' "$PUBLIC_BASE/public/v1/receipts/<event>"       # 404 until G4
+curl -sS -o /dev/null -w '%{http_code}\n' "$PUBLIC_BASE/public/v1/receipts/<event>"       # 200, or 404 no_receipt
 curl -sSI "$PUBLIC_BASE/public/v1/health" | grep -i '^authorization'     # nothing
 ```
 
