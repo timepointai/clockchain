@@ -19,7 +19,7 @@ use cc_core::v1::*;
 use cc_gateway::{config::Config, router, Gateway, RESPONSE_HEADERS};
 use cc_ledger::v1::Store;
 use cc_node::config::{KeyDigest, Posture, V1Config};
-use cc_node::serve_v1::{self, health_body, V1State};
+use cc_node::serve_v1::{self, health_body, Serving, V1State};
 use cc_testkit::v1::*;
 use reqwest::{header::HeaderMap, Method, StatusCode as S};
 use serde_json::{json, Value as Json};
@@ -110,7 +110,7 @@ async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {
     (base, server)
 }
 
-async fn boot_node(store: &Store) -> Node {
+async fn boot_node(store: &Store, serving: Serving) -> Node {
     let semantic = store.semantic_readiness().await.unwrap().semantic;
     let v1 = V1Config {
         database_url: "postgres://unused".into(),
@@ -130,7 +130,8 @@ async fn boot_node(store: &Store) -> Node {
     };
     let (seen, names) = (Seen::default(), Names::default());
     let log = (seen.clone(), names.clone());
-    let app = serve_v1::router(state).layer(axum::middleware::from_fn_with_state(log, record));
+    let app = serve_v1::router_with(state, serving)
+        .layer(axum::middleware::from_fn_with_state(log, record));
     let (base, server) = serve(app).await;
     Node {
         base,
@@ -148,12 +149,21 @@ struct Rig {
 }
 
 async fn rig() -> Rig {
+    rig_with(Serving::default()).await
+}
+
+/// A rig whose node issues receipts under `seed`'s key.
+async fn seeded_rig(seed: cc_core::SecretKey) -> Rig {
+    rig_with(Serving::new(8, Some(seed))).await
+}
+
+async fn rig_with(serving: Serving) -> Rig {
     logs();
     let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
     let fresh = Store::provision(pool.clone(), INSTANCE).await.unwrap();
     fresh.bind(filter()).await.unwrap();
     let store = Store::open(pool.clone(), INSTANCE, filter()).await.unwrap();
-    let node = boot_node(&store).await;
+    let node = boot_node(&store, serving).await;
     Rig {
         pool,
         cleanup,
@@ -182,6 +192,19 @@ impl Rig {
             r.status(),
             serde_json::from_slice(&r.bytes().await.unwrap()).unwrap(),
         )
+    }
+
+    /// Submit through the node's own write route, as a publisher does, so a
+    /// seeded node issues its receipt.
+    async fn submit(&self, e: &Signed) {
+        let r = http()
+            .post(format!("{}/v1/candidates", self.node.base))
+            .bearer_auth(WRITE)
+            .body(e.bytes().to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), S::CREATED);
     }
 
     async fn admit(&self, e: &Signed) {
@@ -419,6 +442,22 @@ async fn every_route_matches_the_node_minus_instance() {
             format!("/v1/support?from={gid}"),
             S::BAD_REQUEST,
         ),
+        // This node has no seed, so it holds no receipt for any event.
+        (
+            format!("/public/v1/receipts/{gid}"),
+            format!("/v1/receipts/{gid}"),
+            S::NOT_FOUND,
+        ),
+        (
+            "/public/v1/receipts/zz".into(),
+            "/v1/receipts/zz".into(),
+            S::BAD_REQUEST,
+        ),
+        (
+            "/public/v1/receipts/%2E%2E%2Fexport".into(),
+            "/v1/receipts/zz".into(),
+            S::BAD_REQUEST,
+        ),
     ];
     for (public, private, expected) in &cases {
         let (status, node) = rig.direct(private).await;
@@ -435,9 +474,6 @@ async fn every_route_matches_the_node_minus_instance() {
     // keep theirs, or no client could check a signature or a canonical id.
     let embedded = &snapshot["rows"][0]["envelope"]["instance"];
     assert_eq!(embedded, &json!(INSTANCE));
-    // Receipts are not served until the node serves them (Stage (g) G4).
-    let receipt = gw.get(&format!("/public/v1/receipts/{gid}")).await;
-    assert_eq!(receipt, refusal(S::NOT_FOUND, "no_such_route"));
     assert_eq!(
         gw.get("/public/v1/nope").await,
         refusal(S::NOT_FOUND, "no_such_route")
@@ -450,6 +486,7 @@ async fn every_route_matches_the_node_minus_instance() {
             "/v1/subjects/",
             "/v1/revisions/",
             "/v1/support",
+            "/v1/receipts/",
         ];
         assert!(mapped.iter().any(|p| path.starts_with(p)), "{path}");
     }
@@ -499,6 +536,7 @@ async fn the_read_key_never_leaks_and_client_credentials_never_pass() {
         format!("/public/v1/revisions/{}/prose", revision(&g)),
         format!("/public/v1/support?from={gid}&to={gid}"),
         "/public/v1/nope".into(),
+        format!("/public/v1/receipts/{gid}"),
     ];
     // A client presenting the node's write key, a cookie or a forwarding
     // header gets the public answer; none of it is forwarded.
@@ -829,7 +867,8 @@ async fn node_answers_outside_the_contract_fail_closed() {
         let (base, server) = odd_node(status, body, extra).await;
         let cap = [("CC_GATEWAY_MAX_BODY_BYTES", "1024"), EAGER[0], EAGER[1]];
         let gw = gateway(&base, READ, &cap).await;
-        for path in ["/public/v1/health", "/public/v1/snapshot"] {
+        let receipt = format!("/public/v1/receipts/{}", "ab".repeat(32));
+        for path in ["/public/v1/health", "/public/v1/snapshot", &receipt] {
             let error = if expected == S::BAD_GATEWAY {
                 "bad_gateway"
             } else {
@@ -1082,4 +1121,80 @@ async fn the_cache_key_separates_queries() {
     }
     gw.stop().await;
     rig.done().await;
+}
+
+#[tokio::test]
+async fn receipts_pass_through_with_and_without_a_node_seed() {
+    // A synthetic node seed, never an operator key.
+    let seed = || cc_core::SecretKey::from_seed([0x5e; 32]);
+    let g = prose_genesis();
+    let gid = hex::encode(g.id());
+    let path = format!("/public/v1/receipts/{gid}");
+    let private = path.trim_start_matches("/public").to_string();
+    for seeded in [true, false] {
+        let rig = if seeded {
+            seeded_rig(seed()).await
+        } else {
+            rig().await
+        };
+        let gw = gateway(&rig.node.base, READ, &[EAGER[0]]).await;
+        let none = refusal(S::NOT_FOUND, "no_receipt");
+        assert_eq!(gw.get(&path).await, none, "seeded={seeded}");
+        rig.submit(&g).await;
+
+        let (status, node) = rig.direct(&private).await;
+        let (served_status, headers, bytes) = gw.raw(Method::GET, &path, &[], vec![]).await;
+        let served: Json = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            (served_status, &served),
+            (status, &without_instance(node.clone()))
+        );
+        if seeded {
+            assert_eq!(status, S::OK, "{served}");
+            assert_eq!(served["event"], gid);
+            let receipts = served["receipts"].as_array().unwrap();
+            assert_eq!(receipts.len(), 1);
+            let r = &receipts[0];
+            assert_eq!(r["event"], gid);
+            assert_eq!(r["node_key"], hex::encode(seed().author().to_bytes()));
+            assert_eq!(r["initial_admission_result"]["state"], "valid");
+            // The signed bytes come through intact and still verify; the
+            // instance lives inside them, untouched.
+            let wire = hex::decode(r["receipt"].as_str().unwrap()).unwrap();
+            let signed = cc_core::v1::receipt::SignedReceipt::decode(&wire).unwrap();
+            assert_eq!(signed.receipt().event, g.id());
+            assert_eq!(signed.receipt().instance, INSTANCE);
+        } else {
+            // Without a seed the node keeps no receipt, even after admission.
+            assert_eq!((status, node), none);
+        }
+
+        // Never cached and never probed: each read is exactly one node read.
+        assert!(headers.get("x-cache").is_none());
+        let before = rig.node.count();
+        assert_eq!(gw.get(&path).await, (served_status, served.clone()));
+        assert_eq!(gw.get(&path).await, (served_status, served));
+        assert_eq!(
+            rig.node.paths()[before..],
+            [private.clone(), private.clone()]
+        );
+
+        // The node's own refusals pass through; writes never reach it.
+        let bad_id = refusal(S::BAD_REQUEST, "invalid_event_id");
+        assert_eq!(gw.get("/public/v1/receipts/zz").await, bad_id);
+        assert_eq!(gw.get("/public/v1/receipts/%2E%2E%2Fexport").await, bad_id);
+        let extra = format!("{path}?as_of={ZERO}");
+        assert_eq!(
+            gw.get(&extra).await,
+            refusal(S::BAD_REQUEST, "invalid_query")
+        );
+        let reads = rig.node.count();
+        for m in [Method::POST, Method::PUT, Method::DELETE] {
+            let (status, _, _) = gw.raw(m.clone(), &path, &[], g.bytes().to_vec()).await;
+            assert_eq!(status, S::METHOD_NOT_ALLOWED, "{m}");
+        }
+        assert_eq!(rig.node.count(), reads);
+        gw.stop().await;
+        rig.done().await;
+    }
 }

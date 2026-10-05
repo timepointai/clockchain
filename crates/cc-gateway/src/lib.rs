@@ -180,8 +180,7 @@ pub fn router(gateway: Gateway) -> Router {
         .route("/public/v1/subjects/:subject_id", get(subject))
         .route("/public/v1/revisions/:revision/prose", get(prose))
         .route("/public/v1/support", get(support))
-        // `/public/v1/receipts/{event}` is deliberately absent until the node
-        // serves receipts (Stage (g) G4), so it is a 404 like any unknown path.
+        .route("/public/v1/receipts/:event", get(receipt))
         .fallback(not_found)
         .layer(axum::middleware::from_fn(read_only))
         .layer(axum::middleware::from_fn_with_state(
@@ -328,6 +327,24 @@ async fn prose(
 
 async fn support(State(gw): State<Gateway>, uri: Uri) -> Response {
     gw.cached(with_query("/v1/support".into(), &uri)).await
+}
+
+/// Node receipts (Stage (g) G4), read with the key and never cached. A receipt
+/// names no corpus digest, and one can be retained without any corpus change
+/// (an imported receipt), so no digest could say when a cached answer went
+/// stale. An event the node holds no receipt for is `404 no_receipt`, which
+/// passes through like any other contract answer; a node without
+/// `CC_V1_NODE_SEED` issues no new receipts but still serves retained ones.
+async fn receipt(
+    State(gw): State<Gateway>,
+    uri: Uri,
+    event: Result<Path<String>, PathRejection>,
+) -> Response {
+    let path = format!("/v1/receipts/{}", segment(event));
+    match gw.fetch(&with_query(path, &uri), true).await {
+        Ok(a) => json_response(status(a.status), a.body, None),
+        Err(f) => f.response(),
+    }
 }
 
 fn status(code: u16) -> StatusCode {
