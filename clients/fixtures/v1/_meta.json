@@ -1,0 +1,61 @@
+{
+  "entries": [
+    {
+      "asserted_time": {
+        "calendar": "1901-02-03",
+        "coordinate": "7fffffffffffffffffffffffffffffffffffffff45f44a400000000000000000",
+        "precision": "day"
+      },
+      "author": "3d307aef8f7b3e5635d1fba03a973ba9e66cd21e251faba047a93a3bc562e588",
+      "body_sha256": "24874c7437d77fb3170273ee13f7b57d6df7fa709e5eadc50b864bb6a849cb0e",
+      "event": "8d1760a8aed92c3781ca450658f66e9f5d331805598792171c63ab5ef0c344f5",
+      "revision": "9a9a5b95d9434c1cacef47f3dd049a5c1b041a08b21f4776c125d9095296d349",
+      "subject": "8d1760a8aed92c3781ca450658f66e9f5d331805598792171c63ab5ef0c344f5",
+      "subject_key": {
+        "kind": "conflict-and-warfare",
+        "namespace": "g7.synthetic",
+        "value": "fixture-a"
+      }
+    },
+    {
+      "asserted_time": {
+        "calendar": "1950",
+        "coordinate": "7fffffffffffffffffffffffffffffffffffffffa1f376400000000000000000",
+        "precision": "year"
+      },
+      "author": "3d307aef8f7b3e5635d1fba03a973ba9e66cd21e251faba047a93a3bc562e588",
+      "body_sha256": "0c222cc3b65e883eeb33cb7a5b0c858636e0324c0fee9800a31af6baac22917e",
+      "event": "55b14d08ec8fc2377eb8dab8ab19378cc83900c24b05553d5eee31b2df15d219",
+      "revision": "992db58445cd0a35d4cd7f33ebcafae84bb7aed3503263c0bd8a43c642bc5ca7",
+      "subject": "55b14d08ec8fc2377eb8dab8ab19378cc83900c24b05553d5eee31b2df15d219",
+      "subject_key": {
+        "kind": "conflict-and-warfare",
+        "namespace": "g7.synthetic",
+        "value": "fixture-b"
+      }
+    }
+  ],
+  "fixtures": [
+    "health",
+    "invalid_query",
+    "prose",
+    "prose_unknown",
+    "rate_limited",
+    "receipt",
+    "receipt_no_receipt",
+    "snapshot",
+    "snapshot_fold_half",
+    "snapshot_fold_mismatch",
+    "snapshot_fold_pinned",
+    "subject",
+    "subject_as_of_after",
+    "subject_as_of_before",
+    "subject_bad_id",
+    "subject_unknown",
+    "support",
+    "support_as_of",
+    "support_missing_to"
+  ],
+  "schema": "cc.clients.fixtures.v1",
+  "source": "gateway"
+}

@@ -1,0 +1,14 @@
+{
+  "body": {
+    "error": "invalid_query"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/snapshot",
+    "query": {
+      "unexpected": "1"
+    }
+  },
+  "status": 400
+}

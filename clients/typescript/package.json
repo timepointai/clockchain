@@ -1,0 +1,21 @@
+{
+  "name": "@clockchain/public-client",
+  "version": "0.1.0",
+  "description": "Typed client for the Clockchain v1 public read API (/public/v1)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test 'test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "body": {
+    "as_of": null,
+    "commitment": "1713b9bd5345fd01abe049a8316a241fc699eee7c247420ea39f300e5650b594",
+    "corpus_digest": "4456fa16a060a32265e4eade4deb656565587a90cb220f07c3a84d55793ce807",
+    "frontier": [],
+    "revision": null,
+    "rule": {
+      "filter_version": "5b3358f2655e0fae30febda0b21a6b004c669e777035b2cd58189ad0dd4e4acd",
+      "fold_manifest": "fd7b2676d70b628128eb83fbba27b3ebefff6e51823c1d87620d57a4e2ad6208",
+      "fold_version": 1
+    },
+    "state": "",
+    "subject": "abababababababababababababababababababababababababababababababab",
+    "visibility": "subject_unknown"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/subjects/abababababababababababababababababababababababababababababababab",
+    "query": {}
+  },
+  "status": 404
+}

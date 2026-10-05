@@ -1,0 +1,14 @@
+{
+  "body": {
+    "error": "rate_limited"
+  },
+  "headers": {
+    "retry-after": "60"
+  },
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/health",
+    "query": {}
+  },
+  "status": 429
+}

@@ -1,0 +1,12 @@
+{
+  "body": {
+    "error": "invalid_subject_id"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/subjects/not-hex",
+    "query": {}
+  },
+  "status": 400
+}

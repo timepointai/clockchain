@@ -1,0 +1,24 @@
+{
+  "body": {
+    "build": "g7-synthetic-fixture",
+    "curators": [
+      "3d307aef8f7b3e5635d1fba03a973ba9e66cd21e251faba047a93a3bc562e588"
+    ],
+    "filter_version": "5b3358f2655e0fae30febda0b21a6b004c669e777035b2cd58189ad0dd4e4acd",
+    "fold_version": {
+      "manifest": "fd7b2676d70b628128eb83fbba27b3ebefff6e51823c1d87620d57a4e2ad6208",
+      "version": 1
+    },
+    "ledger": "v1",
+    "max_hops": 4,
+    "posture": "live",
+    "semantic": "ready"
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/health",
+    "query": {}
+  },
+  "status": 200
+}
