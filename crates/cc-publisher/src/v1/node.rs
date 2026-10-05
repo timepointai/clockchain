@@ -236,6 +236,22 @@ impl Node {
             _ => Err(self.unexpected(&format!("GET /{path}"), &reply)),
         }
     }
+    /// `GET /v1/export` (write scope): every retained envelope, as hex, with the
+    /// node's rule, corpus digest and commitment.
+    pub async fn export_json(&self) -> Result<Value> {
+        self.get_json("v1/export").await
+    }
+    /// `GET /v1/snapshot` (read scope): the full projection at the node's corpus.
+    pub async fn snapshot_json(&self) -> Result<Value> {
+        self.get_json("v1/snapshot").await
+    }
+    async fn get_json(&self, path: &str) -> Result<Value> {
+        let reply = self.send(Method::GET, path, None, true).await?;
+        if reply.status != StatusCode::OK {
+            return Err(self.unexpected(&format!("GET /{path}"), &reply));
+        }
+        self.json(&reply, &format!("GET /{path}"))
+    }
     /// `GET /v1/revisions/{revision}/prose`.
     pub async fn prose(&self, revision: Hash) -> Result<Value> {
         let path = format!("v1/revisions/{}/prose", hex::encode(revision));
