@@ -3,7 +3,8 @@
 This runbook covers the `cc-publisher v1` authority commands: `grants`,
 `delegate` and `revoke`, and `submit` for their output. They let the owner keep
 the root (curator) seed offline and do routine signing with a delegated hot key.
-Nothing in this page has been run against production. Every command below is an
+This page describes operator procedures. Dated ceremony evidence and current key
+custody are recorded in the owner's private handoff. Every command below is an
 owner action, run from the owner's workstation or the owner's offline machine.
 Generating, holding and using the root key stays with the owner alone
 ([HOLD.md](../HOLD.md)).
@@ -289,8 +290,8 @@ Run on the workstation unless marked **offline**. Placeholders are in capitals.
 
 - Corrections signed with the hot key are admitted on a delegated subject. The
   real-node test `delegated_key_corrects_and_is_refused_after_revoke` shows
-  this. This change does not add a `correction` command; the publisher's
-  correction tooling is Stage (g) G3 (`docs/AUTHORING-V1.md` once merged).
+  this. The publisher's `correction` command is documented in
+  [Authoring v1](AUTHORING-V1.md).
   Whatever builds the Correction, it signs under the hot key's grant id (the
   Delegate event id) and extends the sole head.
 - The hot key cannot do any of these; each needs the root:
