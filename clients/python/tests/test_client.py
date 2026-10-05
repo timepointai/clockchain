@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import http.server
 import json
 import os
@@ -68,8 +69,9 @@ class Recorded:
         self.calls: list[tuple[str, dict]] = []
         self.routes = {}
         for f in META["fixtures"]:
-            if f == "rate_limited":
-                continue  # same URL as health; tests install it explicitly
+            if f in ("rate_limited", "receipt"):
+                continue  # same URL as health / receipt_no_receipt; tests install it
+
             doc = load(f)
             if override and f in override:
                 doc = override[f]
@@ -106,7 +108,7 @@ class FixtureSet(unittest.TestCase):
     def test_index_matches_files(self):
         on_disk = sorted(p.stem for p in FIXTURES.glob("*.json") if p.stem != "_meta")
         self.assertEqual(on_disk, META["fixtures"])
-        self.assertEqual(len(on_disk), 18)
+        self.assertEqual(len(on_disk), 19)
 
     def test_every_contract_route_has_a_fixture(self):
         routes = {load(f)["request"]["path"].split("/")[3] for f in META["fixtures"]}
@@ -451,11 +453,13 @@ class Errors(unittest.TestCase):
             parse(health_call(), 429, b'{"error":"rate_limited"}')
         self.assertIsNone(e.exception.retry_after)
 
-    def test_receipt_is_404_until_g4(self):
-        c, _ = client()
+    def test_no_receipt_without_a_node_key(self):
+        # Recorded from a node without CC_V1_NODE_SEED, through cc-gateway.
+        c, t = client()
         with self.assertRaises(PublicApiError) as e:
             c.receipt(A["event"])
-        self.assertEqual((e.exception.status, e.exception.error), (404, "no_such_route"))
+        self.assertEqual((e.exception.status, e.exception.error), (404, "no_receipt"))
+        self.assertEqual(t.calls[0][0], f"{BASE}/public/v1/receipts/{A['event']}")
 
     def test_fail_closed_on_bad_bodies(self):
         for status, raw in ((200, b"<html>"), (200, b"[]"), (503, b"{}"), (502, b"")):
@@ -467,6 +471,73 @@ class Errors(unittest.TestCase):
         for bad in ([0] * 31, [256] + [0] * 31, [True] + [0] * 31, "00" * 32, None):
             with self.assertRaises(ProtocolError):
                 bytes_hash(bad)
+
+
+def receipt_doc(**changes) -> dict:
+    doc = copy.deepcopy(load("receipt"))
+    for k, v in changes.items():
+        doc["body"]["receipts"][0][k] = v
+    return doc
+
+
+class Receipt(unittest.TestCase):
+    def test_decodes_the_recorded_receipt(self):
+        doc = load("receipt")
+        served = doc["body"]["receipts"][0]
+        c, _ = client({"receipt_no_receipt": doc})
+        r = c.receipt(A["event"])
+        self.assertEqual(r.event, A["event"])
+        self.assertEqual(len(r.receipts), 1)
+        n = r.receipts[0]
+        self.assertEqual(n.event, A["event"])
+        self.assertEqual(n.receipt, served["receipt"])
+        self.assertEqual(n.receipt_digest,
+                         hashlib.sha256(bytes.fromhex(served["receipt"])).hexdigest())
+        self.assertEqual(n.node_key, served["node_key"])
+        self.assertEqual(n.received_at, served["received_at"])
+        self.assertGreater(n.received_at, 0)
+        self.assertEqual(n.encoding_version, 1)
+        self.assertEqual(n.fold_version.manifest,
+                         load("health")["body"]["fold_version"]["manifest"])
+        self.assertEqual(n.initial_admission_result.state, "valid")
+        self.assertEqual(n.initial_admission_result.missing, ())
+        # The signed bytes carry the node key and the event they receipt.
+        self.assertIn(n.node_key + n.event, n.receipt)
+
+    def test_digest_must_hash_the_bytes(self):
+        c, _ = client({"receipt_no_receipt": receipt_doc(receipt_digest="00" * 32)})
+        with self.assertRaisesRegex(ProtocolError, "SHA-256"):
+            c.receipt(A["event"])
+
+    def test_receipt_for_another_event_is_refused(self):
+        c, _ = client({"receipt_no_receipt": receipt_doc(event=B["event"])})
+        with self.assertRaisesRegex(ProtocolError, "another event"):
+            c.receipt(A["event"])
+        doc = copy.deepcopy(load("receipt"))
+        doc["body"]["event"] = B["event"]
+        c, _ = client({"receipt_no_receipt": doc})
+        with self.assertRaisesRegex(ProtocolError, "another event"):
+            c.receipt(A["event"])
+
+    def test_malformed_receipts_are_refused(self):
+        for changes in ({"receipt": "abc"}, {"receipt": "XY"}, {"received_at": -1},
+                        {"received_at": True}, {"node_key": "00"},
+                        {"initial_admission_result": {"state": "accepted", "reason": "",
+                                                      "missing": []}}):
+            c, _ = client({"receipt_no_receipt": receipt_doc(**changes)})
+            with self.assertRaises(ProtocolError, msg=str(changes)):
+                c.receipt(A["event"])
+        empty = copy.deepcopy(load("receipt"))
+        empty["body"]["receipts"] = []
+        c, _ = client({"receipt_no_receipt": empty})
+        with self.assertRaisesRegex(ProtocolError, "no receipt"):
+            c.receipt(A["event"])
+
+    def test_unknown_fields_are_tolerated(self):
+        doc = receipt_doc(extra_field="ignored")
+        doc["body"]["also_new"] = 1
+        c, _ = client({"receipt_no_receipt": doc})
+        self.assertEqual(c.receipt(A["event"]).receipts[0].event, A["event"])
 
 
 class Requests(unittest.TestCase):

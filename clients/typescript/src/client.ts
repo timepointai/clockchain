@@ -27,6 +27,8 @@
  * commitment read here is what the gateway answered, not a recomputation.
  */
 
+import { sha256Hex } from "./sha256.ts";
+
 export const PREFIX = "/public/v1";
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -205,6 +207,35 @@ export interface Reason {
   readonly code: string;
   readonly subject: string | null;
   readonly edge: string | null;
+}
+
+export interface InitialAdmission {
+  readonly state: "valid" | "pending" | "invalid";
+  readonly reason: string;
+  readonly missing: readonly string[];
+}
+
+/**
+ * One `NodeReceiptV1` as the node serves it. `receipt` is the signed bytes as
+ * hex and is authoritative; the other fields are the node's decoding of them.
+ * This client checks that `receipt_digest` is the SHA-256 of those bytes but
+ * does not verify the node's signature. `received_at` is when the node saw the
+ * event, in Unix microseconds, not a claimed historical time.
+ */
+export interface NodeReceipt {
+  readonly receipt: string;
+  readonly receipt_digest: string;
+  readonly node_key: string;
+  readonly event: string;
+  readonly received_at: number;
+  readonly encoding_version: number;
+  readonly fold_version: FoldVersion;
+  readonly initial_admission_result: InitialAdmission;
+}
+
+export interface Receipts {
+  readonly event: string;
+  readonly receipts: readonly NodeReceipt[];
 }
 
 export interface SupportRead {
@@ -620,13 +651,72 @@ export function supportCall(from: string, to: string, asOf?: string | null): Cal
   return call("/support", { from, to, as_of: askedAsOf }, decode);
 }
 
+const ADMISSION_STATES = ["valid", "pending", "invalid"] as const;
+
+function hexBytes(hexText: string): Uint8Array {
+  const out = new Uint8Array(hexText.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Number.parseInt(hexText.slice(2 * i, 2 * i + 2), 16);
+  }
+  return out;
+}
+
+function nodeReceipt(value: unknown, event: string): NodeReceipt {
+  if (!isObject(value)) {
+    throw new ProtocolError("receipt is not an object");
+  }
+  const raw = str(value, "receipt");
+  if (raw.length === 0 || raw.length % 2 !== 0 || !/^[0-9a-f]+$/.test(raw)) {
+    throw new ProtocolError("'receipt' is not lowercase hex bytes");
+  }
+  const digest = hex(value, "receipt_digest");
+  if (sha256Hex(hexBytes(raw)) !== digest) {
+    throw new ProtocolError("receipt_digest is not the SHA-256 of the receipt");
+  }
+  const receivedAt = int(value, "received_at");
+  if (receivedAt < 0) {
+    throw new ProtocolError("'received_at' is negative");
+  }
+  const fold = obj(value, "fold_version");
+  const initial = obj(value, "initial_admission_result");
+  const state = str(initial, "state");
+  if (!(ADMISSION_STATES as readonly string[]).includes(state)) {
+    throw new ProtocolError(`unknown admission state ${JSON.stringify(state)}`);
+  }
+  const r: NodeReceipt = {
+    receipt: raw,
+    receipt_digest: digest,
+    node_key: hex(value, "node_key"),
+    event: hex(value, "event"),
+    received_at: receivedAt,
+    encoding_version: int(value, "encoding_version"),
+    fold_version: { version: int(fold, "version"), manifest: hex(fold, "manifest") },
+    initial_admission_result: {
+      state: state as InitialAdmission["state"],
+      reason: str(initial, "reason"),
+      missing: hexList(arr(initial, "missing"), "missing"),
+    },
+  };
+  expect("event", r.event, event);
+  return r;
+}
+
 /**
- * `NodeReceiptV1` for an admitted event, untyped: its schema is G4's. Until
- * G4 merges the route is unmounted, a `PublicApiError(404, ...)`.
+ * Every `NodeReceiptV1` the node retains for one admitted event (Stage (g)
+ * G4), as `{event, receipts}`. An event with none, including every event on a
+ * node without a receipt key, is `PublicApiError(404, "no_receipt")`.
  */
-export function receiptCall(event: string): Call<JsonObject> {
+export function receiptCall(event: string): Call<Receipts> {
   requireHex64("event", event);
-  return call(`/receipts/${event}`, {}, (_, d) => d);
+  return call(`/receipts/${event}`, {}, (_, d) => {
+    const served = hex(d, "event");
+    expect("event", served, event);
+    const items = arr(d, "receipts");
+    if (items.length === 0) {
+      throw new ProtocolError("a 200 receipts answer lists no receipt");
+    }
+    return { event: served, receipts: items.map((r) => nodeReceipt(r, event)) };
+  });
 }
 
 /** Decode one response, failing closed. */
@@ -844,7 +934,7 @@ export class PublicClient {
     return this.run(supportCall(from, to, asOf));
   }
 
-  async receipt(event: string): Promise<JsonObject> {
+  async receipt(event: string): Promise<Receipts> {
     return this.run(receiptCall(event));
   }
 }

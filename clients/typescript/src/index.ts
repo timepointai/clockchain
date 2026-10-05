@@ -26,10 +26,13 @@ export type {
   ClientOptions,
   FoldVersion,
   Health,
+  InitialAdmission,
   Json,
   JsonObject,
+  NodeReceipt,
   Prose,
   Reason,
+  Receipts,
   Revision,
   Rule,
   Snapshot,
@@ -48,3 +51,4 @@ export {
   secondsFromCoordinate,
   ticksFromCoordinate,
 } from "./coordinate.ts";
+export { sha256Hex } from "./sha256.ts";

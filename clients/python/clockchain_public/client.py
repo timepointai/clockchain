@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime
 import email.utils
+import hashlib
 import json
 import math
 import re
@@ -192,6 +193,37 @@ class Reason:
     code: str
     subject: str | None
     edge: str | None
+
+
+@dataclass(frozen=True)
+class InitialAdmission:
+    state: str
+    reason: str
+    missing: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NodeReceipt:
+    """One `NodeReceiptV1` as the node serves it. `receipt` is the signed
+    bytes as hex and is authoritative; the other fields are the node's decoding
+    of them. This client checks that `receipt_digest` is the SHA-256 of those
+    bytes but does not verify the node's signature. `received_at` is when the
+    node saw the event, in Unix microseconds, not a claimed historical time."""
+
+    receipt: str
+    receipt_digest: str
+    node_key: str
+    event: str
+    received_at: int
+    encoding_version: int
+    fold_version: FoldVersion
+    initial_admission_result: InitialAdmission
+
+
+@dataclass(frozen=True)
+class Receipts:
+    event: str
+    receipts: tuple[NodeReceipt, ...]
 
 
 @dataclass(frozen=True)
@@ -491,11 +523,61 @@ def support_call(from_: str, to: str, as_of: str | None = None) -> Call[SupportR
     return _call("/support", {"from": from_, "to": to, "as_of": as_of}, decode)
 
 
-def receipt_call(event: str) -> Call[dict]:
-    """`NodeReceiptV1` for an admitted event, untyped: its schema is G4's.
-    Until G4 merges the route is unmounted, a `PublicApiError(404, ...)`."""
+_ADMISSION_STATES = ("valid", "pending", "invalid")
+
+
+def _node_receipt(value: object, event: str) -> NodeReceipt:
+    if not isinstance(value, dict):
+        raise ProtocolError("receipt is not an object")
+    raw = _field(value, "receipt", str)
+    if not raw or len(raw) % 2 or raw != raw.lower() \
+            or not all(c in "0123456789abcdef" for c in raw):
+        raise ProtocolError("'receipt' is not lowercase hex bytes")
+    digest = _hex(value, "receipt_digest")
+    if hashlib.sha256(bytes.fromhex(raw)).hexdigest() != digest:
+        raise ProtocolError("receipt_digest is not the SHA-256 of the receipt")
+    received_at = _field(value, "received_at", int)
+    if received_at < 0:
+        raise ProtocolError("'received_at' is negative")
+    fold = _field(value, "fold_version", dict)
+    initial = _field(value, "initial_admission_result", dict)
+    state = _field(initial, "state", str)
+    if state not in _ADMISSION_STATES:
+        raise ProtocolError(f"unknown admission state {state!r}")
+    r = NodeReceipt(
+        receipt=raw,
+        receipt_digest=digest,
+        node_key=_hex(value, "node_key"),
+        event=_hex(value, "event"),
+        received_at=received_at,
+        encoding_version=_field(value, "encoding_version", int),
+        fold_version=FoldVersion(version=_field(fold, "version", int),
+                                 manifest=_hex(fold, "manifest")),
+        initial_admission_result=InitialAdmission(
+            state=state,
+            reason=_field(initial, "reason", str),
+            missing=_hex_list(_field(initial, "missing", list), "missing"),
+        ),
+    )
+    _expect("event", r.event, event)
+    return r
+
+
+def receipt_call(event: str) -> Call[Receipts]:
+    """Every `NodeReceiptV1` the node retains for one admitted event (Stage (g)
+    G4), as `{event, receipts}`. An event with none, including every event on a
+    node without a receipt key, is `PublicApiError(404, "no_receipt")`."""
     _require_hex64("event", event)
-    return _call(f"/receipts/{event}", {}, lambda _, d: d)
+
+    def decode(_: int, d: dict) -> Receipts:
+        served = _hex(d, "event")
+        _expect("event", served, event)
+        items = _field(d, "receipts", list)
+        if not items:
+            raise ProtocolError("a 200 receipts answer lists no receipt")
+        return Receipts(event=served, receipts=tuple(_node_receipt(r, event) for r in items))
+
+    return _call(f"/receipts/{event}", {}, decode)
 
 
 def _hex_list(values: list[Any], what: str) -> tuple[str, ...]:
@@ -597,7 +679,7 @@ class PublicClient:
     def support(self, from_: str, to: str, as_of: str | None = None) -> SupportRead:
         return self.run(support_call(from_, to, as_of))
 
-    def receipt(self, event: str) -> dict:
+    def receipt(self, event: str) -> Receipts:
         return self.run(receipt_call(event))
 
 
@@ -631,7 +713,7 @@ class AsyncPublicClient:
     async def support(self, from_: str, to: str, as_of: str | None = None) -> SupportRead:
         return await self.run(support_call(from_, to, as_of))
 
-    async def receipt(self, event: str) -> dict:
+    async def receipt(self, event: str) -> Receipts:
         return await self.run(receipt_call(event))
 
 

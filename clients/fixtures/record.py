@@ -7,14 +7,19 @@ admits two synthetic Genesis entries with `cc-publisher v1`, starts the G5
 key), and records every route of the `/public/v1` contract through it into
 `clients/fixtures/v1/*.json`: request, status, the response headers a client
 acts on (`retry-after`), and body. `rate_limited.json` is a real 429 from a
-second gateway allowed one request a minute. `legacy-probes.json` records what
+second gateway allowed one request a minute. The main node runs without
+`CC_V1_NODE_SEED`, so its receipts route answers `404 no_receipt`;
+`receipt.json` is a real 200 from a second node, given a synthetic seed, that
+admits the same entry A. `legacy-probes.json` records what
 the node itself answers on the legacy routes the audited consumers call.
 
 `--node-only` records from the node's read routes minus `instance` instead,
 the one change G5 makes, without a gateway (and without the 429 fixture).
 `--check` records into a temporary directory and fails on any difference from
-the committed fixtures except `/health`'s `build`, `_meta.json`'s `source` and
-the exact `retry-after` seconds, which must be a positive whole number.
+the committed fixtures except values that differ between runs: `/health`'s
+`build`, `_meta.json`'s `source`, the exact `retry-after` seconds (which must be
+a positive whole number), and a receipt's `received_at` with its signed bytes
+and digest (the digest must be the SHA-256 of the bytes).
 
 Everything is synthetic. The curator seed and the instance are SHA-256 hashes
 of public labels in this file, the node credentials are random per run and
@@ -56,6 +61,8 @@ OUT = HERE / "v1"
 
 # Public labels; their SHA-256 is the synthetic seed and instance.
 CURATOR_LABEL = b"clockchain g7 synthetic fixture curator seed"
+# The node's receipt-signing seed (CC_V1_NODE_SEED) for the receipts fixture.
+NODE_SEED_LABEL = b"clockchain g7 synthetic fixture node receipt seed"
 INSTANCE_LABEL = b"clockchain g7 synthetic fixture instance"
 NONCE_LABELS = (b"clockchain g7 synthetic nonce a", b"clockchain g7 synthetic nonce b")
 
@@ -132,12 +139,13 @@ def wait_up(url: str, proc: subprocess.Popen, name: str) -> None:
     raise SystemExit(f"{name} did not become ready")
 
 
-def publish(pub: Path, work: Path, base: str, env: dict, instance: str) -> list[dict]:
+def publish(pub: Path, work: Path, base: str, env: dict, instance: str,
+            entries: tuple = ENTRIES) -> list[dict]:
     seed = work / "curator.seed"
     seed.write_text(sha(CURATOR_LABEL) + "\n")
     seed.chmod(0o600)
     out = []
-    for entry, nonce in zip(ENTRIES, NONCE_LABELS):
+    for entry, nonce in zip(entries, NONCE_LABELS):
         body = work / f"{entry['value']}.txt"
         body.write_text(entry["body"])
         body.chmod(0o600)
@@ -183,7 +191,8 @@ def cases(a: dict, b: dict) -> list[tuple[str, str, dict]]:
           "as_of": b["asserted_time"]["coordinate"]}),
         ("support_missing_to", "/public/v1/support", {"from": a["subject"]}),
         ("invalid_query", "/public/v1/snapshot", {"unexpected": "1"}),
-        ("receipt_unmounted", f"/public/v1/receipts/{a['event']}", {}),
+        # The main node runs without CC_V1_NODE_SEED, so it holds no receipt.
+        ("receipt_no_receipt", f"/public/v1/receipts/{a['event']}", {}),
     ]
 
 
@@ -229,7 +238,7 @@ def probe_legacy(base: str, read_key: str, out_dir: Path) -> None:
 
 
 def record(base: str, token: str | None, prefix: str, previews: list[dict],
-           out: Path, rate_limited: dict | None = None) -> None:
+           out: Path, extra: dict[str, dict] | None = None) -> None:
     status, health = http(f"{base}{prefix}/health")
     assert status == 200, health
     manifest = health["fold_version"]["manifest"]
@@ -256,10 +265,9 @@ def record(base: str, token: str | None, prefix: str, previews: list[dict],
                "status": status, "headers": headers, "body": body}
         (out / f"{name}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
         index.append(name)
-    if rate_limited is not None:
-        (out / "rate_limited.json").write_text(
-            json.dumps(rate_limited, indent=2, sort_keys=True) + "\n")
-        index.append("rate_limited")
+    for name, doc in sorted((extra or {}).items()):
+        (out / f"{name}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+        index.append(name)
     meta = {
         "schema": "cc.clients.fixtures.v1",
         "source": "gateway" if prefix else "node-minus-instance",
@@ -305,14 +313,78 @@ def rate_limited_answer(binary: Path, node: str, read_key: str) -> dict:
             "status": status, "headers": headers, "body": body}
 
 
+@contextlib.contextmanager
+def v1_node(node_bin: Path, pub: Path, admin: str, work: Path, node_seed: str | None = None):
+    """A provisioned, serving v1 node over its own throwaway database.
+    Yields (base URL, write key, read key, instance)."""
+    db = f"cc_g7_fixture_{os.getpid()}_{secrets.token_hex(4)}"
+    db_url = urllib.parse.urlunsplit(urllib.parse.urlsplit(admin)._replace(path=f"/{db}"))
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    instance = sha(INSTANCE_LABEL)
+    api_key, read_key = secrets.token_hex(32), secrets.token_hex(32)
+    work.mkdir(parents=True, exist_ok=True)
+    seed = work / "pub.seed"
+    seed.write_text(sha(CURATOR_LABEL) + "\n")
+    seed.chmod(0o600)
+    curator = subprocess.run([pub, "v1", "pubkey", "--key", seed], check=True,
+                             capture_output=True, text=True).stdout.strip()
+    env = {
+        "PATH": os.environ["PATH"],
+        "CC_NODE_LEDGER": "v1",
+        "DATABASE_URL": db_url,
+        "CC_V1_INSTANCE": instance,
+        "CC_V1_CURATORS": curator,
+        "CC_V1_MAX_HOPS": "4",
+        "CC_NODE_API_KEY": api_key,
+        "CC_NODE_READ_KEY": read_key,
+        "CC_NODE_POSTURE": "live",
+        "PORT": str(port),
+    }
+    if node_seed is not None:
+        env["CC_V1_NODE_SEED"] = node_seed
+    psql(admin, f"CREATE DATABASE {db}")
+    proc = None
+    try:
+        subprocess.run([node_bin, "provision-v1"], check=True, env=env,
+                       stdout=subprocess.DEVNULL)
+        proc = subprocess.Popen([node_bin, "serve"], env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        wait_up(f"{base}/ready", proc, "cc-node")
+        yield base, api_key, read_key, instance
+    finally:
+        if proc is not None:
+            proc.terminate()
+            proc.wait(timeout=10)
+        psql(admin, f"DROP DATABASE IF EXISTS {db}")
+
+
+def receipt_answer(node_bin: Path, pub: Path, admin: str, work: Path,
+                   gateway_bin: Path | None) -> dict:
+    """A real 200 receipt: a second node with a synthetic CC_V1_NODE_SEED
+    admits the same deterministic entry A, which it then receipts."""
+    with v1_node(node_bin, pub, admin, work, sha(NODE_SEED_LABEL)) as (base, key, read, inst):
+        (a,) = publish(pub, work, base, {"PATH": os.environ["PATH"], "CC_NODE_API_KEY": key},
+                       inst, ENTRIES[:1])
+        path = f"/public/v1/receipts/{a['event']}"
+        if gateway_bin is None:
+            status, headers, body = http_full(f"{base}/v1/receipts/{a['event']}", read)
+        else:
+            with gateway(gateway_bin, base, read, 100_000) as gw:
+                status, headers, body = http_full(gw + path)
+    assert status == 200, (status, body)
+    return {"request": {"method": "GET", "path": path, "query": {}},
+            "status": status, "headers": headers, "body": body}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--node-only", action="store_true",
                     help="record from the node's read routes minus instance, without cc-gateway "
                          "(no rate_limited fixture)")
     ap.add_argument("--check", action="store_true",
-                    help="record into a temporary directory and fail if anything but "
-                         "/health's build differs from the committed fixtures")
+                    help="record into a temporary directory and fail on any difference from "
+                         "the committed fixtures except values that vary between runs")
     args = ap.parse_args()
     scratch = tempfile.TemporaryDirectory() if args.check else None
     root = Path(scratch.name) if scratch else HERE
@@ -328,54 +400,20 @@ def main() -> int:
     host = urllib.parse.urlsplit(admin).hostname
     if host not in ("localhost", "127.0.0.1", "::1"):
         raise SystemExit("FIXTURE_ADMIN_URL must name a local PostgreSQL")
-    db = f"cc_g7_fixture_{os.getpid()}"
-    db_url = urllib.parse.urlunsplit(urllib.parse.urlsplit(admin)._replace(path=f"/{db}"))
 
-    port = free_port()
-    base = f"http://127.0.0.1:{port}"
-    instance = sha(INSTANCE_LABEL)
-    api_key, read_key = secrets.token_hex(32), secrets.token_hex(32)
-    psql(admin, f"CREATE DATABASE {db}")
-    proc = None
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            work = Path(tmp)
-            seed = work / "pub.seed"
-            seed.write_text(sha(CURATOR_LABEL) + "\n")
-            seed.chmod(0o600)
-            curator = subprocess.run([pub, "v1", "pubkey", "--key", seed], check=True,
-                                     capture_output=True, text=True).stdout.strip()
-            env = {
-                "PATH": os.environ["PATH"],
-                "CC_NODE_LEDGER": "v1",
-                "DATABASE_URL": db_url,
-                "CC_V1_INSTANCE": instance,
-                "CC_V1_CURATORS": curator,
-                "CC_V1_MAX_HOPS": "4",
-                "CC_NODE_API_KEY": api_key,
-                "CC_NODE_READ_KEY": read_key,
-                "CC_NODE_POSTURE": "live",
-                "PORT": str(port),
-            }
-            subprocess.run([node_bin, "provision-v1"], check=True, env=env,
-                           stdout=subprocess.DEVNULL)
-            proc = subprocess.Popen([node_bin, "serve"], env=env,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            wait_up(f"{base}/ready", proc, "cc-node")
-            pub_env = {"PATH": os.environ["PATH"], "CC_NODE_API_KEY": api_key}
-            previews = publish(pub, work, base, pub_env, instance)
-            probe_legacy(base, read_key, root)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        extra = {"receipt": receipt_answer(node_bin, pub, admin, work / "receipt", gateway_bin)}
+        with v1_node(node_bin, pub, admin, work / "main") as (base, key, read, inst):
+            previews = publish(pub, work / "main", base,
+                               {"PATH": os.environ["PATH"], "CC_NODE_API_KEY": key}, inst)
+            probe_legacy(base, read, root)
             if gateway_bin is None:
-                record(base, read_key, "", previews, root / "v1")
+                record(base, read, "", previews, root / "v1", extra)
             else:
-                with gateway(gateway_bin, base, read_key, 100_000) as gw:
-                    limited = rate_limited_answer(gateway_bin, base, read_key)
-                    record(gw, None, "/public/v1", previews, root / "v1", limited)
-    finally:
-        if proc is not None:
-            proc.terminate()
-            proc.wait(timeout=10)
-        psql(admin, f"DROP DATABASE IF EXISTS {db}")
+                with gateway(gateway_bin, base, read, 100_000) as gw:
+                    extra["rate_limited"] = rate_limited_answer(gateway_bin, base, read)
+                    record(gw, None, "/public/v1", previews, root / "v1", extra)
     if scratch is None:
         print(f"recorded {len(list(OUT.glob('*.json'))) - 1} fixtures into {OUT.relative_to(ROOT)}")
         return 0
@@ -387,6 +425,8 @@ def _without_build(path: Path) -> object:
     doc = json.loads(path.read_text())
     if path.name == "health.json":
         doc["body"].pop("build", None)
+    if path.name == "receipt.json":
+        _stable_receipts(doc["body"])
     after = doc.get("headers", {}).get("retry-after") if isinstance(doc, dict) else None
     if after is not None:
         # The wait depends on timing; it must be a positive whole number.
@@ -394,6 +434,22 @@ def _without_build(path: Path) -> object:
     if path.name == "_meta.json":
         doc.pop("source", None)
     return doc
+
+
+def _stable_receipts(body: dict) -> None:
+    """A receipt records when the node saw the event (`received_at`, Unix
+    microseconds), so its signed bytes and digest differ on every run. Check
+    them instead: the digest is the SHA-256 of the bytes and the time is a
+    positive whole number. Anything else is left to differ."""
+    for r in body.get("receipts", []):
+        raw, digest, at = r.get("receipt"), r.get("receipt_digest"), r.get("received_at")
+        try:
+            ok = (hashlib.sha256(bytes.fromhex(raw)).hexdigest() == digest
+                  and type(at) is int and at > 0)
+        except (TypeError, ValueError):
+            ok = False
+        if ok:
+            r["receipt"], r["receipt_digest"], r["received_at"] = "bytes", "sha256", "positive"
 
 
 def compare(fresh: Path) -> int:

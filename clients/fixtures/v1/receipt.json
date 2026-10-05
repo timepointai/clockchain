@@ -1,0 +1,31 @@
+{
+  "body": {
+    "event": "8d1760a8aed92c3781ca450658f66e9f5d331805598792171c63ab5ef0c344f5",
+    "receipts": [
+      {
+        "encoding_version": 1,
+        "event": "8d1760a8aed92c3781ca450658f66e9f5d331805598792171c63ab5ef0c344f5",
+        "fold_version": {
+          "manifest": "fd7b2676d70b628128eb83fbba27b3ebefff6e51823c1d87620d57a4e2ad6208",
+          "version": 1
+        },
+        "initial_admission_result": {
+          "missing": [],
+          "reason": "",
+          "state": "valid"
+        },
+        "node_key": "4231097e7319f49658f008da3a04b38327f51b51ce45a99c09758f1f5453be73",
+        "receipt": "0000000d63632e726563656970742e7631ab2e971df2f72c642d338ea3c3871d24c0108293ec7bdb6430b5116d3f932d704231097e7319f49658f008da3a04b38327f51b51ce45a99c09758f1f5453be738d1760a8aed92c3781ca450658f66e9f5d331805598792171c63ab5ef0c344f500065d0edde8d80700010001fd7b2676d70b628128eb83fbba27b3ebefff6e51823c1d87620d57a4e2ad620800010000000000000000af208d95499101f4aced3fc06a56c576c72f73fcbedd46c90c2e90094213471238cf0e5061ed732d405c2e1204705cb81c6295097e93ee1c73ac0df9b7447c0e",
+        "receipt_digest": "62f0ca8e0fd5030958ca797c1b7e169752c532897d3c29544984ac3e747703f6",
+        "received_at": 1791168294213639
+      }
+    ]
+  },
+  "headers": {},
+  "request": {
+    "method": "GET",
+    "path": "/public/v1/receipts/8d1760a8aed92c3781ca450658f66e9f5d331805598792171c63ab5ef0c344f5",
+    "query": {}
+  },
+  "status": 200
+}

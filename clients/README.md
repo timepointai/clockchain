@@ -13,8 +13,14 @@ GET-only, and its JSON equals the node's v1 read routes minus `instance`.
 | `GET /public/v1/support?from=&to=&as_of=` | `support(from_, to, as_of)` | `support(from, to, asOf)` |
 | `GET /public/v1/receipts/{event}` | `receipt(event)` | `receipt(event)` |
 
-A receipt is G4's `NodeReceiptV1`. The clients return it untyped, and until G4
-merges the route answers 404.
+`receipt(event)` returns the node's receipts for one admitted event, typed as
+`{event, receipts}`. Each receipt is a G4 `NodeReceiptV1`: the signed bytes as
+hex (`receipt`), their SHA-256 (`receipt_digest`, checked by the client), the
+node key, the event, `received_at` (Unix microseconds when the node saw the
+event, not a historical time) and the decoded admission result. The clients
+do not verify the node's signature; the bytes are what a verifier checks. An
+event the node holds no receipt for answers `404 no_receipt`. That includes
+every event on a node without a receipt key (`CC_V1_NODE_SEED`).
 
 ## Guarantees
 
@@ -135,6 +141,10 @@ real v1 node:
 - Each fixture is the request, status, kept headers (`retry-after`) and body.
 - `rate_limited.json` is a real 429 from a second gateway allowed one
   request a minute.
+- `receipt_no_receipt.json` is the `404 no_receipt` from the main node,
+  which runs without `CC_V1_NODE_SEED`.
+- `receipt.json` is a real 200 from a second node, given a synthetic
+  receipt seed, that admits the same entry A.
 - `fixtures/v1/_meta.json` lists the synthetic entries and the fixture index.
 - `/health`'s `build` is the label the recording binaries were built with.
 
@@ -153,12 +163,14 @@ python3 clients/fixtures/record.py --node-only   # node minus instance, no gatew
 
 - `/health`'s `build`;
 - `_meta.json`'s `source`;
-- the exact `retry-after` seconds, which must still be a positive whole number.
+- the exact `retry-after` seconds, which must still be a positive whole number;
+- a receipt's `received_at`, signed bytes and digest. The digest must still
+  be the SHA-256 of the bytes, and the time a positive whole number.
 
 Everything in the fixtures is synthetic:
 
-- The curator seed and the instance are SHA-256 hashes of public labels in
-  `record.py`.
+- The curator seed, the node receipt seed and the instance are SHA-256 hashes
+  of public labels in `record.py`.
 - The node credentials are random for each run and never written.
 - The local node and gateway listen on loopback and are stopped when
   recording ends.

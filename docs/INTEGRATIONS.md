@@ -364,7 +364,7 @@ settings should be cleared is an owner decision.
 | `/v1/recents`, `/api/v1/browse`, `/api/v1/search`, `/today`, `/random`, `/graph/*` | `GET /public/v1/snapshot` | The whole projection: rows, subjects, revisions, edges, media, authority. List and filter client-side |
 | `/v2/media`, `/v1/images/*` | `media` in the snapshot | Revision-scoped media records; no image bytes route |
 | `/v1/events`, `/api/v1/index`, `/ingest/*`, `/figures` writes | None | No public writes. Owner-signed `cc-publisher v1` only |
-| Admission receipts | `GET /public/v1/receipts/{event}` | 404 `no_such_route`: G4's node receipts have merged, but the gateway does not mount this route yet |
+| Admission receipts | `GET /public/v1/receipts/{event}` | `{event, receipts}`: each a signed G4 `NodeReceiptV1` with its digest, node key, `received_at` (Unix microseconds when the node saw the event) and initial admission result. `404 no_receipt` when the node holds none, which includes every event on a node without `CC_V1_NODE_SEED`. Never cached by the gateway |
 
 ## Found by code search
 

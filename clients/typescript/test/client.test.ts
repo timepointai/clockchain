@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import type { IncomingHttpHeaders, Server } from "node:http";
@@ -23,6 +24,7 @@ import {
   healthCall,
   parse,
   retryAfterSeconds,
+  sha256Hex,
   snapshotCall,
   subjectCall,
   summarizeSubjects,
@@ -85,8 +87,8 @@ class Recorded {
 
   constructor(override: Record<string, Doc> = {}) {
     for (const name of META.fixtures) {
-      if (name === "rate_limited") {
-        continue; // same URL as health; tests install it explicitly
+      if (name === "rate_limited" || name === "receipt") {
+        continue; // same URL as health / receipt_no_receipt; tests install it
       }
       const doc = Object.hasOwn(override, name) ? override[name] : load(name);
       const query = new URLSearchParams(doc.request.query).toString();
@@ -162,7 +164,7 @@ describe("FixtureSet", () => {
       .filter((f) => f !== "_meta")
       .sort();
     assert.deepEqual(onDisk, META.fixtures);
-    assert.equal(onDisk.length, 18);
+    assert.equal(onDisk.length, 19);
   });
 
   test("every contract route has a fixture", () => {
@@ -596,10 +598,12 @@ describe("Errors", () => {
     );
   });
 
-  test("receipt is 404 until G4", async () => {
-    const [c] = client();
+  test("no receipt without a node key", async () => {
+    // Recorded from a node without CC_V1_NODE_SEED, through cc-gateway.
+    const [c, t] = client();
     const e = await rejectsWith(c.receipt(A.event), PublicApiError);
-    assert.deepEqual(apiError(e), [404, "no_such_route"]);
+    assert.deepEqual(apiError(e), [404, "no_receipt"]);
+    assert.equal(t.calls[0]?.[0], `${BASE}/public/v1/receipts/${A.event}`);
   });
 
   test("receipt id is checked before sending", async () => {
@@ -670,6 +674,89 @@ describe("Requests", () => {
     ]) {
       assert.throws(() => new PublicClient(bad), TypeError, bad);
     }
+  });
+});
+
+function receiptDoc(changes: Record<string, unknown> = {}): Doc {
+  const doc = structuredClone(load("receipt"));
+  Object.assign(doc.body.receipts[0], changes);
+  return doc;
+}
+
+describe("Receipt", () => {
+  test("decodes the recorded receipt", async () => {
+    const doc = load("receipt");
+    const served = doc.body.receipts[0];
+    const [c] = client({ receipt_no_receipt: doc });
+    const r = await c.receipt(A.event);
+    assert.equal(r.event, A.event);
+    assert.equal(r.receipts.length, 1);
+    const n = r.receipts[0]!;
+    assert.equal(n.event, A.event);
+    assert.equal(n.receipt, served.receipt);
+    assert.equal(
+      n.receipt_digest,
+      createHash("sha256").update(Buffer.from(served.receipt, "hex")).digest("hex"),
+    );
+    assert.equal(n.node_key, served.node_key);
+    assert.equal(n.received_at, served.received_at);
+    assert.ok(n.received_at > 0);
+    assert.equal(n.encoding_version, 1);
+    assert.equal(n.fold_version.manifest, load("health").body.fold_version.manifest);
+    assert.equal(n.initial_admission_result.state, "valid");
+    assert.deepEqual(n.initial_admission_result.missing, []);
+    // The signed bytes carry the node key and the event they receipt.
+    assert.ok(n.receipt.includes(n.node_key + n.event));
+  });
+
+  test("digest must hash the bytes", async () => {
+    const [c] = client({ receipt_no_receipt: receiptDoc({ receipt_digest: "00".repeat(32) }) });
+    await rejectsWith(c.receipt(A.event), ProtocolError, /SHA-256/);
+  });
+
+  test("receipt for another event is refused", async () => {
+    const [c1] = client({ receipt_no_receipt: receiptDoc({ event: B.event }) });
+    await rejectsWith(c1.receipt(A.event), ProtocolError, /another event/);
+    const doc = structuredClone(load("receipt"));
+    doc.body.event = B.event;
+    const [c2] = client({ receipt_no_receipt: doc });
+    await rejectsWith(c2.receipt(A.event), ProtocolError, /another event/);
+  });
+
+  test("malformed receipts are refused", async () => {
+    for (const changes of [
+      { receipt: "abc" },
+      { receipt: "XY" },
+      { received_at: -1 },
+      { received_at: true },
+      { node_key: "00" },
+      { initial_admission_result: { state: "accepted", reason: "", missing: [] } },
+    ]) {
+      const [c] = client({ receipt_no_receipt: receiptDoc(changes) });
+      await rejectsWith(c.receipt(A.event), ProtocolError);
+    }
+    const empty = structuredClone(load("receipt"));
+    empty.body.receipts = [];
+    const [c] = client({ receipt_no_receipt: empty });
+    await rejectsWith(c.receipt(A.event), ProtocolError, /no receipt/);
+  });
+
+  test("unknown fields are tolerated", async () => {
+    const doc = receiptDoc({ extra_field: "ignored" });
+    doc.body.also_new = 1;
+    const [c] = client({ receipt_no_receipt: doc });
+    assert.equal((await c.receipt(A.event)).receipts[0]?.event, A.event);
+  });
+
+  test("sha256 matches node:crypto", () => {
+    for (let n = 0; n < 200; n++) {
+      const data = new Uint8Array(n).map((_, i) => (i * 31 + n) & 255);
+      assert.equal(sha256Hex(data), createHash("sha256").update(data).digest("hex"), String(n));
+    }
+    assert.equal(
+      sha256Hex(new TextEncoder().encode("abc")),
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
   });
 });
 
