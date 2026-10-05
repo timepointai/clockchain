@@ -26,6 +26,10 @@ use cc_node::{
     router, serve_v1,
     state::AppState,
 };
+use tracing_subscriber::{
+    filter::{LevelFilter, Targets},
+    prelude::*,
+};
 
 /// `EX_CONFIG` from `sysexits.h`: the process could not start because its
 /// configuration is wrong. A distinct code so a supervisor can tell "this will
@@ -34,7 +38,25 @@ const EX_CONFIG: i32 = 78;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    // Preserve fmt::init's RUST_LOG target filtering while keeping stdout
+    // available for the provision-v1 JSON report.
+    let targets = match std::env::var("RUST_LOG") {
+        Ok(value) => value.parse::<Targets>().unwrap_or_else(|error| {
+            eprintln!("Ignoring RUST_LOG={value:?}: {error}");
+            Targets::default()
+        }),
+        Err(std::env::VarError::NotPresent) => Targets::new().with_default(LevelFilter::INFO),
+        Err(error) => {
+            eprintln!("Ignoring RUST_LOG: {error}");
+            Targets::new().with_default(LevelFilter::INFO)
+        }
+    };
+    tracing_subscriber::fmt()
+        .with_max_level(LevelFilter::TRACE)
+        .with_writer(std::io::stderr)
+        .finish()
+        .with(targets)
+        .init();
 
     let ledger = match Ledger::from_env() {
         Ok(l) => l,

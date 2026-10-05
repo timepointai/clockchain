@@ -117,7 +117,9 @@ async fn has_v1_schema(pool: &PgPool) -> bool {
 #[tokio::test]
 async fn provision_v1_is_idempotent_and_prints_the_identity() {
     let (pool, cleanup) = cc_testkit::ephemeral_empty_db().await;
-    let env = v1_env(&url_of(&pool).await);
+    let mut env = v1_env(&url_of(&pool).await);
+    // Exercise the machine-readable stdout contract even with diagnostics enabled.
+    env.insert("RUST_LOG", "sqlx=debug".into());
     let first = run(&["provision-v1"], &env);
     assert_eq!(
         first.status.code(),
@@ -125,6 +127,7 @@ async fn provision_v1_is_idempotent_and_prints_the_identity() {
         "{}",
         String::from_utf8_lossy(&first.stderr)
     );
+    assert!(String::from_utf8_lossy(&first.stderr).contains("sqlx"));
     let report: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
     let f = filter();
     assert_eq!(
