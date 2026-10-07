@@ -3,8 +3,8 @@
 Read this file before release, publication, generation, or fixture work. These
 constraints remain active until the owner explicitly changes them.
 
-- No deployment or production writes, except the owner-authorized v1 launch
-  below.
+- No deployment or production writes. The 2026-10-01 launch authorization below
+  is consumed; a routine release needs its own dated owner authorization.
 - No historical or image generation, model calls, new model attempts, or retries.
 - The private inaugural fixture is frozen: preserve its files, receipts, bindings,
   image bytes and hashes. Do not replace its sources. Apart from the authorized
@@ -39,11 +39,22 @@ The owner decided the following:
 - **Still held.** Generation and model calls remain held. Issue #6 disposition
   and any further publication remain owner decisions.
 
-## Launch record — 2026-10-02
+## Launch completion — 2026-10-02 (UTC)
 
-v1 was released onto the fresh database. The inaugural Engelbart 1968 Genesis was
-admitted on 2026-10-02 as event `95f7fe16…a75185b6`, and it is the only entry.
-Production stays on private ingress, with posture `live`.
+The 2026-10-01 launch authorization was executed and is consumed:
+
+- the fresh v1 database was provisioned and its rule identity bound with the
+  owner's curator key set;
+- exactly one owner-signed inaugural Genesis, the Engelbart 1968 subject, was
+  admitted on 2026-10-02 as event `95f7fe16…a75185b6`;
+- the v0 database is untouched and kept as an archive;
+- the v0 tick machine was removed; v1 runs no tick.
+
+Production stays on private ingress, with posture `live`. Any routine release
+after this point is a separate, per-release owner authorization under the
+2026-10-03 program below. Still held: generation and model calls, the 1973 claim
+and its influence edge, both images, any further publication, and the
+disposition of issue #6.
 
 ## Owner decision: post-launch program — 2026-10-03
 
@@ -60,6 +71,11 @@ workstation:
 - merges in consumer repositories.
 
 Generation and model calls remain held.
+
+Under this program the owner ran one verified update release (build
+`af82d9e4cd8d`, 2026-10-05) and one Delegate to a per-subject hot key on the
+inaugural subject (2026-10-05). The root key stays with the owner. Those were
+explicit owner actions; they do not authorize further deploys or entries.
 
 ## PR #5 merge record — 2026-09-28
 

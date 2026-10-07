@@ -7,6 +7,12 @@ authored as a v1 Genesis. See [HOLD.md](../../HOLD.md) for the exact scope.
 
 Refs #6. Only the owner decides that issue.
 
+**Status: complete.** W1 (PR #16), W2 (PR #14) and W3 (PR #15) merged on
+2026-10-01; the owner released v1 onto the fresh database and admitted the
+inaugural Genesis on 2026-10-02. The one-time runbook is
+[FIRST-ENTRY.md](../FIRST-ENTRY.md); routine releases after launch follow
+[OPERATIONS.md](../OPERATIONS.md).
+
 ## Goal
 
 The normal `cc-node` binary serves v1 in an explicit v1 mode. The publisher can
