@@ -33,8 +33,9 @@ archive and regression tests, but they are not part of the v1 service. The
 
 For a fresh agent continuing an owner session, follow
 [session continuity](docs/SESSION-HANDOFF.md). On the owner's workstation, the
-current task and exact operator handoff are in `~/clockchain-private/HANDOFF.md`;
-durable lessons are in `~/clockchain-private/MEMORY.md`. Read these before treating
+current task and exact operator handoff are in the owner's private `HANDOFF.md`;
+durable lessons are in the private `MEMORY.md`. The owner supplies their location
+outside this checkout. Read these before treating
 an old plan, approval bundle or experimental result as current work. Cloud
 sessions do not have these files; their scope comes from the owner's prompt and
 the current stage contract.
