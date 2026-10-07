@@ -35,14 +35,14 @@ EXPORT = {'corpus_digest': '2a' * 32, 'commitment': '2b' * 32, 'envelopes': ['01
 STORED = {'bodies': 1, 'candidates': 1, 'identity': 1, 'receipts': 0, 'rejections': 0,
           'rule_identity': 1}
 EVIDENCE = {'acceptance.json', 'provision.json', 'v1-zero.json', 'v1-populated.json',
-            'v1-restore.json', 'cleanup.json'}
+            'v1-restore.json', 'cleanup.json', 'provision-attempts'}
 SENTINELS = {'CC_NODE_API_KEY': 'PRODUCTION-SENTINEL-full-key-7f3a',
              'CC_NODE_READ_KEY': 'PRODUCTION-SENTINEL-read-key-91c2',
              'DATABASE_URL': 'postgres://prod:PRODUCTION-SENTINEL-pw@prod-db.internal:5432/clockchain',
              'CC_V1_INSTANCE': '9e' * 32, 'CC_V1_CURATORS': '8d' * 32,
              'FLY_API_TOKEN': 'FlyV1 PRODUCTION-SENTINEL-fly-token'}
 sha = lambda data: hashlib.sha256(data).hexdigest()
-UPDATE_EVIDENCE = {'v1-update.json', 'cleanup.json'}
+UPDATE_EVIDENCE = {'v1-update.json', 'cleanup.json', 'provision-attempts'}
 SEED = 'CC_V1_NODE_SEED'
 
 
@@ -106,6 +106,8 @@ class FakeDocker:
         if argv[0] != 'docker' or not all(isinstance(a, str) for a in argv):
             raise AssertionError(f'not a docker argv: {argv!r}')
         rc, out, err = self.dispatch(argv[1:])
+        if kwargs.get('capture_output') and not kwargs.get('text'):
+            out, err = out.encode(), err.encode()
         return subprocess.CompletedProcess(argv, rc, out, err)
 
     def event(self, label):
@@ -537,7 +539,7 @@ class V1AcceptanceTests(unittest.TestCase):
                          {'node.env', 'restored.env', 'wrong-instance.env', 'wrong-curators.env',
                           'submit.env', 'read.env'})
         argvs = [' '.join(argv) for argv in fake.calls]
-        reports = [p.read_text() for p in self.evidence.iterdir()]
+        reports = [p.read_text() for p in self.evidence.rglob('*') if p.is_file()]
         for name, value in SENTINELS.items():
             for text in argvs + [t for _, t in fake.env_reads] + reports:
                 self.assertNotIn(value, text, name)
@@ -637,6 +639,61 @@ class V1AcceptanceTests(unittest.TestCase):
         self.assertEqual(wrong_curators['CC_V1_INSTANCE'], node['CC_V1_INSTANCE'])
         self.assertIn(node['CC_V1_CURATORS'], wrong_curators['CC_V1_CURATORS'].split(','))
         self.assertEqual(len(wrong_curators['CC_V1_CURATORS'].split(',')), 2)
+
+    def test_provision_attempts_retain_output_and_status_privately(self):
+        for update in (False, True):
+            with self.subTest(update=update):
+                evidence = self.root / f'attempts-{update}'
+                fake = FakeDocker(images=(PREVIOUS, IMAGE))
+                (self.accept_update if update else self.accept)(fake, evidence=evidence)
+                attempts = evidence / 'provision-attempts'
+                self.assertEqual(attempts.stat().st_mode & 0o777, 0o700)
+                captured = []
+                for attempt in attempts.iterdir():
+                    self.assertEqual(attempt.stat().st_mode & 0o777, 0o700)
+                    self.assertEqual({p.name for p in attempt.iterdir()},
+                                     {'stdout', 'stderr', 'result.json'})
+                    for p in attempt.iterdir():
+                        self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+                    result = json.loads((attempt / 'result.json').read_text())
+                    self.assertIn(result['image'], fake.images)
+                    captured.append((result['env_file'], result['returncode'],
+                                     (attempt / 'stdout').read_text()))
+                    self.assertEqual((attempt / 'stderr').read_text(),
+                                     '' if result['returncode'] == 0 else
+                                     'provision-v1: stored identity differs')
+                self.assertCountEqual(captured, fake.provisions)
+
+    def test_provision_failure_retains_raw_streams_before_handling_and_cleans_up(self):
+        for update in (False, True):
+            for rc in (0, 69):
+                with self.subTest(update=update, rc=rc):
+                    evidence = self.root / f'output-{update}-{rc}'
+                    fake = FakeDocker(images=(PREVIOUS, IMAGE))
+                    stdout = b'not JSON\r\n' if rc == 0 else b'partial output\r\n\xff'
+                    stderr = b'diagnostic\r\n\xff'
+
+                    original_call = FakeDocker.__call__
+
+                    def injected(this, argv, **kwargs):
+                        result = original_call(this, argv, **kwargs)
+                        if argv[-2:] == ['cc-node', 'provision-v1']:
+                            return subprocess.CompletedProcess(argv, rc, stdout, stderr)
+                        return result
+
+                    error = json.JSONDecodeError if rc == 0 else RuntimeError
+                    with patch.object(FakeDocker, '__call__', injected), self.assertRaises(error):
+                        (self.accept_update if update else self.accept)(fake, evidence=evidence)
+                    [attempt] = (evidence / 'provision-attempts').iterdir()
+                    self.assertEqual((attempt / 'stdout').read_bytes(), stdout)
+                    self.assertEqual((attempt / 'stderr').read_bytes(), stderr)
+                    result = json.loads((attempt / 'result.json').read_text())
+                    self.assertEqual(result['returncode'], rc)
+                    self.assertEqual(result['env_file'], 'node.env')
+                    self.assertEqual(len(fake.provisions), 1)  # no retry
+                    self.assertNotIn('serve app', fake.events)
+                    self.assertNotIn('serve previous', fake.events)
+                    (self.assertCleanUpdateFailure if update else self.assertCleanFailure)(fake, evidence)
 
     def test_restored_copy_without_a_guard_fails(self):
         for hole in ('TRUNCATE cc_v1.bodies', 'UPDATE cc_v1.identity', 'DELETE FROM cc_v1.receipts'):
@@ -976,7 +1033,7 @@ class V1AcceptanceTests(unittest.TestCase):
                     self.assertRegex(update[SEED], '^[0-9a-f]{64}$')
                     self.assertNotIn(update[SEED], node.values())
                     for text in [' '.join(argv) for argv in fake.calls] + \
-                            [p.read_text() for p in evidence.iterdir()]:
+                            [p.read_text() for p in evidence.rglob('*') if p.is_file()]:
                         self.assertNotIn(update[SEED], text)
                 else:
                     self.assertNotIn(SEED, update)
@@ -990,7 +1047,7 @@ class V1AcceptanceTests(unittest.TestCase):
         self.assertEqual({Path(p).name for p, _ in fake.env_reads},
                          {'node.env', 'update.env', 'wrong-instance.env', 'submit.env'})
         argvs = [' '.join(argv) for argv in fake.calls]
-        reports = [p.read_text() for p in self.evidence.iterdir()]
+        reports = [p.read_text() for p in self.evidence.rglob('*') if p.is_file()]
         headers = [str(auth) for _, _, auth in self.requests]
         for name, value in sentinels.items():
             for text in argvs + [t for _, t in fake.env_reads] + reports + headers:

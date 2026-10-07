@@ -135,7 +135,11 @@ ops/deploy-fly.sh --v1-fresh --app <app> \
       and a byte-equal export.
 
    Containers, the network and the temporary key directory are removed on
-   success or failure.
+   success or failure. Fresh and update acceptance retain every provisioning
+   attempt's raw stdout, stderr and exit status under the private evidence
+   directory's `provision-attempts/`, including failures and expected identity
+   refusals. Node diagnostics go to stderr; successful `provision-v1` stdout
+   contains only the identity JSON.
 2. **Production**, after main is rechecked and public IPs are refused, has
    these steps:
    1. Machine census: one app, and no tick running or scheduled. Any scheduled

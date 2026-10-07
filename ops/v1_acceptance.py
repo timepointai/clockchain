@@ -51,9 +51,9 @@ SYNTHETIC_NAMESPACE = 'cc.acceptance'
 SYNTHETIC_TIME = '2000-01-01'
 
 
-def docker(*args, check=True):
+def docker(*args, check=True, text=True):
     """Run docker; return stdout. With check=False return the CompletedProcess."""
-    result = subprocess.run(['docker', *map(str, args)], capture_output=True, text=True)
+    result = subprocess.run(['docker', *map(str, args)], capture_output=True, text=text)
     if not check:
         return result
     if result.returncode:
@@ -124,13 +124,25 @@ def counts(container, database):
     return {t: int(psql(container, database, f'SELECT count(*) FROM cc_v1.{t}')) for t in TABLES}
 
 
-def provision(image, network, env, *, expect_ok=True):
+def provision(image, network, env, *, expect_ok=True, evidence=None):
     result = docker('run', '--rm', '--platform', 'linux/amd64', '--network', network,
-                    '--env-file', env, image, 'cc-node', 'provision-v1', check=False)
+                    '--env-file', env, image, 'cc-node', 'provision-v1', check=False, text=False)
+    if evidence is not None:
+        # The --rm container is already gone. Save each attempt before checking
+        # its status or decoding stdout, including expected identity refusals.
+        attempts = Path(evidence) / 'provision-attempts'
+        attempts.mkdir(mode=0o700, exist_ok=True)
+        attempt = Path(tempfile.mkdtemp(prefix=Path(env).stem + '-', dir=attempts))
+        report = {'image': image, 'env_file': Path(env).name, 'returncode': result.returncode}
+        for name, raw in [('stdout', result.stdout), ('stderr', result.stderr),
+                          ('result.json', (json.dumps(report, indent=2) + '\n').encode())]:
+            fd = os.open(attempt / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(raw)
     if expect_ok:
         if result.returncode:
-            raise RuntimeError('provision-v1 failed on the synthetic database')
-        return json.loads(result.stdout)
+            raise RuntimeError(f'provision-v1 failed on the synthetic database (exit {result.returncode})')
+        return json.loads(result.stdout.decode('utf-8'))
     if result.returncode != IDENTITY_MISMATCH:
         raise AssertionError(f'provision-v1 must refuse a mismatched identity with {IDENTITY_MISMATCH}, '
                              f'not {result.returncode}')
@@ -227,8 +239,8 @@ def accept_v1(image, sha, evidence):
             raise AssertionError('cc-node migrate must refuse with 78 in v1 mode and write nothing')
 
         # 3. Provision twice (idempotent), then serve.
-        first = check_provision(provision(image, ident, env), expected)
-        if provision(image, ident, env) != first:
+        first = check_provision(provision(image, ident, env, evidence=evidence), expected)
+        if provision(image, ident, env, evidence=evidence) != first:
             raise AssertionError('provision-v1 is not idempotent')
         (evidence / 'provision.json').write_text(json.dumps(first, indent=2) + '\n')
         url = serve(image, app, ident, env, owned)
@@ -285,10 +297,12 @@ def accept_v1(image, sha, evidence):
             raise AssertionError('restored row counts differ')
         guards = prove_guards(lambda q: psql(db, 'restored', q, check=False),
                               lambda q: psql(db, 'restored', q))
-        if check_provision(provision(image, ident, restored_env), expected) != first:
+        if check_provision(provision(image, ident, restored_env, evidence=evidence), expected) != first:
             raise AssertionError('restored identity differs from the original provision')
-        refusals = {'wrong_instance': provision(image, ident, wrong_instance, expect_ok=False),
-                    'wrong_curators': provision(image, ident, wrong_curators, expect_ok=False)}
+        refusals = {'wrong_instance': provision(image, ident, wrong_instance, expect_ok=False,
+                                                evidence=evidence),
+                    'wrong_curators': provision(image, ident, wrong_curators, expect_ok=False,
+                                                evidence=evidence)}
         restored_url = serve(image, restored, ident, restored_env, owned)
         again = check_v1_populated(restored_url, sha, key, read_key, expected, entry)
         if (again['corpus_digest'], again['commitment']) != (populated['corpus_digest'],
@@ -407,7 +421,7 @@ def accept_v1_update(previous, image, sha, evidence, *, node_seed=False):
         fingerprint = lambda: fingerprint_v1(lambda q: psql(db, 'clockchain', q))
 
         # 1. The current image provisions, serves and admits one synthetic Genesis.
-        first = check_provision(provision(previous, ident, env), expected)
+        first = check_provision(provision(previous, ident, env, evidence=evidence), expected)
         old_url = serve(previous, old, ident, env, owned)
         (work / 'body.txt').write_bytes(SYNTHETIC_BODY)
         publisher('genesis', '--key', '/work/curator.seed', '--instance', instance,
@@ -429,11 +443,11 @@ def accept_v1_update(previous, image, sha, evidence, *, node_seed=False):
         owned.remove(('container', old))
 
         # 2. The new image's release command is a no-op on the matching store.
-        if check_provision(provision(image, ident, new_env), expected) != first:
+        if check_provision(provision(image, ident, new_env, evidence=evidence), expected) != first:
             raise AssertionError('new image provisions a different identity')
         if fingerprint() != rows:
             raise AssertionError('new image provision-v1 wrote to a matching store')
-        refused = provision(image, ident, wrong_instance, expect_ok=False)
+        refused = provision(image, ident, wrong_instance, expect_ok=False, evidence=evidence)
         if fingerprint() != rows:
             raise AssertionError('refused provision-v1 wrote to the store')
 
