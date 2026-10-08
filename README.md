@@ -36,11 +36,18 @@ Report security issues as described in [SECURITY.md](SECURITY.md).
 The v1 surfaces are:
 
 - the node in v1 mode: [using the node](docs/USING-THE-NODE.md#v1-mode);
-- signing and submission: [publisher v1](docs/PUBLISHER-V1.md);
-- the owner release runbook: [first entry](docs/FIRST-ENTRY.md) and
-  [owner operations](docs/CICD-FLY.md#v1-release-onto-a-fresh-database);
-- the rules: [multi-signer design](docs/design/MULTI-SIGNER.md) and stages
-  [(a)](docs/design/STAGE-A.md) to [(f)](docs/design/STAGE-F.md).
+- public reads: the [read-only gateway](docs/PUBLIC-ACCESS.md) (`/public/v1`),
+  plus a static [explorer and verifier](web/explorer/README.md) that reads the
+  gateway when the owner builds and hosts it (not itself deployed);
+- signing and submission: [publisher v1](docs/PUBLISHER-V1.md) and the
+  [key runbook](docs/KEYS.md) (cold root, hot delegate);
+- operations: routine [update releases, backups, monitoring and the seal
+  log](docs/OPERATIONS.md); the completed one-time [first entry](docs/FIRST-ENTRY.md)
+  runbook and [Fly deployment](docs/CICD-FLY.md);
+- the rules: [multi-signer design](docs/design/MULTI-SIGNER.md), stages
+  [(a)](docs/design/STAGE-A.md) to [(f)](docs/design/STAGE-F.md) and the
+  [post-launch program (g)](docs/design/STAGE-G.md); sealing options in
+  [SEALING.md](docs/design/SEALING.md).
 
 ### Legacy v0 paths
 
@@ -101,11 +108,14 @@ GitHub Actions tests code and never deploys. The owner explicitly releases a
 clean, CI-passing main commit using an immutable image digest. Acceptance runs in
 temporary local Docker containers with its own PG18, credentials and synthetic
 data; it never uses production data. The same tested image is promoted. The
-production app and its private Postgres run on Fly with no public ingress. The v1
-release refuses any running or scheduled tick machine. Deploys, public exposure,
-secrets, key ceremonies and new entries are owner actions run from the owner's
-workstation.
+production node and its private Postgres run on Fly with no public ingress; the
+separate read-only gateway app is the only public surface, and it holds nothing
+but a read key. The v1 release refuses any running or scheduled tick machine.
+Deploys, public exposure, secrets, key ceremonies and new entries are owner
+actions run from the owner's workstation under dated decisions in
+[HOLD.md](HOLD.md).
 
 See [owner operations](docs/CICD-FLY.md), [API](docs/USING-THE-NODE.md),
 [media](docs/TYPED-MEDIA-ABSENCE.md), [evaluation](docs/evaluation/README.md) and
-[contributing](CONTRIBUTING.md). No continuous generation or public service is implied.
+[contributing](CONTRIBUTING.md). No continuous generation is implied; the public
+read service is the gateway described above, nothing more.

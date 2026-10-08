@@ -61,6 +61,10 @@
 **/.agents
 **/.codex
 **/release-evidence
+**/fly.*.toml
+**/*.private.toml
+**/*.ndjson
+**/seals
 **/HANDOFF.md
 **/MEMORY.md
 **/CURRENT.md

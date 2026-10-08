@@ -60,6 +60,13 @@ id_ed25519*
 *.zip
 *.tar
 *.tar.gz
+# Private Fly configs with real app names, operator job state and seal logs.
+fly.*.toml
+*.private.toml
+/state/
+/evidence/
+/seals/
+*.ndjson
 # Common output names from the private generation/operator workflow.
 proposal.json
 brief.json

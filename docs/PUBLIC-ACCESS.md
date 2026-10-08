@@ -300,7 +300,12 @@ one corpus digest, the most recently observed one.
   change. The gateway shares the node's read key with every other holder of it. Options: share the current key,
   or rotate it first and redistribute the new value. Either way, revoking the
   gateway means rotating the key for everyone.
-- **IPv4.** The template allocates no IPv4; IPv4-only clients cannot reach it.
+- **IPv4.** The template allocates no IPv4, so IPv4-only clients cannot reach
+  the gateway, and a verify run from an IPv6-capable workstation does not
+  notice. A large share of readers, most enterprise networks and some whole
+  countries still have no IPv6 path. A shared IPv4
+  (`fly ips allocate-v4 --shared --app <public-app>`) closes the gap and needs
+  its own dated owner decision; releasing it is one command.
 - **Region, rate, freshness, VM size and concurrency** in
   [deploy/public/fly.toml](../deploy/public/fly.toml).
 - **A custom domain**, out of scope here.
@@ -308,8 +313,11 @@ one corpus digest, the most recently observed one.
 ## Enable (owner, from the workstation)
 
 After review, from the repo root of a clean checkout of the reviewed commit.
-`<public-app>`, `<node-app>` and `<org>` are placeholders; edit them into
-`deploy/public/fly.toml` first. The key value comes from a private file and
+`<public-app>`, `<node-app>` and `<org>` are placeholders; copy
+`deploy/public/fly.toml` to a private location outside the checkout and edit
+them there (the commands below say `<private fly.toml>`; the template has no
+build section because `fly` resolves a `dockerfile` path relative to the
+config file). The key value comes from a private file and
 never appears in argv or shell history.
 
 ```sh
@@ -327,8 +335,11 @@ printf 'CC_GATEWAY_READ_KEY=%s\n' "$(cat <PRIVATE_DIR>/node-read-key)" \
 fly secrets list --app <public-app>
 
 # 4. Deploy one machine with no public IPs.
-fly deploy --config deploy/public/fly.toml --dockerfile deploy/public/Dockerfile \
+fly deploy --config <private fly.toml> --dockerfile deploy/public/Dockerfile \
   --app <public-app> --no-public-ips --ha=false
+# Record the image digest `fly machines list --json` reports. `fly deploy`
+# builds a fresh image every time; to redeploy a known build, pass
+# `--image registry.fly.io/<public-app>@sha256:<digest>` instead of building.
 fly ips list --app <public-app>      # must list nothing
 fly status --app <public-app>
 ```
