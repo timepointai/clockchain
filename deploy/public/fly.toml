@@ -1,4 +1,5 @@
-# Fly.io template for the public read gateway (cc-gateway). NOT DEPLOYED.
+# Fly.io template for the public read gateway (cc-gateway). The owner's private
+# copy of this file, with real names, is what is deployed; see docs/PUBLIC-ACCESS.md.
 #
 # A separate app from the node. It serves the read-only `/public/v1` API and
 # reaches the private node over Flycast. Opening it to the internet is an
@@ -8,6 +9,11 @@
 app = "<public-app>"
 # Match the node's region so the Flycast hop stays local.
 primary_region = "sjc"
+
+# No build section on purpose. `fly` resolves a `dockerfile` path relative to
+# this file, so a copy kept outside the repository (where the real app and node
+# names live) would point at nothing. The deploy command in docs/PUBLIC-ACCESS.md
+# passes `--dockerfile deploy/public/Dockerfile` from the repo root instead.
 
 
 [env]
