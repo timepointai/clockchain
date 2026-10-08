@@ -19,6 +19,7 @@ are authorized, with the Engelbart 1968 subject as the inaugural entry.
 2026-10-02 with the inaugural Genesis admitted; the Stage (g) post-launch program
 ([STAGE-G.md](STAGE-G.md), PRs #17–#26) is merged and released. `fold_version` 1
 is frozen; the staged plan below is complete as a design record.
+
 This specifies every gate in [#6](https://github.com/timepointai/clockchain/issues/6).
 Decided below means a concrete choice in this proposal, not a completed gate or
 authorization for the first production entry.

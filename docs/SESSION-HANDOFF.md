@@ -4,16 +4,18 @@ Read `AGENTS.md`, `HOLD.md`, `README.md`, and the relevant current contract firs
 On the owner's workstation, continue with the owner's private `HANDOFF.md`, then
 `MEMORY.md`, at the location supplied outside this checkout. These files contain
 the current scope, dated observations, cleanup inventory, evidence locations and
-exact operator handoff. They stay outside this public repository. If they are unavailable, establish the
-current state with the owner; archived planning documents are not a substitute.
+exact operator handoff. They stay outside this public repository. If they are
+unavailable, establish the current state with the owner; archived planning
+documents are not a substitute.
 A cloud session never has them: its scope is the owner's prompt plus the current
 stage contract, and it never deploys, contacts production or handles real keys.
 
 ## Production state
 
 Clockchain v1 has been in production since 2026-10-02: `cc-node` in v1 mode on a
-fresh v1 database, private ingress only, one subject (the inaugural Engelbart
-1968 Genesis plus the owner's 2026-10-05 Delegate to a hot key), and no tick.
+fresh v1 database, private ingress only, one subject and two events (the
+inaugural Engelbart 1968 Genesis and the owner's 2026-10-05 Delegate to a hot
+key), and no tick.
 Since 2026-10-05 the node runs the Stage (g) build, released through the
 verified update lane in [OPERATIONS.md](OPERATIONS.md); daily verified backups
 and a 15-minute identity monitor run from the owner's workstation.
