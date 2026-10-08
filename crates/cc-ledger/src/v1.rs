@@ -472,6 +472,10 @@ impl Store {
         store.readiness().await?;
         Ok(store)
     }
+    /// The instance this store was opened or provisioned for.
+    pub fn instance(&self) -> Hash {
+        self.instance
+    }
     /// Serving readiness: the bound identity is recorded, supported and equal
     /// to the stored one. Anything else is the refusal that names why.
     pub async fn readiness(&self) -> Result<RuleId, Error> {
