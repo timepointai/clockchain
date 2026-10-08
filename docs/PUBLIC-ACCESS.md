@@ -17,8 +17,8 @@ decision**. Under [HOLD.md](../HOLD.md) and
 the Stage (g) boundary, opening public ingress and setting production secrets are
 one-command steps from the owner's workstation, run by the owner or by the
 owner's agent at the owner's explicit, dated instruction in that session (see
-HOLD.md). No CI job or cloud session runs them. Items marked **Owner decision** below need an explicit
-owner choice before enablement.
+HOLD.md). No CI job or cloud session runs them. Items marked **Owner decision** below were decided before
+enablement; changing one needs a new dated owner decision.
 
 ## Contract: `/public/v1`
 

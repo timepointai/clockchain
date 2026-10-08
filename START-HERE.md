@@ -7,7 +7,7 @@ explicit scope. Historical planning and production evidence remain private.
 
 ## Current state
 
-Clockchain v1 has been in production since 2026-10-02, on private ingress, with
+Clockchain v1 has been in production since 2026-10-02, the node on private ingress, with
 one subject and two events: the inaugural Engelbart 1968 Genesis and the owner's
 2026-10-05 Delegate to a hot key. Since 2026-10-08 a read-only public gateway
 serves the corpus over public IPv6 ([public access](docs/PUBLIC-ACCESS.md)).
