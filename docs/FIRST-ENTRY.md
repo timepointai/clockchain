@@ -1,5 +1,13 @@
 # First v1 entry: owner runbook
 
+**Completed one-time procedure.** The owner ran this runbook on 2026-10-01 and
+2026-10-02: the fresh v1 database was provisioned and bound, and the inaugural
+Genesis was admitted. It is kept as the record of how v1 was launched and must
+not be rerun against the live store (`--v1-fresh` refuses a populated database).
+Shipping a new build to the populated store is the routine update release in
+[OPERATIONS.md](OPERATIONS.md#2-update-release---v1-update). The notes marked
+*Launch-day note* record what differed in practice on the owner's workstation.
+
 Owner-operated. Run from the owner's workstation only, never from CI or a cloud
 session. Scope comes from [HOLD.md](../HOLD.md): one release onto a fresh, empty
 v1 database; production writes are limited to provisioning it, binding its rule
@@ -45,6 +53,12 @@ SHA=$(git rev-parse HEAD)
 cargo build --locked --release -p cc-publisher
 PUB=target/release/cc-publisher
 ```
+
+*Launch-day note.* Build the Python environment from an explicit 3.13
+interpreter (`python3.13 -m venv`). A Homebrew `python3` that resolves to 3.14
+had a broken `ensurepip`, so `python3 -m venv` produced a venv without `pip`.
+macOS has no `timeout`; where a bounded wait is wanted, use
+`perl -e 'alarm shift; exec @ARGV' <seconds> <command>`.
 
 ## 1. Key ceremony (owner's Mac)
 
@@ -103,7 +117,11 @@ fly postgres connect -a <PG_APP>
 ```
 
 In `psql`, use `\password` so the password is pasted at a prompt and never
-written to a history file:
+written to a history file. *Launch-day note:* `fly postgres connect` ignores
+piped stdin, so either type the statements interactively or drive the session
+with `expect`, sending one statement per line. `psql` meta-commands (`\l`,
+`\du`, `\password`, `\c`) consume the rest of their line, so never paste a
+multi-statement block; the block below is a sequence, not one paste.
 
 ```sql
 CREATE ROLE <V1_USER> LOGIN;
@@ -243,6 +261,13 @@ docker buildx build --platform linux/amd64 --provenance=false \
 # Note the manifest Digest:
 docker buildx imagetools inspect "registry.fly.io/<APP>:git-$SHA"
 ```
+
+*Launch-day note.* `docker buildx build --push` to `registry.fly.io` failed with
+"app repository not found" even after `flyctl auth docker`. The build that
+shipped used the fallback: build with `--load` instead of `--push`, run
+`flyctl auth docker`, `docker push` the tag, then read the manifest digest with
+`docker buildx imagetools inspect`. Registry credentials have also expired
+between a long build and the push, so log in immediately before pushing.
 
 Release from the same checkout, with the operator environment loaded and a new
 private evidence directory:

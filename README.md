@@ -15,7 +15,12 @@ terms; existing upstream dependency licenses remain in force.
 
 Clockchain v1 has been in production since 2026-10-02. The production node runs
 `cc-node` in v1 mode (`CC_NODE_LEDGER=v1`) on a fresh v1 database, behind
-private ingress only. It holds one entry: the inaugural Engelbart 1968 Genesis.
+private ingress only. It holds one subject and two events: the inaugural
+Engelbart 1968 Genesis and the owner's Delegate of a per-subject hot signing key
+(2026-10-05). The
+Stage (g) post-launch program (update releases, scheduled verified backups,
+monitoring, keys, node receipts, read-only gateway and explorer) is merged and
+the production node runs its build; see [OPERATIONS.md](docs/OPERATIONS.md).
 `fold_version` 1 and its governed defaults are frozen; a change to admission or
 projection needs a new fold version. See the [v1.0 release notes](docs/releases/v1.0.md),
 the [launch evidence](docs/LAUNCH-EVIDENCE.md) for the
