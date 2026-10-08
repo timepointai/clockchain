@@ -9,12 +9,6 @@ app = "<public-app>"
 # Match the node's region so the Flycast hop stays local.
 primary_region = "sjc"
 
-[build]
-  # Build context is the repo root (run `fly deploy` from there). The deploy
-  # command in docs/PUBLIC-ACCESS.md also passes
-  # `--dockerfile deploy/public/Dockerfile`, so the node's root Dockerfile is
-  # never picked up whichever way this path is resolved.
-  dockerfile = "Dockerfile"
 
 [env]
   # The node, over Fly's private Flycast route (port 80 through Fly Proxy).
