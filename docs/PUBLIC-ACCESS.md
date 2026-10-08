@@ -302,8 +302,8 @@ one corpus digest, the most recently observed one.
   gateway means rotating the key for everyone.
 - **IPv4.** The template allocates no IPv4, so IPv4-only clients cannot reach
   the gateway, and a verify run from an IPv6-capable workstation does not
-  notice. Public IPv6 adoption is roughly half of consumer traffic worldwide and
-  far lower on many enterprise and some national networks. A shared IPv4
+  notice. A large share of readers, most enterprise networks and some whole
+  countries still have no IPv6 path. A shared IPv4
   (`fly ips allocate-v4 --shared --app <public-app>`) closes the gap and needs
   its own dated owner decision; releasing it is one command.
 - **Region, rate, freshness, VM size and concurrency** in
