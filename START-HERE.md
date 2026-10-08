@@ -8,7 +8,8 @@ explicit scope. Historical planning and production evidence remain private.
 ## Current state
 
 Clockchain v1 has been in production since 2026-10-02, on private ingress, with
-one entry: the inaugural Engelbart 1968 Genesis. `fold_version` 1 is frozen. The
+one subject and two events: the inaugural Engelbart 1968 Genesis and the owner's
+2026-10-05 Delegate to a hot key. `fold_version` 1 is frozen. The
 [v1.0 release notes](docs/releases/v1.0.md) list what shipped and the known
 follow-ups. The [launch evidence](docs/LAUNCH-EVIDENCE.md) maps each
 [issue #6](https://github.com/timepointai/clockchain/issues/6) gate to merged PRs
