@@ -27,7 +27,10 @@ a macOS notification and exits 1. Nothing here writes to the node.
     seal_v1.py run --env-file PATH      fetch, verify and append one seal
     seal_v1.py verify --env-file PATH   re-verify the whole log, then print a summary
     seal_v1.py install --env-file PATH  PRINT the hourly LaunchAgent plist and the
-                                        command that would install it; never installs
+                                        command that would install it; never installs.
+                                        It creates only the 0700 state directory, and
+                                        refuses an interpreter that cannot import the
+                                        job's modules
 
 The env file (mode 0600, outside the checkout) holds CC_FLY_APP or CC_NODE_URL,
 CC_OPS_STATE_DIR, CC_SEAL_LOG, CC_SEAL_NODE_KEY, CC_NODE_READ_KEY and the three
@@ -214,20 +217,23 @@ def require_seal_identity(seal, expected):
 
 
 def require_succession(previous, seal):
-    """`seal` must follow `previous`: later clock, no fewer candidates, and the
-    same corpus digest and commitment unless candidates grew."""
+    """`seal` must follow `previous`: a later clock and no fewer candidates. The
+    corpus digest and commitment stay the same when the count does, and both
+    change when it grows: the digest covers the candidate ids and the commitment
+    covers the digest, so an honest node cannot grow with either unchanged."""
     if seal['sealed_at_us'] <= previous['sealed_at_us']:
         raise Regression('time_regression', 'sealed_at_us is not later than the log head')
     before, after = previous['counts']['candidates'], seal['counts']['candidates']
     if after < before:
         raise Regression('count_decrease', f'candidates fell from {before} to {after}')
     changed = [f for f in ('corpus_digest', 'commitment') if seal[f] != previous[f]]
-    if changed and after == before:
+    if after == before and changed:
         raise Regression('commitment_changed',
                          ', '.join(changed) + ' changed with no new candidate')
-    if not changed and after != before:
+    if after > before and len(changed) != 2:
+        same = [f for f in ('corpus_digest', 'commitment') if f not in changed]
         raise Regression('commitment_changed',
-                         f'candidates grew from {before} to {after} with the same corpus digest')
+                         f'candidates grew from {before} to {after} with the same ' + ' and '.join(same))
     return seal
 
 
@@ -433,7 +439,7 @@ def verify(env_file, *, stdout=sys.stdout, stderr=sys.stderr):
 
 
 def install_text(env_file, state):
-    """The plist and the command an owner would run by hand. Nothing is written or loaded."""
+    """The plist and the command an owner would run by hand. No plist is written, no job loaded."""
     data = owner_jobs.plist(LABEL, __file__, env_file, state, interval=INTERVAL).decode()
     target = owner_jobs.agents_dir() / (LABEL + '.plist')
     return (f'# Not installed. Save the plist below as {target} and run:\n'
@@ -452,12 +458,25 @@ def main(argv=None):
         return run(args.env_file)
     if args.command == 'verify':
         return verify(args.env_file)
-    env = owner_jobs.load_env_file(args.env_file)
-    owner_jobs.require(env, *REQUIRED)
-    if node_url(env) is None:
-        owner_jobs.require(env, 'CC_FLY_APP')
-    Expected.from_env(env, production=True)
-    state = owner_jobs.private_dir(env['CC_OPS_STATE_DIR'])
+    env = {}
+    try:
+        env = owner_jobs.load_env_file(args.env_file)
+        owner_jobs.require(env, *REQUIRED)
+        if node_url(env) is None:
+            owner_jobs.require(env, 'CC_FLY_APP')
+        try:
+            Expected.from_env(env, production=True)
+        except ValueError as error:
+            raise owner_jobs.ConfigError(str(error)) from None
+        # The only thing `install` creates: the 0700 state directory the plist names.
+        state = owner_jobs.private_dir(env['CC_OPS_STATE_DIR'])
+        # The interpreter the plist pins must import what a scheduled run needs,
+        # `cryptography` included, or the first hourly run would be the first to fail.
+        owner_jobs.check_interpreter(sys.executable, owner_jobs.JOB_IMPORTS + ('seal_v1',))
+    except owner_jobs.ConfigError as error:
+        print('seal install refused (configuration): ' + owner_jobs.redact(str(error), env),
+              file=sys.stderr)
+        return 1
     sys.stdout.write(install_text(args.env_file, state))
     return 0
 

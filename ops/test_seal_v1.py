@@ -204,6 +204,10 @@ class EncodingTests(unittest.TestCase):
         cases['commitment_changed (corpus)'] = successor(signed(), corpus_digest='ac' * 32)['seal']
         cases['commitment_changed (count without corpus)'] = successor(
             signed(), counts={'candidates': 4})['seal']
+        cases['commitment_changed (count and commitment, same corpus)'] = successor(
+            signed(), counts={'candidates': 4}, commitment='bd' * 32)['seal']
+        cases['commitment_changed (count and corpus, same commitment)'] = successor(
+            signed(), counts={'candidates': 4}, corpus_digest='ac' * 32)['seal']
         for name, bad in cases.items():
             with self.subTest(name):
                 with self.assertRaises(seal_v1.Regression) as caught:
@@ -412,6 +416,32 @@ class SealRunTests(unittest.TestCase):
         self.assertEqual(self.run_seal(FakeNode(grown))[0], 0)
         self.assertEqual(len(self.lines()), 2)
 
+    def test_growth_without_a_new_corpus_digest_is_refused(self):
+        first = signed()
+        self.run_seal(FakeNode(first))
+        for change in ({}, {'commitment': 'bd' * 32}, {'corpus_digest': 'ac' * 32}):
+            with self.subTest(sorted(change) or 'neither'):
+                self.notes = []
+                grown = successor(first, counts={'candidates': 4}, **change)
+                code, stderr = self.run_seal(FakeNode(grown))
+                alert = self.assert_alert(code, stderr, 'commitment_changed')
+                self.assertIn('grew', alert['error'])
+        self.assertEqual(len(self.lines()), 1)
+        # Both digests moving with the count is growth; verify agrees.
+        self.notes = []
+        grown = successor(first, counts={'candidates': 4}, commitment='bd' * 32, corpus_digest='ac' * 32)
+        self.assertEqual(self.run_seal(FakeNode(grown))[0], 0)
+        self.assertEqual(len(self.lines()), 2)
+        self.assertEqual(self.verify()[0], 0)
+        # A log holding a growth step with an unchanged digest is refused by verify.
+        lines = self.lines()
+        bad = successor(first, counts={'candidates': 4}, commitment='bd' * 32)
+        entry = {'prev_sha256': seal_v1.line_digest(lines[0]), 'seal': bad, 'fetched_at': 'x'}
+        self.log.write_bytes(lines[0] + b'\n' + seal_v1.encode_entry(entry) + b'\n')
+        code, out, err = self.verify()
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith('seal log refused (commitment_changed): Regression: log line 2'), err)
+
     def test_non_monotonic_time_is_refused(self):
         first = signed()
         self.run_seal(FakeNode(first))
@@ -510,12 +540,16 @@ class SealRunTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
 
     def test_install_only_prints(self):
-        out = io.StringIO()
+        out, checks = io.StringIO(), []
         with patch.object(owner_jobs, 'install', side_effect=AssertionError('installed')), \
                 patch.object(owner_jobs.subprocess, 'run', side_effect=AssertionError('ran a command')), \
+                patch.object(owner_jobs, 'check_interpreter',
+                             side_effect=lambda python, modules: checks.append((python, modules)) or python), \
                 contextlib.redirect_stdout(out):
             code = seal_v1.main(['install', '--env-file', str(self.env_path)])
         self.assertEqual(code, 0)
+        self.assertEqual(checks, [(sys.executable, owner_jobs.JOB_IMPORTS + ('seal_v1',))])
+        self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)  # the one thing install creates
         text = out.getvalue()
         self.assertIn('# Not installed.', text)
         self.assertIn('launchctl bootstrap gui/', text)
@@ -526,6 +560,28 @@ class SealRunTests(unittest.TestCase):
         for secret in (READ_KEY, SECRET, NODE_KEY):
             self.assertNotIn(secret, text)
         self.assertFalse(self.log.exists())
+
+    def test_install_refuses_an_interpreter_that_cannot_run_the_job(self):
+        out, err = io.StringIO(), io.StringIO()
+        refusal = owner_jobs.ConfigError(f'python cannot run this job (No module named cryptography) {READ_KEY}')
+        with patch.object(owner_jobs, 'install', side_effect=AssertionError('installed')), \
+                patch.object(owner_jobs, 'check_interpreter', side_effect=refusal), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = seal_v1.main(['install', '--env-file', str(self.env_path)])
+        self.assertEqual((code, out.getvalue()), (1, ''))
+        self.assertTrue(err.getvalue().startswith('seal install refused (configuration): '), err.getvalue())
+        self.assertIn('cryptography', err.getvalue())
+        self.assertNotIn(READ_KEY, err.getvalue())
+        # A missing name is refused the same way, before any interpreter check.
+        env = dict(self.env)
+        del env['CC_SEAL_LOG']
+        self.write_env(env)
+        err = io.StringIO()
+        with patch.object(owner_jobs, 'check_interpreter', side_effect=AssertionError('checked')), \
+                contextlib.redirect_stderr(err):
+            code = seal_v1.main(['install', '--env-file', str(self.env_path)])
+        self.assertEqual(code, 1)
+        self.assertIn('CC_SEAL_LOG', err.getvalue())
 
     def test_verify_of_an_empty_or_missing_log_is_ok_with_no_entries(self):
         code, out, err = self.verify()

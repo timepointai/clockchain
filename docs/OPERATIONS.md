@@ -426,13 +426,13 @@ and a redacted `error`, notifies, exits 1 and appends nothing.
 | --- | --- |
 | `no_seal_key` | The node answered `503 no_seal_key`: it has no `CC_V1_NODE_SEED` |
 | `unauthorized` | 401 or 403: the read key was refused |
-| `node_error` | Any other non-200 answer |
+| `node_error` | Any other non-200 answer, including `503 seal_unavailable`: the node could not sign because its `build` string does not fit the seal's limit (1 to 64 printable ASCII bytes) |
 | `bad_signature` | The seal document is malformed or its signature does not verify |
 | `node_key_mismatch` | Signed by a key other than `CC_SEAL_NODE_KEY` |
 | `identity_drift` | Instance, fold or `filter_version` differ from the expected identity |
 | `time_regression` | `sealed_at_us` is not later than the log head's |
 | `count_decrease` | Fewer candidates than the log head |
-| `commitment_changed` | Corpus digest or commitment changed with no new candidate, or the count grew with the same digest |
+| `commitment_changed` | Corpus digest or commitment changed with no new candidate, or the count grew without both of them changing (the digest covers the candidate ids and the commitment covers the digest, so an honest node cannot grow with either unchanged) |
 | `log_broken` | The log is not a valid chain (a line is not canonical, or `prev_sha256` does not match) |
 | `unreachable`, `configuration`, `error` | As for the monitor |
 
@@ -441,16 +441,23 @@ every identity and every succession, then prints `{result, entries,
 head_sha256, head}`. Run it after restoring the file from a backup, and keep
 the log in your private backups: the node cannot reproduce it.
 
-`install` only prints. It writes the hourly LaunchAgent plist
-(`local.clockchain.seal`, `StartInterval` 3600) to stdout, preceded by the
-`launchctl bootstrap` command you would run by hand after saving it under
-`~/Library/LaunchAgents`, and the `launchctl bootout` command that removes
-it. It never writes the plist or loads the job itself.
+`install` only prints. It creates `CC_OPS_STATE_DIR` (mode 0700) if it does
+not exist, which is the one thing it writes; checks that the interpreter the
+plist would pin can import what a run needs (`plistlib`, `pyexpat`,
+`cryptography` and the job itself), refusing otherwise; and then writes the
+hourly LaunchAgent plist (`local.clockchain.seal`, `StartInterval` 3600) to
+stdout, preceded by the `launchctl bootstrap` command you would run by hand
+after saving it under `~/Library/LaunchAgents`, and the `launchctl bootout`
+command that removes it. It writes no plist and loads no job.
 
 What a verified log proves: the node key signed these states in this order
 with these clock readings, and nothing in the log was rewritten since you
 recorded it. A rolled-back, truncated or pruned store signs a seal the log
-refuses. What it does not prove: you hold both the key and the log, so it does
+refuses, unless it has since grown past the recorded candidate count with a
+new corpus digest and commitment: then the log accepts the new state, and
+only a reader who compares candidate sets (an export against an earlier
+export) can tell. The log bounds rewrites; it does not rule them out. What
+it does not prove: you hold both the key and the log, so it does
 not bind you; it does not show that no other store was served to someone else,
 when a seal existed in anyone else's eyes, or that any content is true.
 External anchoring remains deferred.

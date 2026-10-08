@@ -179,7 +179,7 @@ accepts a database already provisioned with exactly this identity. It needs only
 | `GET /v1/revisions/{id}/prose` | read | Verified body text when retained |
 | `GET /v1/support?from=&to=` | read | Optional `as_of`; support verdict |
 | `GET /v1/receipts/{event}` | read | Verified receipts for that event, in receipt-digest order: 200 `{event, receipts:[{receipt, receipt_digest, node_key, event, received_at, encoding_version, fold_version:{version,manifest}, initial_admission_result:{state, reason, missing}}]}`; 404 `no_receipt`; 400 `invalid_event_id`; 503 `receipt_verification_failed` if a stored receipt fails verification |
-| `GET /v1/seal` | read | One freshly signed seal over the committed snapshot: 200 `{seal:{instance, node_key, fold_version:{version,manifest}, filter_version, corpus_digest, commitment, counts:{candidates}, build, sealed_at_us}, signature, node_key}`; 503 `no_seal_key` without `CC_V1_NODE_SEED`; GET only (405 otherwise); no query parameters |
+| `GET /v1/seal` | read | One freshly signed seal over the committed snapshot: 200 `{seal:{instance, node_key, fold_version:{version,manifest}, filter_version, corpus_digest, commitment, counts:{candidates}, build, sealed_at_us}, signature, node_key}`; 503 `no_seal_key` without `CC_V1_NODE_SEED`; 503 `seal_unavailable` if the node cannot sign, which happens only when its `build` string is empty, longer than 64 bytes or not printable ASCII; GET only (405 otherwise); no query parameters |
 
 ```sh
 curl -fsS "$BASE/health"

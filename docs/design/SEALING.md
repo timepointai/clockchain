@@ -60,8 +60,12 @@ logged head over one line covers every seal before it.
 **What a verified seal log proves.** The node key signed these states, in
 this order, with these clock readings, and nothing in the log was rewritten
 since this operator recorded it. A store that is rolled back, truncated or
-pruned of a candidate and re-served will sign a seal the log refuses
-(`count_decrease`, `commitment_changed`, `time_regression`).
+pruned of a candidate and re-served signs a seal the log refuses
+(`count_decrease`, `commitment_changed`, `time_regression`), unless it has
+since grown past the recorded candidate count with a new corpus digest and
+commitment; the log then accepts the new state, and only a comparison of
+candidate sets (an export against an earlier export) can show the swap. The
+log bounds rewrites to that case; it does not rule them out.
 
 **What it does not prove.** The operator holds both the signing key and the
 log, so this detects accidents, a third party's rewrite of the store, and a
