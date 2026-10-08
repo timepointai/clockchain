@@ -410,7 +410,7 @@ fn every_authenticated_route_appears_in_the_matrix() {
 
 /// Every route `serve_v1::router()` registers, plus the fallback probe. Same
 /// rules as `BOUNDARIES`: the fourth element is the template as registered.
-const V1_BOUNDARIES: [(&str, &str, &str, Option<&str>); 12] = [
+const V1_BOUNDARIES: [(&str, &str, &str, Option<&str>); 13] = [
     ("health (public)", "GET", "/health", Some("/health")),
     ("ready (public)", "GET", "/ready", Some("/ready")),
     ("robots (public)", "GET", "/robots.txt", Some("/robots.txt")),
@@ -439,6 +439,7 @@ const V1_BOUNDARIES: [(&str, &str, &str, Option<&str>); 12] = [
         "/v1/receipts/00",
         Some("/v1/receipts/:event"),
     ),
+    ("read: seal", "GET", "/v1/seal", Some("/v1/seal")),
     (
         "write: candidates",
         "POST",
@@ -463,15 +464,15 @@ const V1_BOUNDARIES: [(&str, &str, &str, Option<&str>); 12] = [
 /// The v1 matrix. The legacy scoped keys open no v1 route; the write guard
 /// still answers them 403, as it does on the legacy router.
 #[rustfmt::skip]
-const V1_MATRIX: [(Cred, [V; 12]); 7] = [
-    //                health  ready   robots  snapshot      subject       prose         support       receipts      candidates    bodies        export        unknown
-    (Cred::Full,      [Accept, Accept, Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept]),
-    (Cred::Read,      [Accept, Accept, Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Forbidden,    Forbidden,    Forbidden,    Accept]),
-    (Cred::Gallery,   [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
-    (Cred::Beta,      [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
-    (Cred::Telemetry, [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
-    (Cred::Stranger,  [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
-    (Cred::None,      [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
+const V1_MATRIX: [(Cred, [V; 13]); 7] = [
+    //                health  ready   robots  snapshot      subject       prose         support       receipts      seal          candidates    bodies        export        unknown
+    (Cred::Full,      [Accept, Accept, Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Accept]),
+    (Cred::Read,      [Accept, Accept, Accept, Accept,       Accept,       Accept,       Accept,       Accept,       Accept,       Forbidden,    Forbidden,    Forbidden,    Accept]),
+    (Cred::Gallery,   [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
+    (Cred::Beta,      [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
+    (Cred::Telemetry, [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Forbidden,    Forbidden,    Forbidden,    Unauthorized]),
+    (Cred::Stranger,  [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
+    (Cred::None,      [Accept, Accept, Accept, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized, Unauthorized]),
 ];
 
 /// Boot the v1 router over a provisioned, bound and reopened synthetic store.
