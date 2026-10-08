@@ -16,11 +16,13 @@ Clockchain v1 has been in production since 2026-10-02: `cc-node` in v1 mode on a
 fresh v1 database, private ingress only, one subject and two events (the
 inaugural Engelbart 1968 Genesis and the owner's 2026-10-05 Delegate to a hot
 key), and no tick.
-Since 2026-10-05 the node runs the Stage (g) build, released through the
-verified update lane in [OPERATIONS.md](OPERATIONS.md); daily verified backups
-and a 15-minute identity monitor run from the owner's workstation.
+Since 2026-10-08 the node runs the v1.1 build, released through the verified
+update lane in [OPERATIONS.md](OPERATIONS.md); daily verified backups and a
+15-minute identity monitor run from the owner's workstation, and the read-only
+public gateway ([PUBLIC-ACCESS.md](PUBLIC-ACCESS.md)) serves the corpus over
+public IPv6 while the node stays private.
 `fold_version` 1 is frozen. The
-[v1.0 release notes](releases/v1.0.md) and the
+[v1.0](releases/v1.0.md) and [v1.1](releases/v1.1.md) release notes and the
 [launch evidence](LAUNCH-EVIDENCE.md) are the public record; the release evidence
 itself is private. Recheck any dated observation against the running node, through
 the owner's private proxy, before acting on it.

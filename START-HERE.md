@@ -9,11 +9,13 @@ explicit scope. Historical planning and production evidence remain private.
 
 Clockchain v1 has been in production since 2026-10-02, on private ingress, with
 one subject and two events: the inaugural Engelbart 1968 Genesis and the owner's
-2026-10-05 Delegate to a hot key. `fold_version` 1 is frozen. The
-[v1.0 release notes](docs/releases/v1.0.md) list what shipped and the known
+2026-10-05 Delegate to a hot key. Since 2026-10-08 a read-only public gateway
+serves the corpus over public IPv6 ([public access](docs/PUBLIC-ACCESS.md)).
+`fold_version` 1 is frozen. The [v1.0](docs/releases/v1.0.md) and
+[v1.1](docs/releases/v1.1.md) release notes list what shipped and the known
 follow-ups. The [launch evidence](docs/LAUNCH-EVIDENCE.md) maps each
 [issue #6](https://github.com/timepointai/clockchain/issues/6) gate to merged PRs
-and named tests; disposing of #6 is the owner's decision. The post-launch program
+and named tests; #6 was closed by the owner on 2026-10-08. The post-launch program
 is [Stage (g)](docs/design/STAGE-G.md).
 
 For v1 work, read in this order:

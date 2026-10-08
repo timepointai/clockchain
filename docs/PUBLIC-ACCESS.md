@@ -6,8 +6,14 @@ app template is [deploy/public/](../deploy/public/README.md).
 
 ## Status
 
-**Built, not deployed.** No public app, IP or secret exists. Exposing the node's
-corpus to the internet is an **owner decision**. Under [HOLD.md](../HOLD.md) and
+**Enabled 2026-10-08 (UTC).** Under the owner decision recorded in
+[HOLD.md](../HOLD.md) ("Owner decisions — 2026-10-08"), one gateway machine was
+deployed from the released `main` and given a public IPv6 (no IPv4, no custom
+domain). It shares the node's current read key, imported as the gateway app's
+secret. The node stays on private ingress. The verify block below passed at
+enablement. The owner publishes the host separately; the one-command disable is
+in "Disable". Exposing the node's corpus to the internet was an **owner
+decision**. Under [HOLD.md](../HOLD.md) and
 the Stage (g) boundary, opening public ingress and setting production secrets are
 one-command steps from the owner's workstation, run by the owner or by the
 owner's agent at the owner's explicit, dated instruction in that session (see

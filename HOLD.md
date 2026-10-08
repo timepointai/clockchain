@@ -107,6 +107,12 @@ The owner decided the following on 2026-10-08, after the 2026-10-07 wrap-up:
   from CI or a cloud session. That includes the gateway steps PUBLIC-ACCESS.md
   describes as owner-run (importing the read key, allocating the public IP).
 
+Execution record, 2026-10-08 (UTC): the update release ran through the verified
+lane and production now serves build `c56f73a89bcf` with identity, commitment and
+export unchanged and verified backups before and after; the gateway was deployed
+and given its public IPv6, and the PUBLIC-ACCESS.md verify block passed; issue #6
+was closed with its disposition. The seal-log software is in review, not deployed.
+
 Public read of the existing corpus is the only publication this decision
 authorizes; the earlier "any further publication" hold is consumed to that
 extent. Still held: generation and model calls; the 1973 claim and its influence
