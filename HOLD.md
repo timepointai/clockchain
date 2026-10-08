@@ -77,6 +77,31 @@ Under this program the owner ran one verified update release (build
 inaugural subject (2026-10-05). The root key stays with the owner. Those were
 explicit owner actions; they do not authorize further deploys or entries.
 
+## Owner decisions — 2026-10-08
+
+The owner decided the following on 2026-10-08, after the 2026-10-07 wrap-up:
+
+- **One update release** of the current `main` onto the populated v1 store is
+  authorized, through the verified update lane ([OPERATIONS.md](docs/OPERATIONS.md)
+  section 2). It ships the acceptance-diagnostics fix (PR #28) and documentation.
+  No rule, identity or store change is part of it.
+- **Public read exposure** is authorized through the merged read-only gateway
+  ([PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)): one gateway machine, public IPv6
+  only, no IPv4, no custom domain, sharing the node's current read key. The node
+  itself stays on private ingress. Disabling is the one-command IP release.
+- **Issue #6** may be closed with the gate-by-gate disposition.
+- **Sealing**: a node-signed seal with an operator-held hash-chained log
+  ([SEALING.md](docs/design/SEALING.md) option A variant) is authorized as software
+  only. It is not deployed by this decision; a later release ships it.
+- **v0 archive**: a read-only dump of the v0 database for private archival is
+  authorized. Dropping the v0 database is not.
+- The owner's agent runs these from the owner's workstation under this decision,
+  never from CI or a cloud session.
+
+Still held: generation and model calls; the 1973 claim and its influence edge;
+both images; any further entry, edge or media; key generation, rotation or
+revocation (the read key is shared, not rotated); consumer-repository merges.
+
 ## PR #5 merge record — 2026-09-28
 
 PR #5 merged under the owner's independent HTTP policy decision and explicit
