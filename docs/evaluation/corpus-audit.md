@@ -1,9 +1,12 @@
 # Corpus audit and source crawl
 
-The auditor measures ledger integrity, graph consistency and evidence coverage
-separately. A signed event, an acyclic graph, a reachable URL, and a successful
-replay are not proof of historical truth or causation. Unreviewed claims stay
-`not_assessed`. Nothing here stages, approves, signs or publishes corpus content.
+The audit supports Clockchain's goal of historical truth by measuring ledger
+integrity, graph consistency and evidence coverage separately, then preparing
+claims for source review. Signatures, graph checks, source retrieval and replay
+establish specific technical properties; historical and causal assessments weigh
+the source content under the [historical evidence standard](design-boundaries.md).
+Unreviewed claims stay `not_assessed`. Nothing here stages, approves, signs or
+publishes corpus content.
 
 ## Remote counts without exporting corpus rows
 
@@ -95,10 +98,14 @@ cargo test -p cc-ledger --example audit_replay
 python3 -m unittest discover -s ops -p test_corpus_audit.py
 ```
 
-## Ground-truth review
+## Historical accuracy review
 
 For each historical assertion, record the exact supporting source, passage or
-locator, captured bytes/hash, date precision and a reviewer verdict. For each
+locator, captured bytes/hash, date precision and a reviewer verdict. Distinguish
+direct documentation from inference, record contrary evidence and explain the
+strength and limits of support. Treat verbatim dialogue separately from
+recollection or reconstruction; a literal passage proves what the retained source
+says, while the source's reliability remains part of historical review. For each
 causal edge, separately record evidence for the mechanism and direction; merely
 showing that both endpoint events occurred is insufficient. Keep correlation,
 influence, inferred causation and documented causation distinct. Review cycles as

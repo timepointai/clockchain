@@ -1,23 +1,42 @@
-# Design hypotheses to test before implementing markets
+# Historical truth and evidence interpretation
 
-Integrity, source support, independent corroboration, and task usefulness are
-separate axes. A signature does not prove the signed historical assertion.
+Historical truth is Clockchain's goal: the best-supported account of what happened,
+open to correction as evidence improves. Keeping uncertainty explicit serves that
+goal. It does not make all accounts equally credible or require withholding a
+well-supported conclusion because deductive certainty is unavailable.
 
-Elapsed anchor age is not interrogation depth. A revision-cost design should
-separate age, actual challenges survived, evidence independence, and signer
-independence. Independent keys do not establish independent sources. Simulate
-self-corroboration rings and affordable correction of old errors before bonding.
+Historical justification is probabilistic, in the Bayesian sense of weighing
+prior knowledge, source reliability, independent corroboration, competing
+explanations and contrary evidence, then revising confidence. Neither an LLM nor
+a historian can generally deduce a historical account with mathematical certainty.
+Both should be judged by the evidence and reasoning supporting each claim. This
+is a review standard; the current software does not compute Bayesian posteriors
+or calibrated historical confidence scores. Do not invent numerical certainty.
 
-A copied signed history includes the evidence of its prior challenges. Any
-non-portability claim must identify the specific non-copyable property. Continued
-participation, scrutiny, trusted stewardship, coverage and integration are
-plausible differentiators to measure, not cryptographic consequences of copying.
+Distinguish what a source directly records from an inference or reconstruction.
+For dialogue, preserve literal source wording and attribution for quotations;
+assess whether the source is a transcript, recollection or later account. A
+plausible reconstruction is not a verbatim record. Label reconstructed details
+explicitly and omit them from factual claims when the evidence cannot support
+them. Apply the same care to precise dates, motives and causal mechanisms.
 
-Replica convergence is conditional on the same event set, governed rules and
-deterministic conflict handling. A time coordinate does not itself establish
-which competing assertion is authoritative or ensure eventual delivery.
+Integrity, source support, independent corroboration and task usefulness answer
+different questions. Signatures establish authorship and integrity, preserving an
+auditable record for historical assessment. Assess a claim's accuracy through its
+sources and reasoning. Independent signing keys do not establish independent
+sources; repeated model agreement is not independent corroboration.
 
-Merkle inclusion proves membership. Royalty allocation needs an explicit policy
-for alternative supporting paths, redundant claims and gaming; path inclusion
-alone does not measure marginal contribution. Missing coverage similarly does
-not establish paying demand. These hypotheses do not alter ledger rules.
+Deterministic admission, graph feasibility and replay check their stated software
+contracts. Their success supports reliable evidence handling; historical review
+still evaluates the content. A check reporting `not_assessed` describes that
+check's scope, not the project's commitment to historical truth. Preserve governed
+API meanings and record corrections through the existing process.
+
+Anchor age is elapsed time, not a count of challenges or a measure of source
+quality. Merkle inclusion proves membership, not correctness, usefulness or
+marginal contribution. A copied signed history retains its verifiable evidence.
+
+Replica agreement depends on the same event set, governed rules and deterministic
+conflict handling. A time coordinate alone does not establish which competing
+assertion is authoritative or guarantee eventual delivery. These limits do not
+alter the ledger's rules or authorize new mechanisms.
