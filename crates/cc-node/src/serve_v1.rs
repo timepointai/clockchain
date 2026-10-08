@@ -27,6 +27,13 @@
 //! (receipts off, the default read limit); [`router_with`] takes the configured
 //! values. Snapshots are cached by the store itself, keyed by rule identity and
 //! corpus digest and invalidated by every admission.
+//!
+//! # Seals
+//!
+//! `GET /v1/seal` signs a stateless [`NodeSealV1`] over the committed
+//! snapshot under the same node key that signs receipts. The node keeps no
+//! seal; the caller does ([`seal`]). Without a node seed the route answers
+//! `503 no_seal_key`.
 
 use axum::{
     body::Bytes,
@@ -38,6 +45,7 @@ use axum::{
     Extension, Json, Router,
 };
 use cc_core::v1::receipt::{Admission as Observed, SignedReceipt};
+use cc_core::v1::seal::{sign_seal, NodeSealV1, SealCounts};
 use cc_core::v1::{receipt::FoldRef, Hash, MAX_ENVELOPE};
 use cc_ledger::v1::{Error, Readiness, RuleId, Snapshot, State as Admission, Store};
 use serde::Serialize;
@@ -309,6 +317,7 @@ pub fn router_with(state: V1State, serving: Serving) -> Router {
         .route("/v1/revisions/:revision/prose", get(prose))
         .route("/v1/support", get(support))
         .route("/v1/receipts/:event", get(receipts))
+        .route("/v1/seal", get(seal))
         .fallback(not_found)
         .layer(axum::middleware::from_fn_with_state(
             serving.read_permits(),
@@ -773,6 +782,77 @@ fn receipt_json(r: &SignedReceipt) -> Value {
             "missing": result.missing.0.iter().map(hex::encode).collect::<Vec<_>>(),
         },
     })
+}
+
+/// Unix microseconds now; a clock before 1970 reads as 0. `sealed_at_us` is
+/// an observation on the node's clock, not a claimed time.
+fn now_micros() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
+}
+
+/// One freshly signed seal over the committed snapshot: the identity `/health`
+/// publishes, the `corpus_digest` and `commitment` every projection read
+/// names, the retained candidate count, this build and the node clock. The
+/// node stores nothing; a caller that keeps seals holds the log. The seal
+/// fields are authoritative together with `signature`; `node_key` repeats the
+/// signer so a caller can compare it with the key it expects. Seals are
+/// outside every commitment, so like receipts this read names no `rule`.
+async fn seal(
+    State(state): State<V1State>,
+    Extension(serving): Extension<Serving>,
+    q: Strict<NoQuery>,
+) -> Response {
+    if query(q).is_none() {
+        return refusal(StatusCode::BAD_REQUEST, "invalid_query");
+    }
+    let Some(node) = serving.node.as_deref() else {
+        return refusal(StatusCode::SERVICE_UNAVAILABLE, "no_seal_key");
+    };
+    let s = match state.store.snapshot(None).await {
+        Ok(s) => s,
+        Err(e) => return store_refusal(e),
+    };
+    let unsigned = NodeSealV1 {
+        instance: state.store.instance(),
+        node_key: [0; 32],
+        fold_version: FoldRef {
+            version: s.rule.fold_version,
+            manifest: s.rule.fold_manifest,
+        },
+        filter_version: s.rule.filter_version,
+        corpus_digest: s.corpus_digest,
+        commitment: s.commitment,
+        counts: SealCounts {
+            candidates: s.projection.rows.len() as u64,
+        },
+        build: crate::protocol::BUILD_REV.to_string(),
+        sealed_at_us: now_micros(),
+    };
+    let Ok(signed) = sign_seal(node, unsigned) else {
+        return refusal(StatusCode::SERVICE_UNAVAILABLE, "seal_unavailable");
+    };
+    let n = signed.seal();
+    Json(json!({
+        "seal": {
+            "instance": hex::encode(n.instance),
+            "node_key": hex::encode(n.node_key),
+            "fold_version": {
+                "version": n.fold_version.version,
+                "manifest": hex::encode(n.fold_version.manifest),
+            },
+            "filter_version": hex::encode(n.filter_version),
+            "corpus_digest": hex::encode(n.corpus_digest),
+            "commitment": hex::encode(n.commitment),
+            "counts": { "candidates": n.counts.candidates },
+            "build": n.build,
+            "sealed_at_us": n.sealed_at_us,
+        },
+        "signature": hex::encode(signed.signature()),
+        "node_key": hex::encode(n.node_key),
+    }))
+    .into_response()
 }
 
 /// The `ExportManifest` serde JSON exactly, except that each envelope is one

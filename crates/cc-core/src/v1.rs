@@ -643,3 +643,4 @@ impl Payload {
 
 pub mod receipt;
 pub mod rule;
+pub mod seal;
