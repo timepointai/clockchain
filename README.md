@@ -27,6 +27,7 @@ the [launch evidence](docs/LAUNCH-EVIDENCE.md) for the
 [issue #6](https://github.com/timepointai/clockchain/issues/6) gates, and the
 standing owner constraints in [HOLD.md](HOLD.md). Public access, further entries
 and generation remain owner decisions.
+Report security issues as described in [SECURITY.md](SECURITY.md).
 
 The v1 surfaces are:
 
