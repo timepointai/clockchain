@@ -13,6 +13,7 @@ credentials and never deploys. Keep operator evidence and credentials outside th
 | `v1_acceptance.py` | `--v1-fresh` exact-image acceptance: Docker + PG18, synthetic curator and Genesis, dump/restore commitment equality |
 | `v1_checks.py` | v1 `/health` identity, `/ready`, read-only zero and populated checks, private export capture |
 | `v1_identity.py`, `v1_backup.py` | Expected v1 identity recomputed from the checkout; v1 store inspection, trigger proof and export match for backups |
+| `seal_v1.py` | Operator-held, hash-chained log of node seals (`GET /v1/seal`): fetch and verify one seal, re-verify the whole log, print the hourly launchd plist ([OPERATIONS](../docs/OPERATIONS.md) section 8) |
 | `capture_evidence.py`, `evidence_eval.py`, `validate.py` | Capture and evaluate evidence without confusing integrity with truth |
 | `corpus_audit.py` | [Read-only corpus/source audit](../docs/evaluation/corpus-audit.md): aggregates, private capture, API crawl and evidence review queue |
 | `tt-differential.py` | Compare pinned upstream classification vectors |
@@ -33,5 +34,5 @@ production based on their presence here. Current deployment uses Fly only.
 
 Update releases (`deploy-fly.sh --v1-update`), scheduled verified backups
 (`schedule_backups.py`), monitoring (`monitor_v1.py`), proxy ownership
-(`fly_proxy.py`, `owner_jobs.py`), restore drills and the Fly-native alternative
-are in [OPERATIONS](../docs/OPERATIONS.md).
+(`fly_proxy.py`, `owner_jobs.py`), restore drills, the Fly-native alternative
+and the seal log (`seal_v1.py`) are in [OPERATIONS](../docs/OPERATIONS.md).
