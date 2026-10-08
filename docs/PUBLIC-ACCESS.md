@@ -9,8 +9,9 @@ app template is [deploy/public/](../deploy/public/README.md).
 **Built, not deployed.** No public app, IP or secret exists. Exposing the node's
 corpus to the internet is an **owner decision**. Under [HOLD.md](../HOLD.md) and
 the Stage (g) boundary, opening public ingress and setting production secrets are
-owner-run, one-command steps from the owner's workstation. No agent, CI job or
-cloud session runs them. Items marked **Owner decision** below need an explicit
+one-command steps from the owner's workstation, run by the owner or by the
+owner's agent at the owner's explicit, dated instruction in that session (see
+HOLD.md). No CI job or cloud session runs them. Items marked **Owner decision** below need an explicit
 owner choice before enablement.
 
 ## Contract: `/public/v1`

@@ -81,26 +81,37 @@ explicit owner actions; they do not authorize further deploys or entries.
 
 The owner decided the following on 2026-10-08, after the 2026-10-07 wrap-up:
 
-- **One update release** of the current `main` onto the populated v1 store is
-  authorized, through the verified update lane ([OPERATIONS.md](docs/OPERATIONS.md)
-  section 2). It ships the acceptance-diagnostics fix (PR #28) and documentation.
-  No rule, identity or store change is part of it.
+- **One update release** onto the populated v1 store is authorized, through the
+  verified update lane ([OPERATIONS.md](docs/OPERATIONS.md) section 2), of `main`
+  as of this record's merge commit. It ships the acceptance-diagnostics fix
+  (PR #28) and documentation. No rule, identity or store change is part of it.
 - **Public read exposure** is authorized through the merged read-only gateway
   ([PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)): one gateway machine, public IPv6
-  only, no IPv4, no custom domain, sharing the node's current read key. The node
-  itself stays on private ingress. Disabling is the one-command IP release.
-- **Issue #6** may be closed with the gate-by-gate disposition.
-- **Sealing**: a node-signed seal with an operator-held hash-chained log
-  ([SEALING.md](docs/design/SEALING.md) option A variant) is authorized as software
-  only. It is not deployed by this decision; a later release ships it.
-- **v0 archive**: a read-only dump of the v0 database for private archival is
-  authorized. Dropping the v0 database is not.
-- The owner's agent runs these from the owner's workstation under this decision,
-  never from CI or a cloud session.
+  only, no IPv4, no custom domain. The node's current read key is imported as the
+  gateway app's secret and shared, not rotated. The node itself stays on private
+  ingress. Disabling ingress is the one-command IP release; it leaves the key in
+  the gateway app. Revoking a compromised gateway would require rotating the node
+  read key for every holder, which this decision does not authorize; that would
+  need a new dated decision.
+- **Issue #6** may be closed. Its gate-by-gate disposition is recorded in the
+  closing comment on the issue.
+- **Sealing**: node-signed seals ([SEALING.md](docs/design/SEALING.md) option A
+  variant: the node signs a stateless seal on request with the receipt key, and
+  the operator keeps a hash-chained seal log outside the `cc_v1` store, fetched
+  periodically from the workstation) are authorized as software only. Nothing is
+  deployed by this decision; a later release ships it.
+- **v0 archive**: a read-only dump of the v0 database into the owner's private
+  archive outside the checkout is authorized. Dropping the v0 database is not.
+- These are run by the owner, or by the owner's agent at the owner's explicit
+  instruction in the 2026-10-08 session, from the owner's workstation, never
+  from CI or a cloud session. That includes the gateway steps PUBLIC-ACCESS.md
+  describes as owner-run (importing the read key, allocating the public IP).
 
-Still held: generation and model calls; the 1973 claim and its influence edge;
-both images; any further entry, edge or media; key generation, rotation or
-revocation (the read key is shared, not rotated); consumer-repository merges.
+Public read of the existing corpus is the only publication this decision
+authorizes; the earlier "any further publication" hold is consumed to that
+extent. Still held: generation and model calls; the 1973 claim and its influence
+edge; both images; any further entry, edge or media; key generation, rotation or
+revocation; consumer-repository merges.
 
 ## PR #5 merge record — 2026-09-28
 
