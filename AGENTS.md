@@ -5,8 +5,9 @@ Read [HOLD.md](HOLD.md) for the standing owner constraints.
 Public Rust/Postgres core. Read README.md and the relevant current contract.
 For session continuity on the owner's workstation, read the owner's private
 `HANDOFF.md` and `MEMORY.md`, at the location supplied outside this checkout,
-before local test cleanup or a live kickoff. Those private records supersede older status
-notes; recheck dated observations before acting. See docs/SESSION-HANDOFF.md.
+before local test cleanup or a live kickoff. Those private records supersede
+older status notes; recheck dated observations before acting. See
+docs/SESSION-HANDOFF.md.
 Production data, credentials, source captures, approval records and backups stay
 outside this checkout. Do not restore retired Railway or wrapper tooling.
 
