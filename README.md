@@ -28,6 +28,8 @@ the [launch evidence](docs/LAUNCH-EVIDENCE.md) for the
 standing owner constraints in [HOLD.md](HOLD.md). Public access, further entries
 and generation remain owner decisions.
 
+Report security issues as described in [SECURITY.md](SECURITY.md).
+
 The v1 surfaces are:
 
 - the node in v1 mode: [using the node](docs/USING-THE-NODE.md#v1-mode);
