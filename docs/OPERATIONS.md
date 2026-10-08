@@ -385,3 +385,72 @@ Tradeoffs against the workstation launchd jobs:
 - **Cost and surface.** Billed machine time, storage and egress, plus a new
   image to build, pin and update: a standing production component that does
   not exist today.
+
+## 8. Seal log
+
+Decided 2026-10-08 as software only ([SEALING](design/SEALING.md), decision
+record); it is not deployed by that decision. The node signs stateless seals
+on `GET /v1/seal` under its receipt key (`CC_V1_NODE_SEED`); nothing is stored
+on the node. `ops/seal_v1.py` is the log: an operator-held NDJSON file in
+which each line names the SHA-256 of the line before it.
+
+The env file (mode 0600, outside the checkout) holds:
+
+| Name | Meaning |
+| --- | --- |
+| `CC_FLY_APP` | The node app; each run opens its own short-lived proxy (section 5). Or `CC_NODE_URL`, an http(s) URL you already reach, to skip the proxy |
+| `CC_OPS_STATE_DIR` | Private state directory; `seal-status.json`, the job lock and proxy files land here |
+| `CC_SEAL_LOG` | The private log file (created 0600; refused if group- or world-readable, a symlink, or inside the checkout) |
+| `CC_SEAL_NODE_KEY` | The node's public key, 64 lowercase hex: the key every seal must be signed by. Pin it from the node's boot log (`node_key=`), never from a seal |
+| `CC_NODE_READ_KEY` | The read key; it travels only as the request header |
+| `CC_V1_INSTANCE`, `CC_V1_CURATORS`, `CC_V1_MAX_HOPS` | The expected identity, as for the monitor |
+
+```sh
+python3 ops/seal_v1.py run     --env-file "$HOME/clockchain-ops/seal.env"
+python3 ops/seal_v1.py verify  --env-file "$HOME/clockchain-ops/seal.env"
+python3 ops/seal_v1.py install --env-file "$HOME/clockchain-ops/seal.env"
+```
+
+`run` GETs `/v1/seal` once (only 503 `busy` is retried), verifies the
+signature over the seal's canonical `cc.seal.v1` bytes under
+`CC_SEAL_NODE_KEY`, requires the seal's `instance`, `fold_version` and
+`filter_version` to equal the identity recomputed from the checkout and env
+file, requires it to succeed the log head, appends one line
+`{"prev_sha256", "seal", "fetched_at"}` (the first line's `prev_sha256` is 64
+zeros) and rewrites `seal-status.json` with `result: ok`, `entries`,
+`head_sha256`, `sealed_at_us`, `candidates`, `corpus_digest`, `commitment`
+and `build`. Success is quiet. A refusal writes `result: alert` with `kind`
+and a redacted `error`, notifies, exits 1 and appends nothing.
+
+| `kind` | Cause |
+| --- | --- |
+| `no_seal_key` | The node answered `503 no_seal_key`: it has no `CC_V1_NODE_SEED` |
+| `unauthorized` | 401 or 403: the read key was refused |
+| `node_error` | Any other non-200 answer |
+| `bad_signature` | The seal document is malformed or its signature does not verify |
+| `node_key_mismatch` | Signed by a key other than `CC_SEAL_NODE_KEY` |
+| `identity_drift` | Instance, fold or `filter_version` differ from the expected identity |
+| `time_regression` | `sealed_at_us` is not later than the log head's |
+| `count_decrease` | Fewer candidates than the log head |
+| `commitment_changed` | Corpus digest or commitment changed with no new candidate, or the count grew with the same digest |
+| `log_broken` | The log is not a valid chain (a line is not canonical, or `prev_sha256` does not match) |
+| `unreachable`, `configuration`, `error` | As for the monitor |
+
+`verify` re-reads the whole log without the node: the chain, every signature,
+every identity and every succession, then prints `{result, entries,
+head_sha256, head}`. Run it after restoring the file from a backup, and keep
+the log in your private backups: the node cannot reproduce it.
+
+`install` only prints. It writes the hourly LaunchAgent plist
+(`local.clockchain.seal`, `StartInterval` 3600) to stdout, preceded by the
+`launchctl bootstrap` command you would run by hand after saving it under
+`~/Library/LaunchAgents`, and the `launchctl bootout` command that removes
+it. It never writes the plist or loads the job itself.
+
+What a verified log proves: the node key signed these states in this order
+with these clock readings, and nothing in the log was rewritten since you
+recorded it. A rolled-back, truncated or pruned store signs a seal the log
+refuses. What it does not prove: you hold both the key and the log, so it does
+not bind you; it does not show that no other store was served to someone else,
+when a seal existed in anyone else's eyes, or that any content is true.
+External anchoring remains deferred.

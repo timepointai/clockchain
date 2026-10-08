@@ -1,10 +1,75 @@
 # Sealing and anchoring v1 commitments
 
-Status: design options only. Nothing here is implemented. An owner decision is
-required. Refs #6.
+Status: decided on 2026-10-08; see the decision record below. The option
+survey that follows it is kept as it was put to the owner. Refs #6.
 
-This note lists ways to bind v1 commitments to an order and a time. It decides
-nothing. The question for the owner is at the end.
+This note lists ways to bind v1 commitments to an order and a time. The
+question that was put to the owner is at the end; the answer is here.
+
+## Decision record — 2026-10-08
+
+The owner chose a variant of option A, a signed seal log, as software only.
+This decision does not deploy it; a later release ships it
+([HOLD.md](../../HOLD.md), owner decisions of 2026-10-08).
+
+**What was built.**
+
+- The node signs **stateless seals**. `GET /v1/seal` (read scope, GET only,
+  under the read limit) answers one freshly signed `NodeSealV1`:
+  `instance`, `node_key`, `fold_version {version, manifest}`,
+  `filter_version`, `corpus_digest`, `commitment`, `counts {candidates}`,
+  `build` and `sealed_at_us` (the node clock, Unix microseconds). Its
+  canonical bytes are framed under the new domain `cc.seal.v1` with the v1
+  wire encoding `NodeReceiptV1` uses, and signed by the same node key
+  (`CC_V1_NODE_SEED`). Without that seed the route answers
+  `503 no_seal_key`. The node stores no seal.
+- The **operator keeps the log**. `ops/seal_v1.py run` fetches one seal on a
+  schedule (hourly), verifies the signature against the node key the operator
+  pins, requires the seal's identity to equal the one recomputed from the
+  checkout, requires it to succeed the log head (later clock, no fewer
+  candidates, unchanged corpus digest and commitment unless the candidate
+  count grew), and appends `{prev_sha256, seal, fetched_at}` as one NDJSON
+  line to a private file. `prev_sha256` is the SHA-256 of the previous line,
+  so the log is a hash chain. `ops/seal_v1.py verify` re-verifies a whole log.
+  See [OPERATIONS](../OPERATIONS.md) section 8.
+- `counts` carries only `candidates`, the size of the retained set the corpus
+  digest covers, which the fold already holds. Bodies, receipts and
+  rejections would each need a new store query and are not sealed.
+
+**How this differs from option A as drafted.** The predecessor digest and the
+sequence number are not inside the signed record; the chain is the operator's
+log, not the node's. The node signs what it serves at one instant and
+remembers nothing. That keeps the store unchanged: no new table, no change
+to the `cc_v1` schema, `provision-v1`, the fold manifest or any vector.
+
+**Why no in-node log tonight.** `Store::open` and `provision-v1` verify a
+stored hash of the exact `cc_v1` bootstrap as part of the store identity, and
+both refuse any relation outside `cc_v1`. A seal table would change that
+schema hash, so every existing store would be refused at boot as a different
+identity until a governed schema-upgrade step exists. That step is a separate
+owner decision; it was not taken, and nothing tonight requires it.
+
+**Key.** The node receipt key signs seals. It has no revocation path, as the
+threat model notes; a separate seal key would be a key ceremony, which stays
+held.
+
+**Deferred.** External timestamping (option C) and a transparency log with
+witnesses (option B). The seal log is what either would anchor: a stamp or a
+logged head over one line covers every seal before it.
+
+**What a verified seal log proves.** The node key signed these states, in
+this order, with these clock readings, and nothing in the log was rewritten
+since this operator recorded it. A store that is rolled back, truncated or
+pruned of a candidate and re-served will sign a seal the log refuses
+(`count_decrease`, `commitment_changed`, `time_regression`).
+
+**What it does not prove.** The operator holds both the signing key and the
+log, so this detects accidents, a third party's rewrite of the store, and a
+node that stopped serving what it served; it does not bind the operator. Two
+chains can be signed; a reader shown one cannot see the other. No seal says
+when it existed in anyone else's eyes. Nothing in it says any content is
+true, that history before the first seal is complete, or that anyone checked.
+Seals never enter a commitment, a corpus digest or an export root.
 
 ## What exists today
 
