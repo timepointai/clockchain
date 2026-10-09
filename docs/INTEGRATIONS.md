@@ -73,11 +73,11 @@ see.
 
 ## Summary
 
-| Consumer | Calls Clockchain? | Routes used | Auth sent | Behaviour today | v1 path | Draft PR |
+| Consumer | Calls Clockchain? | Routes used | Auth sent | Behaviour today | v1 path | PR |
 |---|---|---|---|---|---|---|
-| timepoint-mcp | Yes, 13 call sites | `/api/v1/{search,moments,browse,graph/*,today,random,stats}`; writes via Flash `/api/v1/clockchain/{index,moments/*/visibility,ingest/tdf}` | `X-Service-Key` | Read tools report "not found" or raise tool errors; writes fail or report `indexed: false` | Flagged v1 read tools | [timepoint-mcp draft](#draft-pull-requests) |
-| timepoint-api-gateway | Yes, about 30 routes and tools | `/api/v1/clockchain/*` passthrough to legacy `/api/v1/*`; entities; Conductor tools | `X-Service-Key`, admin Bearer, forwarded user headers | Upstream 401/404 passed through; 503/504 when unreachable | Flagged `/api/v1/clockchain/v1/*` read passthrough | [timepoint-api-gateway draft](#draft-pull-requests) |
-| timepoint-web-app | Yes, about 20 call sites | `{gateway}/api/v1/clockchain/*` or `{CLOCKCHAIN_API_URL}/api/v1/*` | `X-Service-Key` | Explore shows "temporarily unavailable"; search shows "Search unavailable"; moment and entity pages 404 | Flagged v1 list and subject pages | [timepoint-web-app draft](#draft-pull-requests) |
+| timepoint-mcp | Yes, 13 call sites | `/api/v1/{search,moments,browse,graph/*,today,random,stats}`; writes via Flash `/api/v1/clockchain/{index,moments/*/visibility,ingest/tdf}` | `X-Service-Key` | Read tools report "not found" or raise tool errors; writes fail or report `indexed: false` | Flagged v1 read tools | [timepoint-mcp PR](#draft-pull-requests) |
+| timepoint-api-gateway | Yes, about 30 routes and tools | `/api/v1/clockchain/*` passthrough to legacy `/api/v1/*`; entities; Conductor tools | `X-Service-Key`, admin Bearer, forwarded user headers | Upstream 401/404 passed through; 503/504 when unreachable | Flagged `/api/v1/clockchain/v1/*` read passthrough | [timepoint-api-gateway PR](#draft-pull-requests) |
+| timepoint-web-app | Yes, about 20 call sites | `{gateway}/api/v1/clockchain/*` or `{CLOCKCHAIN_API_URL}/api/v1/*` | `X-Service-Key` | Explore shows "temporarily unavailable"; search shows "Search unavailable"; moment and entity pages 404 | Flagged v1 list and subject pages | [timepoint-web-app PR](#draft-pull-requests) |
 | timepoint-beta | **No** | none | n/a | Unaffected | Nothing to migrate | None needed |
 | timepoint-flash (archived) | Yes, `/api/v1/figures/*` only; **no `/api/v1/clockchain` proxy in this repository** | figures resolve, search, get, ground | `X-Service-Key` | Degrades silently to no entity data; reground tasks end `failed` | No v1 equivalent (see below) | None: archived, read-only |
 
