@@ -152,6 +152,17 @@ to finish the public read launch. Content stays at the one inaugural subject.
   instruction in the 2026-10-09 session, from the owner's workstation, never
   from CI or a cloud session.
 
+Execution record, 2026-10-09 (UTC): the gateway received a shared IPv4 at
+16:35Z and the PUBLIC-ACCESS.md verify block passed over IPv4 and IPv6; the
+update release ran through the verified lane and production serves build
+`df094748ad64` since 18:36Z with identity, commitment and export unchanged and
+verified backups before and after (a first build attempt failed on a transient
+toolchain download before any production step); the seal log's first entry was
+recorded at 18:48Z and the hourly job is installed on the workstation; the host
+is published in this repository by the same pull request as this record; the
+v0 database was dumped read-only into the private archive. Consumer merges
+are recorded as they land in [INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
 Still held: generation and model calls; the 1973 claim and its influence edge;
 both images; any further entry, edge or media; key generation, rotation or
 revocation; any broader delegate scope (a design memo may be written;

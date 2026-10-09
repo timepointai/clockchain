@@ -6,8 +6,10 @@ serves only the private v1 routes, and how each maps onto the G5 public read
 contract (`/public/v1`). It also describes the typed clients in
 [`clients/`](../clients/README.md) and the draft consumer pull requests.
 
-No secret value, private hostname or production URL appears here. Where a
-consumer has a production default URL, this page says so without quoting it.
+No secret value, private hostname or production URL appears here, except the
+public gateway origin the owner published on 2026-10-09
+(`https://timepoint-clockchain-gateway.fly.dev`). Where a consumer has a production default URL,
+this page says so without quoting it.
 
 ## Method
 
@@ -39,8 +41,9 @@ consumer has a production default URL, this page says so without quoting it.
 ## What production serves
 
 Production runs `cc-node` with `CC_NODE_LEDGER=v1` ([USING-THE-NODE.md](USING-THE-NODE.md),
-"v1 mode"). It is private: there is no public ingress, and the G5 public gateway
-is built but not deployed. Its routes are:
+"v1 mode"). The node itself has no public ingress; the G5 public gateway in
+front of it is deployed ([PUBLIC-ACCESS.md](PUBLIC-ACCESS.md)). The node's
+routes are:
 
 - `GET /health` and `GET /ready`, both public.
 - `GET /v1/snapshot`, `/v1/subjects/{id}`, `/v1/revisions/{id}/prose` and
@@ -70,11 +73,11 @@ see.
 
 ## Summary
 
-| Consumer | Calls Clockchain? | Routes used | Auth sent | Behaviour today | v1 path | Draft PR |
+| Consumer | Calls Clockchain? | Routes used | Auth sent | Behaviour today | v1 path | PR |
 |---|---|---|---|---|---|---|
-| timepoint-mcp | Yes, 13 call sites | `/api/v1/{search,moments,browse,graph/*,today,random,stats}`; writes via Flash `/api/v1/clockchain/{index,moments/*/visibility,ingest/tdf}` | `X-Service-Key` | Read tools report "not found" or raise tool errors; writes fail or report `indexed: false` | Flagged v1 read tools | [timepoint-mcp draft](#draft-pull-requests) |
-| timepoint-api-gateway | Yes, about 30 routes and tools | `/api/v1/clockchain/*` passthrough to legacy `/api/v1/*`; entities; Conductor tools | `X-Service-Key`, admin Bearer, forwarded user headers | Upstream 401/404 passed through; 503/504 when unreachable | Flagged `/api/v1/clockchain/v1/*` read passthrough | [timepoint-api-gateway draft](#draft-pull-requests) |
-| timepoint-web-app | Yes, about 20 call sites | `{gateway}/api/v1/clockchain/*` or `{CLOCKCHAIN_API_URL}/api/v1/*` | `X-Service-Key` | Explore shows "temporarily unavailable"; search shows "Search unavailable"; moment and entity pages 404 | Flagged v1 list and subject pages | [timepoint-web-app draft](#draft-pull-requests) |
+| timepoint-mcp | Yes, 13 call sites | `/api/v1/{search,moments,browse,graph/*,today,random,stats}`; writes via Flash `/api/v1/clockchain/{index,moments/*/visibility,ingest/tdf}` | `X-Service-Key` | Read tools report "not found" or raise tool errors; writes fail or report `indexed: false` | Flagged v1 read tools | [timepoint-mcp PR](#draft-pull-requests) |
+| timepoint-api-gateway | Yes, about 30 routes and tools | `/api/v1/clockchain/*` passthrough to legacy `/api/v1/*`; entities; Conductor tools | `X-Service-Key`, admin Bearer, forwarded user headers | Upstream 401/404 passed through; 503/504 when unreachable | Flagged `/api/v1/clockchain/v1/*` read passthrough | [timepoint-api-gateway PR](#draft-pull-requests) |
+| timepoint-web-app | Yes, about 20 call sites | `{gateway}/api/v1/clockchain/*` or `{CLOCKCHAIN_API_URL}/api/v1/*` | `X-Service-Key` | Explore shows "temporarily unavailable"; search shows "Search unavailable"; moment and entity pages 404 | Flagged v1 list and subject pages | [timepoint-web-app PR](#draft-pull-requests) |
 | timepoint-beta | **No** | none | n/a | Unaffected | Nothing to migrate | None needed |
 | timepoint-flash (archived) | Yes, `/api/v1/figures/*` only; **no `/api/v1/clockchain` proxy in this repository** | figures resolve, search, get, ground | `X-Service-Key` | Degrades silently to no entity data; reground tasks end `failed` | No v1 equivalent (see below) | None: archived, read-only |
 
@@ -429,19 +432,21 @@ Each draft PR adds a `CLOCKCHAIN_V1_PUBLIC_ENABLED` flag, default **off**, and a
 is unchanged. Each PR vendors `clients/python/clockchain_public/client.py`
 below a vendoring header that names the source commit; the body below that
 header is byte-identical to the upstream file, and a test pins its SHA-256
-(the header makes the whole-file hash differ). The PRs stay drafts: these
-repositories auto-deploy from their default branch, and the owner decides when
-to merge.
+(the header makes the whole-file hash differ). These repositories auto-deploy
+from their default branch, so each merge was an owner decision (HOLD.md,
+2026-10-09); the merges below landed with the flag off, and enabling a flag is a
+separate owner step per repository.
 
 To keep a deployment off, leave `CLOCKCHAIN_V1_PUBLIC_ENABLED` unset or set it
 to `false`. An empty value may fail settings validation at boot. The flag takes
-effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`.
+effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`; the published
+value is `https://timepoint-clockchain-gateway.fly.dev/public/v1`.
 
-| Repository | Draft PR | With the flag on |
+| Repository | PR and status | With the flag on |
 |---|---|---|
-| timepoint-mcp | [timepoint-mcp#13](https://github.com/timepointai/timepoint-mcp/pull/13) | v1 read tools replace the legacy read tools; write tools unchanged |
-| timepoint-api-gateway | [timepoint-api-gateway#56](https://github.com/timepointai/timepoint-api-gateway/pull/56) | Read-only `/api/v1/clockchain/v1/*` passthrough to `/public/v1` |
-| timepoint-web-app | [timepoint-web-app#345](https://github.com/timepointai/timepoint-web-app/pull/345) | `/clockchain` lists v1 subjects, and `/clockchain/v1/subjects/{id}` shows one. With the flag off that URL still reaches the legacy handler |
+| timepoint-mcp | [timepoint-mcp#13](https://github.com/timepointai/timepoint-mcp/pull/13), merged 2026-10-09 flag off | v1 read tools replace the legacy read tools; write tools unchanged |
+| timepoint-api-gateway | [timepoint-api-gateway#56](https://github.com/timepointai/timepoint-api-gateway/pull/56), merged 2026-10-09 flag off | Read-only `/api/v1/clockchain/v1/*` passthrough to `/public/v1` |
+| timepoint-web-app | [timepoint-web-app#345](https://github.com/timepointai/timepoint-web-app/pull/345), merged 2026-10-09 flag off | `/clockchain` lists v1 subjects, and `/clockchain/v1/subjects/{id}` shows one. With the flag off that URL still reaches the legacy handler |
 
 No PR was opened for timepoint-beta, which has nothing to migrate, or for
 timepoint-flash, which is archived and has no v1 mapping.

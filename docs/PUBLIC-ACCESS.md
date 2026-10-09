@@ -6,13 +6,15 @@ app template is [deploy/public/](../deploy/public/README.md).
 
 ## Status
 
-**Enabled 2026-10-08 (UTC).** Under the owner decision recorded in
-[HOLD.md](../HOLD.md) ("Owner decisions — 2026-10-08"), one gateway machine was
-deployed from the released `main` and given a public IPv6 (no IPv4, no custom
-domain). It shares the node's current read key, imported as the gateway app's
+**Enabled 2026-10-08 (UTC); IPv4 added and host published 2026-10-09.** Under
+the owner decisions recorded in [HOLD.md](../HOLD.md) ("Owner decisions —
+2026-10-08" and "2026-10-09"), one gateway machine was deployed from the
+released `main` and given a public IPv6, then a shared IPv4 (no custom domain).
+The public origin is `https://timepoint-clockchain-gateway.fly.dev` and the contract
+lives under `/public/v1`. It shares the node's current read key, imported as the gateway app's
 secret. The node stays on private ingress. The verify block below passed at
-enablement. The owner publishes the host separately; the one-command disable is
-in "Disable". Exposing the node's corpus to the internet was an **owner
+enablement and again over both IP families on 2026-10-09. The disable
+commands are in "Disable". Exposing the node's corpus to the internet was an **owner
 decision**. Under [HOLD.md](../HOLD.md) and
 the Stage (g) boundary, opening public ingress and setting production secrets are
 one-command steps from the owner's workstation, run by the owner or by the
@@ -300,12 +302,13 @@ one corpus digest, the most recently observed one.
   change. The gateway shares the node's read key with every other holder of it. Options: share the current key,
   or rotate it first and redistribute the new value. Either way, revoking the
   gateway means rotating the key for everyone.
-- **IPv4.** The template allocates no IPv4, so IPv4-only clients cannot reach
-  the gateway, and a verify run from an IPv6-capable workstation does not
-  notice. A large share of readers, most enterprise networks and some whole
-  countries still have no IPv6 path. A shared IPv4
+- **IPv4.** The template allocates no IPv4, so a freshly enabled gateway is
+  unreachable for IPv4-only clients, and a verify run from an IPv6-capable
+  workstation does not notice. A shared IPv4
   (`fly ips allocate-v4 --shared --app <public-app>`) closes the gap and needs
-  its own dated owner decision; releasing it is one command.
+  its own dated owner decision; releasing it is one command. The owner decided
+  this on 2026-10-09 and the current gateway has one; run the verify block with
+  `curl -4` and `curl -6` after any change.
 - **Region, rate, freshness, VM size and concurrency** in
   [deploy/public/fly.toml](../deploy/public/fly.toml).
 - **A custom domain**, out of scope here.
@@ -354,7 +357,7 @@ fly ips allocate-v6 --app <public-app>
 ## Verify
 
 ```sh
-PUBLIC_BASE=https://<public-host>
+PUBLIC_BASE=https://timepoint-clockchain-gateway.fly.dev   # the published gateway origin
 curl -fsS "$PUBLIC_BASE/public/v1/health" | jq 'has("instance")'      # false
 curl -sSi "$PUBLIC_BASE/public/v1/snapshot" | grep -i '^x-cache'         # miss
 curl -sSi "$PUBLIC_BASE/public/v1/snapshot" | grep -i '^x-cache'         # hit, same digest
@@ -369,11 +372,12 @@ cache had room. Each line spends one of your own rate-limit tokens.
 
 ## Disable
 
-The **one command** that removes public ingress immediately, with `<ipv6>` the
-public address `fly ips list --app <public-app>` shows:
+The commands that remove public ingress immediately, one per address that
+`fly ips list --app <public-app>` shows:
 
 ```sh
 fly ips release <ipv6> --app <public-app>
+fly ips release <ipv4> --app <public-app>
 ```
 
 To stop serving as well: `fly scale count 0 --app <public-app>`. Neither
