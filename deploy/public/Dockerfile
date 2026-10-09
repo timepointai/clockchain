@@ -1,4 +1,4 @@
-# Image for the public read gateway (cc-gateway). NOT DEPLOYED; see
+# Image for the public read gateway (cc-gateway). Deployment status is in
 # docs/PUBLIC-ACCESS.md.
 #
 # Build context is the repo root, so the root deny-by-default .dockerignore

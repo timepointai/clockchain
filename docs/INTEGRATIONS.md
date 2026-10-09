@@ -6,8 +6,10 @@ serves only the private v1 routes, and how each maps onto the G5 public read
 contract (`/public/v1`). It also describes the typed clients in
 [`clients/`](../clients/README.md) and the draft consumer pull requests.
 
-No secret value, private hostname or production URL appears here. Where a
-consumer has a production default URL, this page says so without quoting it.
+No secret value, private hostname or production URL appears here, except the
+public gateway origin the owner published on 2026-10-09
+(`https://timepoint-clockchain-gateway.fly.dev`). Where a consumer has a production default URL,
+this page says so without quoting it.
 
 ## Method
 
@@ -435,7 +437,8 @@ to merge.
 
 To keep a deployment off, leave `CLOCKCHAIN_V1_PUBLIC_ENABLED` unset or set it
 to `false`. An empty value may fail settings validation at boot. The flag takes
-effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`.
+effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`; the published
+value is `https://timepoint-clockchain-gateway.fly.dev/public/v1`.
 
 | Repository | Draft PR | With the flag on |
 |---|---|---|

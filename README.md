@@ -27,10 +27,11 @@ Stage (g) post-launch program (update releases, scheduled verified backups,
 monitoring, keys, node receipts, read-only gateway and explorer) is merged and
 the production node runs its build; see [OPERATIONS.md](docs/OPERATIONS.md).
 Since 2026-10-08 the read-only public gateway ([public access](docs/PUBLIC-ACCESS.md))
-serves the corpus over public IPv6; the node itself stays private.
+serves the corpus at `https://timepoint-clockchain-gateway.fly.dev/public/v1`
+(IPv6 and, since 2026-10-09, shared IPv4); the node itself stays private.
 `fold_version` 1 and its governed defaults are frozen; a change to admission or
-projection needs a new fold version. See the [v1.0](docs/releases/v1.0.md) and
-[v1.1](docs/releases/v1.1.md) release notes, the
+projection needs a new fold version. See the [v1.0](docs/releases/v1.0.md),
+[v1.1](docs/releases/v1.1.md) and [v1.2](docs/releases/v1.2.md) release notes, the
 [launch evidence](docs/LAUNCH-EVIDENCE.md) for the
 [issue #6](https://github.com/timepointai/clockchain/issues/6) gates (closed
 2026-10-08), and the standing owner constraints in [HOLD.md](HOLD.md). Further
