@@ -161,7 +161,7 @@ toolchain download before any production step); the seal log's first entry was
 recorded at 18:48Z and the hourly job is installed on the workstation; the host
 is published in this repository by the same pull request as this record; the
 v0 database was dumped read-only into the private archive. Consumer merges
-are recorded in [INTEGRATIONS.md](docs/INTEGRATIONS.md).
+are recorded as they land in [INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 Still held: generation and model calls; the 1973 claim and its influence edge;
 both images; any further entry, edge or media; key generation, rotation or

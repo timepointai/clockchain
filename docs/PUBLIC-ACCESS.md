@@ -13,8 +13,8 @@ released `main` and given a public IPv6, then a shared IPv4 (no custom domain).
 The public origin is `https://timepoint-clockchain-gateway.fly.dev` and the contract
 lives under `/public/v1`. It shares the node's current read key, imported as the gateway app's
 secret. The node stays on private ingress. The verify block below passed at
-enablement and again over both IP families on 2026-10-09. The one-command
-disable is in "Disable". Exposing the node's corpus to the internet was an **owner
+enablement and again over both IP families on 2026-10-09. The disable
+commands are in "Disable". Exposing the node's corpus to the internet was an **owner
 decision**. Under [HOLD.md](../HOLD.md) and
 the Stage (g) boundary, opening public ingress and setting production secrets are
 one-command steps from the owner's workstation, run by the owner or by the
