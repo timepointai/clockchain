@@ -2,10 +2,11 @@
 
 A signed, append-only temporal evidence ledger in Rust and PostgreSQL. It records
 claims, source evidence, typed relationships and media provenance, with explicit
-query coordinates and cryptographic verification. Its goal is historical truth:
+query coordinates and cryptographic verification. The project's goal is historical truth:
 the best-supported account of what happened, refined as evidence improves.
 Historical judgments weigh sources, corroboration, alternatives and uncertainty;
-signatures make the authorship and integrity of those judgments verifiable.
+signatures make the authorship and integrity of those judgments verifiable, not
+their truth.
 Feasibility is relative to recorded evidence. See the
 [historical evidence standard](docs/evaluation/design-boundaries.md).
 
