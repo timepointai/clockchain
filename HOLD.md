@@ -77,6 +77,86 @@ Under this program the owner ran one verified update release (build
 inaugural subject (2026-10-05). The root key stays with the owner. Those were
 explicit owner actions; they do not authorize further deploys or entries.
 
+## Owner decisions — 2026-10-08
+
+The owner decided the following on 2026-10-08, after the 2026-10-07 wrap-up:
+
+- **One update release** onto the populated v1 store is authorized, through the
+  verified update lane ([OPERATIONS.md](docs/OPERATIONS.md) section 2), of `main`
+  as of this record's merge commit. It ships the acceptance-diagnostics fix
+  (PR #28) and documentation. No rule, identity or store change is part of it.
+- **Public read exposure** is authorized through the merged read-only gateway
+  ([PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)): one gateway machine, public IPv6
+  only, no IPv4, no custom domain. The node's current read key is imported as the
+  gateway app's secret and shared, not rotated. The node itself stays on private
+  ingress. Disabling ingress is the one-command IP release; it leaves the key in
+  the gateway app. Revoking a compromised gateway would require rotating the node
+  read key for every holder, which this decision does not authorize; that would
+  need a new dated decision.
+- **Issue #6** may be closed. Its gate-by-gate disposition is recorded in the
+  closing comment on the issue.
+- **Sealing**: node-signed seals ([SEALING.md](docs/design/SEALING.md) option A
+  variant: the node signs a stateless seal on request with the receipt key, and
+  the operator keeps a hash-chained seal log outside the `cc_v1` store, fetched
+  periodically from the workstation) are authorized as software only. Nothing is
+  deployed by this decision; a later release ships it.
+- **v0 archive**: a read-only dump of the v0 database into the owner's private
+  archive outside the checkout is authorized. Dropping the v0 database is not.
+- These are run by the owner, or by the owner's agent at the owner's explicit
+  instruction in the 2026-10-08 session, from the owner's workstation, never
+  from CI or a cloud session. That includes the gateway steps PUBLIC-ACCESS.md
+  describes as owner-run (importing the read key, allocating the public IP).
+
+Execution record, 2026-10-08 (UTC): the update release ran through the verified
+lane and production now serves build `c56f73a89bcf` with identity, commitment and
+export unchanged and verified backups before and after; the gateway was deployed
+and given its public IPv6, and the PUBLIC-ACCESS.md verify block passed; issue #6
+was closed with its disposition. The seal-log software merged (PR #34, `002649e`)
+after this record; it is not deployed.
+
+Public read of the existing corpus is the only publication this decision
+authorizes; the earlier "any further publication" hold is consumed to that
+extent. Still held: generation and model calls; the 1973 claim and its influence
+edge; both images; any further entry, edge or media; key generation, rotation or
+revocation; consumer-repository merges.
+
+## Owner decisions — 2026-10-09
+
+The owner decided the following on 2026-10-09, after the 2026-10-08 close-out,
+to finish the public read launch. Content stays at the one inaugural subject.
+
+- **IPv4.** The gateway may also be given one shared IPv4 address
+  (`fly ips allocate-v4 --shared`), so IPv4-only readers can reach it. Still no
+  custom domain. Disabling ingress then means releasing both addresses.
+- **Routine release.** One update release onto the populated v1 store is
+  authorized, through the verified update lane
+  ([OPERATIONS.md](docs/OPERATIONS.md) section 2), of `main` as of this record's
+  merge commit. It ships `GET /v1/seal` (PR #34) and documentation. No rule,
+  identity or store change is part of it. The node's existing receipt key signs
+  seals; no key is generated.
+- **Seal job.** The hourly seal log job (`ops/seal_v1.py`) may be installed on
+  the owner's workstation against the released node, with the node's public
+  key (`node_key=` in its boot log) pinned. The seal route stays off the public
+  gateway contract.
+- **Public host.** The gateway's host name may be published in this repository
+  (README, PUBLIC-ACCESS, INTEGRATIONS). This is the one exception to the rule
+  that keeps hostnames out of the public tree; node hostnames, IPs, the instance
+  id and private paths remain excluded.
+- **Consumer repositories.** The three flag-gated read integrations
+  (api-gateway #56, mcp #13, web-app #345) may be merged with their flags off.
+  Enabling a flag or setting the public URL in a consumer is a separate owner
+  step per repository, not authorized here.
+- **v0 archive.** Restated from 2026-10-08: a read-only dump into the private
+  archive is authorized; dropping the v0 database is not.
+- These are run by the owner, or by the owner's agent at the owner's explicit
+  instruction in the 2026-10-09 session, from the owner's workstation, never
+  from CI or a cloud session.
+
+Still held: generation and model calls; the 1973 claim and its influence edge;
+both images; any further entry, edge or media; key generation, rotation or
+revocation; any broader delegate scope (a design memo may be written;
+nothing implemented); dropping v0.
+
 ## PR #5 merge record — 2026-09-28
 
 PR #5 merged under the owner's independent HTTP policy decision and explicit

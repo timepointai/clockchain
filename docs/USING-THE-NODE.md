@@ -183,6 +183,7 @@ accepts a database already provisioned with exactly this identity. It needs only
 | `GET /v1/revisions/{id}/prose` | read | Verified body text when retained |
 | `GET /v1/support?from=&to=` | read | Optional `as_of`; support verdict |
 | `GET /v1/receipts/{event}` | read | Verified receipts for that event, in receipt-digest order: 200 `{event, receipts:[{receipt, receipt_digest, node_key, event, received_at, encoding_version, fold_version:{version,manifest}, initial_admission_result:{state, reason, missing}}]}`; 404 `no_receipt`; 400 `invalid_event_id`; 503 `receipt_verification_failed` if a stored receipt fails verification |
+| `GET /v1/seal` | read | One freshly signed seal over the committed snapshot: 200 `{seal:{instance, node_key, fold_version:{version,manifest}, filter_version, corpus_digest, commitment, counts:{candidates}, build, sealed_at_us}, signature, node_key}`; 503 `no_seal_key` without `CC_V1_NODE_SEED`; 503 `seal_unavailable` if the node cannot sign, which happens only when its `build` string is empty, longer than 64 bytes or not printable ASCII; GET only (405 otherwise); no query parameters |
 
 ```sh
 curl -fsS "$BASE/health"
@@ -192,15 +193,15 @@ curl -fsS -H "Authorization: Bearer $CC_NODE_READ_KEY" "$BASE/v1/subjects/$SUBJE
 Missing or unknown credentials get `401`; the read key on a write route gets
 `403`. A frozen node answers writes `503 {"error":"frozen"}` and still serves
 reads and export. Every projection read (snapshot, subjects, prose, support)
-names `rule`, `corpus_digest` and `commitment`; the receipts route does not,
-because receipts are outside every commitment.
+names `rule`, `corpus_digest` and `commitment`; the receipts and seal routes
+do not, because receipts and seals are outside every commitment.
 IDs, digests and `as_of` (a 32-byte coordinate) are lowercase hex. Embedded
 projection objects, the admission outcome and the export manifest keep their
 canonical JSON, in which a hash is a list of 32 byte values. An unknown,
 misspelled or repeated query parameter on any v1 data route is
 `400 {"error":"invalid_query"}`.
 
-### Snapshot cache, read limit and receipts
+### Snapshot cache, read limit, receipts and seals
 
 None of this changes the rule identity, the fold or `/health`. The `/health`
 document is unchanged and does not name the node key.
@@ -214,8 +215,8 @@ PostgreSQL hash every retained envelope on each read, so it grows with corpus
 bytes; a hit skips the signature checks and the fold.
 
 **Read limit.** At most `CC_V1_READ_CONCURRENCY` reads run at once. The limit
-covers the read-scope routes: snapshot, subjects, prose, support, receipts and
-the unknown-path fallback. It applies after authentication, so a `401` never
+covers the read-scope routes: snapshot, subjects, prose, support, receipts,
+seal and the unknown-path fallback. It applies after authentication, so a `401` never
 takes a permit. `/health`, `/ready`, `/robots.txt` and the write-scope routes,
 including `/v1/export`, are outside it. A read that finds the limit full gets
 `503 {"error":"busy"}` with `Retry-After: 1` at once; it never waits for a
@@ -250,3 +251,20 @@ preimage) against the node key. Pin the expected node key out of band: the node
 does not publish it on `/health`, and the `node_key` inside a receipt only names
 the key that signed it. A receipt attests that this node saw this event, not
 that the event is true or that the corpus was in any given state.
+
+**Seals.** With the same seed, `GET /v1/seal` signs a `NodeSealV1` (domain
+`cc.seal.v1`, the receipt wire encoding, the same node key) over the committed
+snapshot at that instant: the identity `/health` publishes, the
+`corpus_digest` and `commitment` every projection read names, the number of
+retained candidates, this `build` and `sealed_at_us`, the node clock in Unix
+microseconds. The node keeps no seal and the response is not cached: two
+seals of the same state differ only in clock and signature. `signature` is
+64 bytes of hex, Ed25519 over the canonical bytes, which are the framed domain
+followed by every `seal` field in the order listed, hashes as 32 raw bytes,
+`version` as 2 bytes big-endian, `candidates` and `sealed_at_us` as 8, and
+`build` as a 4-byte length and its ASCII. Pin the node key out of band;
+`node_key` only names the key that signed. A seal attests that this node
+served this state at this reading of its clock. It does not prove the state
+is true, that no other store exists, or when anyone else saw it. Whoever
+fetches seals keeps them; `ops/seal_v1.py` is the operator's hash-chained log
+([OPERATIONS](OPERATIONS.md) section 8, [SEALING](design/SEALING.md)).
