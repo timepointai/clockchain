@@ -444,7 +444,7 @@ value is `https://timepoint-clockchain-gateway.fly.dev/public/v1`.
 
 | Repository | PR and status | With the flag on |
 |---|---|---|
-| timepoint-mcp | [timepoint-mcp#13](https://github.com/timepointai/timepoint-mcp/pull/13), open (needs a second account's review) | v1 read tools replace the legacy read tools; write tools unchanged |
+| timepoint-mcp | [timepoint-mcp#13](https://github.com/timepointai/timepoint-mcp/pull/13), merged 2026-10-09 flag off | v1 read tools replace the legacy read tools; write tools unchanged |
 | timepoint-api-gateway | [timepoint-api-gateway#56](https://github.com/timepointai/timepoint-api-gateway/pull/56), merged 2026-10-09 flag off | Read-only `/api/v1/clockchain/v1/*` passthrough to `/public/v1` |
 | timepoint-web-app | [timepoint-web-app#345](https://github.com/timepointai/timepoint-web-app/pull/345), merged 2026-10-09 flag off | `/clockchain` lists v1 subjects, and `/clockchain/v1/subjects/{id}` shows one. With the flag off that URL still reaches the legacy handler |
 
