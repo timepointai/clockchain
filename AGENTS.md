@@ -14,6 +14,9 @@ outside this checkout. Do not restore retired Railway or wrapper tooling.
 Follow the owner's current scoped instruction; no old backlog is an active order.
 TT remains upstream for ontology/envelope/conformance. Preserve identity and applied
 migration bytes; reject malformed inputs and keep unknown evidence explicit.
+Historical truth is the goal. Follow docs/evaluation/design-boundaries.md: weigh
+evidence and alternatives, distinguish documentation from reconstruction, and
+keep historical confidence separate from cryptographic and structural checks.
 
 Run `make check`, Wasm build and `python3 -m unittest discover -s ops -p 'test_*.py'`
 for relevant implementation changes. Tests use real Postgres. Docker acceptance
