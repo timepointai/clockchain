@@ -136,7 +136,7 @@ to finish the public read launch. Content stays at the one inaugural subject.
   seals; no key is generated.
 - **Seal job.** The hourly seal log job (`ops/seal_v1.py`) may be installed on
   the owner's workstation against the released node, with the node's public
-  seal key pinned from its boot log. The seal route stays off the public
+  key (`node_key=` in its boot log) pinned. The seal route stays off the public
   gateway contract.
 - **Public host.** The gateway's host name may be published in this repository
   (README, PUBLIC-ACCESS, INTEGRATIONS). This is the one exception to the rule
@@ -154,7 +154,8 @@ to finish the public read launch. Content stays at the one inaugural subject.
 
 Still held: generation and model calls; the 1973 claim and its influence edge;
 both images; any further entry, edge or media; key generation, rotation or
-revocation; any broader delegate scope (design memo only); dropping v0.
+revocation; any broader delegate scope (a design memo may be written;
+nothing implemented); dropping v0.
 
 ## PR #5 merge record — 2026-09-28
 
