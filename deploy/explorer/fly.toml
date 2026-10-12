@@ -1,0 +1,41 @@
+# Fly.io template for the static explorer (web/explorer). The owner's private
+# copy of this file, with the real name, is what is deployed; see
+# deploy/explorer/README.md. The published URL, once there is one, is recorded
+# in docs/PUBLIC-ACCESS.md.
+#
+# A separate app from the gateway and the node. It serves static files only:
+# the page reads the public gateway origin fixed into it at build time, and
+# the app holds no key and reaches no node.
+#
+# `<explorer-app>` is a placeholder. Replace it before use.
+app = "<explorer-app>"
+primary_region = "sjc"
+
+# No build section on purpose. `fly` resolves a `dockerfile` path relative to
+# this file, so a copy kept outside the repository (where the real app name
+# lives) would point at nothing. Pass `--dockerfile deploy/explorer/Dockerfile`
+# from the repo root instead.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Static files only: the machine may stop when idle and start on demand.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+
+# Public ingress needs owner-allocated addresses (`fly ips allocate-v6` and
+# `fly ips allocate-v4 --shared`). This template allocates none; deploy with
+# `--no-public-ips` so the first deploy does not allocate any either.
+#
+# One machine. There is no per-process state to split.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
