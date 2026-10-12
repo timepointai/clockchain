@@ -3,7 +3,10 @@
 //!
 //! What may be signed is decided from a grants file, the JSON `v1 grants`
 //! reads from a node and writes with `--out`. The file is the only input from
-//! the node; signing itself is offline. Before anything is signed:
+//! the node; signing itself is offline. The one exception needs no node at
+//! all: a new subject's first Delegate, built from the `genesis` directory
+//! (`delegate --genesis-dir`, [`delegate_from_genesis`]), because the Genesis
+//! fixes everything that Delegate signs. Before anything is signed:
 //!
 //! - the key must hold exactly one active grant on the subject (it never signs
 //!   under a grant it does not hold, `authority.root_grant`/`delegate_key`);
@@ -16,7 +19,7 @@
 //!
 //! `submit` re-checks all of this against the node before anything is written,
 //! and the node's own admission is the final word. Usage: `docs/KEYS.md`.
-use super::genesis::{evidence_set, read_capped, validate_key_field, write_new};
+use super::genesis::{evidence_set, read_capped, validate_key_field, write_new, Genesis};
 use super::hex32;
 use super::node::Health;
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
@@ -26,7 +29,9 @@ use cc_core::v1::{
     MAX_ENVELOPE,
 };
 use cc_core::SecretKey;
+use cc_ledger::v1::{classify, State};
 use serde_json::{json, Value as Json};
+use std::collections::BTreeMap;
 use std::fs::{self, DirBuilder};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
@@ -462,17 +467,58 @@ fn decision(kind: Kind, rationale: &str, evidence: Vec<Hash>, parent: Hash) -> R
     })
 }
 
-fn header(ctx: &Context, grant: Hash, parent: Hash, payload: Payload) -> Envelope {
-    Envelope {
-        instance: ctx.health.instance,
-        author: [0; 32],
-        subject: Some(ctx.subject),
-        subject_key: Some(ctx.subject_key.clone()),
-        grant: Some(grant),
-        parents: Set(vec![parent]),
-        // Authority events never edit asserted time.
-        asserted_time: None,
-        payload,
+/// The subject header an authority event is signed under: where it goes
+/// (`instance`, `subject`, `subject_key`), the signing grant, and the one
+/// subject event it extends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Header {
+    pub instance: Hash,
+    pub subject: Hash,
+    pub subject_key: SubjectKey,
+    /// The grant the signer holds: `grant` in the envelope, and a Delegate's
+    /// `issuer`.
+    pub grant: Hash,
+    pub parent: Hash,
+}
+
+impl Header {
+    /// The header a grants file gives: the node's instance, the file's
+    /// subject, the key's one active grant and the subject's sole head.
+    fn from_context(ctx: &Context, grant: Hash, parent: Hash) -> Self {
+        Self {
+            instance: ctx.health.instance,
+            subject: ctx.subject,
+            subject_key: ctx.subject_key.clone(),
+            grant,
+            parent,
+        }
+    }
+
+    /// The header a new subject's first Delegate takes, from its Genesis
+    /// alone: the Genesis instance and key, the root grant, and the Genesis
+    /// itself as the parent.
+    pub fn from_genesis(genesis: &Genesis) -> Result<Self> {
+        Ok(Self {
+            instance: genesis.instance(),
+            subject: genesis.id(),
+            subject_key: genesis.fields()?.key.clone(),
+            grant: root_grant(genesis.id()),
+            parent: genesis.id(),
+        })
+    }
+
+    fn envelope(&self, payload: Payload) -> Envelope {
+        Envelope {
+            instance: self.instance,
+            author: [0; 32],
+            subject: Some(self.subject),
+            subject_key: Some(self.subject_key.clone()),
+            grant: Some(self.grant),
+            parents: Set(vec![self.parent]),
+            // Authority events never edit asserted time.
+            asserted_time: None,
+            payload,
+        }
     }
 }
 
@@ -492,11 +538,6 @@ pub fn delegate(
     let author = key.author().to_bytes();
     let issuer = ctx.signing_grant(author)?.grant;
     let parent = ctx.sole_head()?;
-    ensure!(
-        cc_core::AuthorKey::from_bytes(&grantee).is_ok(),
-        "--grantee {} is not a valid Ed25519 public key",
-        hex::encode(grantee)
-    );
     if let Some(g) = ctx.grants.iter().find(|g| g.holder == grantee) {
         bail!(
             "--grantee {} already held grant {} ({}) on this subject; a delegate key must be fresh",
@@ -505,21 +546,101 @@ pub fn delegate(
             g.status.as_str()
         );
     }
-    let mut d = decision(Kind::Delegate, rationale, evidence, parent)?;
+    let holders: Vec<Hash> = ctx.grants.iter().map(|g| g.holder).collect();
+    delegate_on(
+        key,
+        Header::from_context(ctx, issuer, parent),
+        &holders,
+        grantee,
+        rationale,
+        evidence,
+    )
+}
+
+/// Sign a Delegate under `header` to `grantee`, who must be a valid Ed25519
+/// key outside `existing_holders`: every key that holds or held a grant on
+/// the subject (`authority.delegate_key=fresh_in_parent_cone`). The caller
+/// decides the header; this signs it.
+pub fn delegate_on(
+    key: &SecretKey,
+    header: Header,
+    existing_holders: &[Hash],
+    grantee: Hash,
+    rationale: &str,
+    evidence: Vec<Hash>,
+) -> Result<AuthorityEvent> {
+    ensure!(
+        cc_core::AuthorKey::from_bytes(&grantee).is_ok(),
+        "--grantee {} is not a valid Ed25519 public key",
+        hex::encode(grantee)
+    );
+    ensure!(
+        !existing_holders.contains(&grantee),
+        "--grantee {} already holds a grant on subject {}; a delegate key must be fresh",
+        hex::encode(grantee),
+        hex::encode(header.subject)
+    );
+    let issuer = header.grant;
+    let mut d = decision(Kind::Delegate, rationale, evidence, header.parent)?;
     d.new = Value::Grant { issuer, grantee };
     sign(
         key,
-        header(
-            ctx,
+        header.envelope(Payload::Delegate {
+            grantee,
             issuer,
-            parent,
-            Payload::Delegate {
-                grantee,
-                issuer,
-                decision: d,
-            },
-        ),
+            decision: d,
+        }),
     )
+}
+
+/// Sign a new subject's first Delegate from its Genesis alone, with no node
+/// context: the root grant to `grantee`, extending the Genesis. Only the
+/// Genesis author holds the root grant, so `key` must be the Genesis author,
+/// and the author is the subject's one existing holder. Before it is
+/// returned, the Delegate is classified with `cc_ledger::v1::classify` over
+/// the pair `{Genesis, Delegate}`, as the node classifies a candidate whose
+/// parent it retains, and must be valid.
+///
+/// The result is submitted after the Genesis: `submit` refuses it while the
+/// node does not know the subject, and the node would hold it pending.
+pub fn delegate_from_genesis(
+    key: &SecretKey,
+    genesis: &Genesis,
+    grantee: Hash,
+    rationale: &str,
+    evidence: Vec<Hash>,
+) -> Result<AuthorityEvent> {
+    let author = key.author().to_bytes();
+    ensure!(
+        author == genesis.author(),
+        "refusing to sign: key {} is not the Genesis author {}, who alone holds the root grant \
+         of subject {}",
+        hex::encode(author),
+        hex::encode(genesis.author()),
+        hex::encode(genesis.id())
+    );
+    let ev = delegate_on(
+        key,
+        Header::from_genesis(genesis)?,
+        &[genesis.author()],
+        grantee,
+        rationale,
+        evidence,
+    )?;
+    let pair = BTreeMap::from([
+        (genesis.id(), genesis.signed.clone()),
+        (ev.id(), ev.signed.clone()),
+    ]);
+    let status = classify(&pair)
+        .remove(&ev.id())
+        .context("classification lost the Delegate")?;
+    ensure!(
+        status.state == State::Valid,
+        "cc_ledger::v1 classifies this Delegate over its Genesis as {:?} ({})",
+        status.state,
+        status.reason
+    );
+    Ok(ev)
 }
 
 /// What a Revoke may target, decided before signing.
@@ -622,16 +743,11 @@ pub fn revoke(
     };
     sign(
         key,
-        header(
-            ctx,
-            signer,
-            parent,
-            Payload::Revoke {
-                target: target.grant,
-                cascade: choice.cascade,
-                decision: d,
-            },
-        ),
+        Header::from_context(ctx, signer, parent).envelope(Payload::Revoke {
+            target: target.grant,
+            cascade: choice.cascade,
+            decision: d,
+        }),
     )
 }
 
@@ -811,8 +927,41 @@ impl AuthorityEvent {
         })
     }
 
-    /// Human review summary printed by `delegate` and `revoke`.
+    /// Human review summary printed by `delegate` and `revoke`, from a
+    /// grants file.
     pub fn summary(&self, ctx: &Context) -> String {
+        self.render(
+            Some(ctx),
+            format!(
+                "grants read from {} at corpus digest {}",
+                ctx.node,
+                hex::encode(ctx.corpus_digest)
+            ),
+        )
+    }
+
+    /// The summary of a Delegate built from a `genesis` directory
+    /// (`delegate --genesis-dir`), which had no node context: it names the
+    /// directory and whether that directory already held a `receipt.json`,
+    /// so the reviewer knows whether the Genesis was submitted before it.
+    pub fn summary_from_genesis(&self, genesis_dir: &Path, receipt_present: bool) -> String {
+        self.render(
+            None,
+            format!(
+                "Genesis read from {} ({}); submit the Genesis before this {}",
+                genesis_dir.display(),
+                if receipt_present {
+                    format!("{} present", super::node::RECEIPT_FILE)
+                } else {
+                    format!("no {}", super::node::RECEIPT_FILE)
+                },
+                self.kind_name()
+            ),
+        )
+    }
+
+    /// The summary lines; a Revoke's effect lines need the grants file.
+    fn render(&self, ctx: Option<&Context>, context: String) -> String {
         let mut s = String::new();
         let mut line = |k: &str, v: String| s.push_str(&format!("  {k:<15}{v}\n"));
         line("event kind", self.kind_name().into());
@@ -821,15 +970,19 @@ impl AuthorityEvent {
         line("signer", hex::encode(self.author()));
         line("signing grant", hex::encode(self.grant()));
         line("parent", hex::encode(self.parent()));
-        match self.operation() {
-            Operation::Delegate { grantee, .. } => {
+        match (self.operation(), ctx) {
+            (Operation::Delegate { grantee, .. }, _) => {
                 line("grantee", hex::encode(grantee));
                 line(
                     "new grant",
                     format!("{} (the event id)", hex::encode(self.id())),
                 );
             }
-            Operation::Revoke { target, cascade } => {
+            (Operation::Revoke { target, cascade }, None) => {
+                line("target", hex::encode(target));
+                line("cascade", cascade.to_string());
+            }
+            (Operation::Revoke { target, cascade }, Some(ctx)) => {
                 line("target", hex::encode(target));
                 line("cascade", cascade.to_string());
                 let past = ctx.past(self.parent());
@@ -891,14 +1044,7 @@ impl AuthorityEvent {
             "envelope",
             format!("{} bytes, sha256 {}", bytes.len(), hex::encode(hash(bytes))),
         );
-        line(
-            "context",
-            format!(
-                "grants read from {} at corpus digest {}",
-                ctx.node,
-                hex::encode(ctx.corpus_digest)
-            ),
-        );
+        line("context", context);
         s
     }
 

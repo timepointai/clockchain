@@ -1,10 +1,12 @@
 //! `cc-publisher v1 grants`, `v1 delegate` and `v1 revoke`. `grants` is the
 //! only one that talks to a node, and it only reads; `delegate` and `revoke`
-//! sign offline from the grants file it writes. Runbook: `docs/KEYS.md`.
+//! sign offline from the grants file it writes, and `delegate --genesis-dir`
+//! signs a new subject's first Delegate from its `genesis` directory with no
+//! node at all. Runbook: `docs/KEYS.md`.
 use super::authority::{self, Context, RevokeChoice};
 use super::cli::{token, READ_TOKEN_ENV, WRITE_TOKEN_ENV};
-use super::genesis::write_new;
-use super::node::Node;
+use super::genesis::{write_new, Genesis};
+use super::node::{Node, RECEIPT_FILE};
 use super::{authority_node, hex32, key};
 use anyhow::{Context as _, Result};
 use clap::{ArgAction, ArgGroup, Args};
@@ -29,9 +31,6 @@ pub struct Signing {
     /// Seed file of the signing key; it must hold an active grant on the subject.
     #[arg(long)]
     pub key: PathBuf,
-    /// Grants file written by `grants --out`.
-    #[arg(long)]
-    pub grants: PathBuf,
     /// Why, as signed in the decision: one line, at most 1024 bytes.
     #[arg(long)]
     pub rationale: String,
@@ -44,9 +43,17 @@ pub struct Signing {
 }
 
 #[derive(Args, Debug)]
+#[command(group(ArgGroup::new("source").required(true).args(["grants", "genesis_dir"])))]
 pub struct DelegateArgs {
     #[command(flatten)]
     pub signing: Signing,
+    /// Grants file written by `grants --out`: delegate on an existing subject.
+    #[arg(long)]
+    pub grants: Option<PathBuf>,
+    /// Directory written by `genesis`: delegate the new subject's root grant,
+    /// with no node, signed by the Genesis author. Submit the Genesis first.
+    #[arg(long)]
+    pub genesis_dir: Option<PathBuf>,
     /// Public key of the new key (`v1 pubkey`), 64 hex characters.
     #[arg(long)]
     pub grantee: String,
@@ -57,6 +64,9 @@ pub struct DelegateArgs {
 pub struct RevokeArgs {
     #[command(flatten)]
     pub signing: Signing,
+    /// Grants file written by `grants --out`.
+    #[arg(long)]
+    pub grants: PathBuf,
     /// Grant id to revoke (from `grants`), 64 hex characters.
     #[arg(long)]
     pub target: String,
@@ -76,10 +86,12 @@ pub struct RevokeArgs {
 }
 
 impl Signing {
-    /// Parse everything and check `--out` before the key is loaded.
-    fn parse(&self) -> Result<(Context, Vec<cc_core::v1::Hash>)> {
-        super::genesis::check_out_dir(&self.out)?;
-        let ctx = Context::load(&self.grants)?;
+    /// Check `--out` before anything is read and before the key is loaded.
+    fn check_out(&self) -> Result<()> {
+        super::genesis::check_out_dir(&self.out).map(drop)
+    }
+    /// Parse the rationale and evidence.
+    fn decision(&self) -> Result<Vec<cc_core::v1::Hash>> {
         authority::validate_rationale(&self.rationale)?;
         let evidence = self
             .evidence
@@ -89,18 +101,18 @@ impl Signing {
             })
             .collect::<Result<Vec<_>>>()?;
         super::genesis::evidence_set(evidence.clone())?;
-        Ok((ctx, evidence))
+        Ok(evidence)
     }
 }
 
-fn written(ev: &authority::AuthorityEvent, ctx: &Context, out: &std::path::Path) -> Result<()> {
+fn written(ev: &authority::AuthorityEvent, summary: &str, out: &std::path::Path) -> Result<()> {
     ev.write_dir(out)?;
     print!(
         "v1 {} written to {} (offline; nothing was submitted)\n\n{}\n\
          Review {} before `cc-publisher v1 submit`.\n",
         ev.kind_name(),
         out.display(),
-        ev.summary(ctx),
+        summary,
         authority::PREVIEW_FILE
     );
     Ok(())
@@ -130,15 +142,44 @@ pub async fn grants(a: GrantsArgs) -> Result<()> {
 }
 
 pub fn delegate(a: DelegateArgs) -> Result<()> {
-    let (ctx, evidence) = a.signing.parse()?;
-    let grantee = hex32(&a.grantee).context("--grantee must be 64 hex characters")?;
-    let signer = key::load_key(&a.signing.key)?;
-    let ev = authority::delegate(&signer, &ctx, grantee, &a.signing.rationale, evidence)?;
-    written(&ev, &ctx, &a.signing.out)
+    a.signing.check_out()?;
+    let rationale = &a.signing.rationale;
+    match (&a.grants, &a.genesis_dir) {
+        (Some(grants), None) => {
+            let ctx = Context::load(grants)?;
+            let evidence = a.signing.decision()?;
+            let grantee = hex32(&a.grantee).context("--grantee must be 64 hex characters")?;
+            let signer = key::load_key(&a.signing.key)?;
+            let ev = authority::delegate(&signer, &ctx, grantee, rationale, evidence)?;
+            written(&ev, &ev.summary(&ctx), &a.signing.out)
+        }
+        (None, Some(dir)) => {
+            // The reload re-runs every check `genesis` ran. A receipt means the
+            // Genesis was submitted from this directory; either way the
+            // Delegate is only submitted after it.
+            let genesis = Genesis::load_dir(dir)
+                .with_context(|| format!("genesis directory {}", dir.display()))?;
+            let receipt_present = dir.join(RECEIPT_FILE).is_file();
+            let evidence = a.signing.decision()?;
+            let grantee = hex32(&a.grantee).context("--grantee must be 64 hex characters")?;
+            let signer = key::load_key(&a.signing.key)?;
+            let ev =
+                authority::delegate_from_genesis(&signer, &genesis, grantee, rationale, evidence)?;
+            written(
+                &ev,
+                &ev.summary_from_genesis(dir, receipt_present),
+                &a.signing.out,
+            )
+        }
+        // The `source` group makes exactly one of the two present.
+        _ => anyhow::bail!("exactly one of --grants and --genesis-dir is required"),
+    }
 }
 
 pub fn revoke(a: RevokeArgs) -> Result<()> {
-    let (ctx, evidence) = a.signing.parse()?;
+    a.signing.check_out()?;
+    let ctx = Context::load(&a.grants)?;
+    let evidence = a.signing.decision()?;
     let choice = RevokeChoice {
         target: hex32(&a.target).context("--target must be 64 hex characters")?,
         // The group makes exactly one of the two flags present.
@@ -152,5 +193,5 @@ pub fn revoke(a: RevokeArgs) -> Result<()> {
     };
     let signer = key::load_key(&a.signing.key)?;
     let ev = authority::revoke(&signer, &ctx, choice, &a.signing.rationale, evidence)?;
-    written(&ev, &ctx, &a.signing.out)
+    written(&ev, &ev.summary(&ctx), &a.signing.out)
 }
