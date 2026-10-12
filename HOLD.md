@@ -168,6 +168,49 @@ both images; any further entry, edge or media; key generation, rotation or
 revocation; any broader delegate scope (a design memo may be written;
 nothing implemented); dropping v0.
 
+## Owner decisions — 2026-10-12
+
+The owner decided the following on 2026-10-12, from the menu the 2026-10-09
+session left. Each is run by the owner, or by the owner's agent at the owner's
+explicit instruction in the 2026-10-12 session, from the owner's workstation.
+
+- **Consumer integrations on.** The merged, flag-gated read integrations may
+  be enabled one repository at a time (api-gateway, then web-app, then mcp) by
+  setting their public URL to the published gateway origin and their flag to
+  true in each service's deployment configuration, with a read check after
+  each.
+- **Delegation scope, option A.** No fold change. Publisher tooling may be
+  built (software, under the usual gate and review) so that a curator can
+  pre-sign a new subject's Genesis and its Delegate to the hot key offline,
+  from the Genesis output alone, without a node context. Each batch of
+  root-signed subjects still needs its own dated authorization; this record
+  authorizes none.
+- **Explorer hosting.** The static explorer in `web/explorer` may be built
+  against the published gateway origin and served from a separate Fly app
+  deployed from the workstation, with public ingress; its URL may be
+  published here. It holds no key and reads only `/public/v1`.
+- **Database image update.** The Fly Postgres app may be moved to the pending
+  `postgres-flex` image version, with a verified backup immediately before and
+  the read-only identity, commitment and export checks after.
+- **The 1973 claim is reopened, within limits.** (i) Better sources for the
+  Xerox Alto claim (primary or independent, captured with their licences and
+  recorded in the private evidence) may be gathered. (ii) One new model
+  proposal for a narrowed 1973 claim and its influence edge may be run on a
+  route whose rights review is current; this consumes the generation hold to
+  the extent of that single proposal and its structural and source reviews.
+  Human content review, authoring with the curator key and submission remain
+  owner-operated; the agent prepares the packet and stops at the owner's
+  command. Both images stay undecided.
+- **Cloud and token cleanup.** The fired one-off routine and the unused
+  isolated cloud environment may be deleted, and the Railway token held by the
+  retired June routine revoked. No GitHub Support request will be made for
+  the historical disclosure; that item is closed as accepted.
+- Deferred by the owner: the removable key copy and any read-key rotation.
+
+Still held: any entry, edge or media other than the single 1973 proposal
+above; both images; key generation, rotation or revocation; dropping v0; any
+fold change.
+
 ## PR #5 merge record — 2026-09-28
 
 PR #5 merged under the owner's independent HTTP policy decision and explicit
