@@ -471,7 +471,7 @@ fn decision(kind: Kind, rationale: &str, evidence: Vec<Hash>, parent: Hash) -> R
 /// (`instance`, `subject`, `subject_key`), the signing grant, and the one
 /// subject event it extends.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Header {
+pub(crate) struct Header {
     pub instance: Hash,
     pub subject: Hash,
     pub subject_key: SubjectKey,
@@ -561,7 +561,7 @@ pub fn delegate(
 /// key outside `existing_holders`: every key that holds or held a grant on
 /// the subject (`authority.delegate_key=fresh_in_parent_cone`). The caller
 /// decides the header; this signs it.
-pub fn delegate_on(
+pub(crate) fn delegate_on(
     key: &SecretKey,
     header: Header,
     existing_holders: &[Hash],

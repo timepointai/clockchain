@@ -170,7 +170,8 @@ is fixed by its Genesis, so nothing a node knows is needed to sign it:
 
 It reloads `GENESIS_DIR` with every check `genesis` ran (envelope, body,
 preview), then signs and classifies the pair `{Genesis, Delegate}` with
-`cc_ledger::v1::classify`, the node's own rule; the Delegate must be `valid`.
+`cc_ledger::v1::classify`, the ledger's branch-local admission rule (the node adds
+its instance, writability and trust checks on top); the Delegate must be `valid`.
 It refuses, and writes nothing, when:
 
 - the Genesis directory does not reload: a missing or tampered `envelope.bin`,
