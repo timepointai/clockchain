@@ -217,7 +217,14 @@ at `https://timepoint-clockchain-explorer.fly.dev` (template merged as PR #41,
 deployed 22:3xZ, public IPv6 and shared IPv4, wasm served as such). The
 delegation tooling is PR #42. In session the owner also decided, after learning
 the consumer services had no Fly deployment, to stand them up fresh on Fly with
-empty databases; CONSUMERS_PLACEHOLDER
+empty databases; the three services now run as
+`timepoint-api-gateway-prod`, `timepoint-web-app-prod` and `timepoint-mcp-prod`
+on Fly with a new database cluster, the clockchain read integration on in each
+(URL set to the bare gateway origin), and every owner-only credential (OAuth,
+payments, email, model keys) still unset; their Fly configurations are open
+pull requests in each repository. Consumer merges and enablement in the
+2026-10-09 and 2026-10-12 decisions are thereby executed on Fly, not on the
+previous host.
 
 Still held: generation and model calls beyond the single 1973 proposal above;
 any entry, edge or media, including the 1973 claim and its edge until the
