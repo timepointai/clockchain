@@ -439,8 +439,10 @@ separate owner step per repository.
 
 To keep a deployment off, leave `CLOCKCHAIN_V1_PUBLIC_ENABLED` unset or set it
 to `false`. An empty value may fail settings validation at boot. The flag takes
-effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`; the published
-value is `https://timepoint-clockchain-gateway.fly.dev/public/v1`.
+effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`. The value is the
+bare gateway origin, `https://timepoint-clockchain-gateway.fly.dev`: the vendored client appends
+`/public/v1` itself, so a value that already ends in `/public/v1` produces
+`/public/v1/public/v1` and every read fails.
 
 | Repository | PR and status | With the flag on |
 |---|---|---|

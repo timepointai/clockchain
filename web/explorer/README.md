@@ -100,7 +100,8 @@ synthetic fixture without a gateway; it answers only recorded reads.
 [deploy/explorer/](../../deploy/explorer/README.md) is a Fly app template that
 serves `dist/` this way: unprivileged nginx with the `.wasm` type, the
 security headers and a health route. Deploying it is an owner step.
-Published URL: see [docs/PUBLIC-ACCESS.md](../../docs/PUBLIC-ACCESS.md).
+Published URL: `https://timepoint-clockchain-explorer.fly.dev` (status in
+[docs/PUBLIC-ACCESS.md](../../docs/PUBLIC-ACCESS.md)).
 
 ## Tests
 
