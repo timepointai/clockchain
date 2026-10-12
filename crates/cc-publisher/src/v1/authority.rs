@@ -945,17 +945,20 @@ impl AuthorityEvent {
     /// directory and whether that directory already held a `receipt.json`,
     /// so the reviewer knows whether the Genesis was submitted before it.
     pub fn summary_from_genesis(&self, genesis_dir: &Path, receipt_present: bool) -> String {
+        let receipt = super::node::RECEIPT_FILE;
         self.render(
             None,
             format!(
-                "Genesis read from {} ({}); submit the Genesis before this {}",
+                "Genesis read from {} ({})",
                 genesis_dir.display(),
                 if receipt_present {
-                    format!("{} present", super::node::RECEIPT_FILE)
+                    format!("{receipt} present: the Genesis was submitted from there")
                 } else {
-                    format!("no {}", super::node::RECEIPT_FILE)
-                },
-                self.kind_name()
+                    format!(
+                        "no {receipt}: submit the Genesis before this {}",
+                        self.kind_name()
+                    )
+                }
             ),
         )
     }
