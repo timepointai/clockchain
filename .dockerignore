@@ -27,6 +27,7 @@
 !deploy/explorer/*
 !web/explorer/dist/
 !web/explorer/dist/**
+# An assembled dist/ also rides along in the node and gateway contexts (COPY . .); harmless.
 
 # Private artifacts remain excluded even inside an allowed source directory.
 **/.env

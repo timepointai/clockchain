@@ -18,5 +18,8 @@
 # mime.types already maps .wasm to application/wasm.
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY deploy/explorer/nginx.conf /etc/nginx/conf.d/default.conf
+USER root
+RUN rm -rf /usr/share/nginx/html/*
+USER nginx
 COPY web/explorer/dist/ /usr/share/nginx/html/
 EXPOSE 8080
