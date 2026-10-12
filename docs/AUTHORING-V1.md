@@ -269,7 +269,10 @@ A directory written by `genesis`, `delegate` or `revoke` still goes through
 reloads one such single-event directory and checks its own read-back; a packet holds
 several events of several kinds, bound to a context and an approved digest,
 so it has its own entry point over the same node client, `writable` check
-and trust checks.
+and trust checks. A new subject's first Delegate can be signed offline from
+the `genesis` directory (`delegate --genesis-dir`,
+[KEYS.md](KEYS.md#delegate-from-a-genesis-directory)) and is submitted after
+the Genesis, with its own `submit`; it is not part of a packet.
 
 ## A future 1973 claim and influence edge
 
