@@ -20,6 +20,13 @@
 !ops/fixtures/
 !ops/fixtures/**
 !robots.txt
+# The explorer image (deploy/explorer/Dockerfile) copies its nginx config and
+# the locally assembled web/explorer/dist/ (not committed; see build.sh).
+# The rest of web/ stays out of every build context.
+!deploy/explorer/
+!deploy/explorer/*
+!web/explorer/dist/
+!web/explorer/dist/**
 
 # Private artifacts remain excluded even inside an allowed source directory.
 **/.env
