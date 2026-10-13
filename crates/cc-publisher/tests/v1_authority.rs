@@ -16,7 +16,8 @@ use cc_ledger::v1::Store;
 use cc_node::config::{KeyDigest, Posture, V1Config};
 use cc_node::serve_v1::{self, V1State};
 use cc_publisher::v1::authority::{
-    self, AuthorityEvent, Context, GrantStatus, RevokeChoice, PREVIEW_FILE,
+    self, AuthorityEvent, Context, GrantStatus, Operation, RevokeChoice, ENVELOPE_FILE,
+    PREVIEW_FILE,
 };
 use cc_publisher::v1::authority_node;
 use cc_publisher::v1::genesis::{self, Genesis, GenesisInput};
@@ -108,9 +109,9 @@ fn when() -> AssertedTime {
     time::parse("1901-02-03").unwrap()
 }
 
-/// Sign, submit and read back a synthetic Genesis with the curator key.
-async fn published_genesis(n: &TestNode, root: &SecretKey, dir: &Path) -> Genesis {
-    let g = genesis::build(
+/// Sign a synthetic Genesis with the curator key, offline.
+fn synthetic_genesis(root: &SecretKey) -> Genesis {
+    genesis::build(
         root,
         GenesisInput {
             instance: INSTANCE,
@@ -123,7 +124,12 @@ async fn published_genesis(n: &TestNode, root: &SecretKey, dir: &Path) -> Genesi
             nonce: key::os_random().unwrap(),
         },
     )
-    .unwrap();
+    .unwrap()
+}
+
+/// Sign, submit and read back a synthetic Genesis with the curator key.
+async fn published_genesis(n: &TestNode, root: &SecretKey, dir: &Path) -> Genesis {
+    let g = synthetic_genesis(root);
     let out = dir.join("genesis");
     g.write_dir(&out).unwrap();
     node::submit(&n.writer(), &out, false).await.unwrap();
@@ -1041,5 +1047,208 @@ async fn non_cascade_cancels_only_direct_delegates_issued_outside_its_past() {
     assert_eq!(status(&ctx, d2.id()), GrantStatus::Active);
     assert_eq!(status(&ctx, d3.id()), GrantStatus::Active);
     assert_eq!(status(&ctx, d4.id()), GrantStatus::Canceled);
+    n.cleanup.cleanup().await;
+}
+
+/// Copy a `genesis` directory's three files into `to` (which is created).
+fn copy_genesis_dir(from: &Path, to: &Path) {
+    std::fs::create_dir(to).unwrap();
+    for name in [ENVELOPE_FILE, genesis::BODY_FILE, PREVIEW_FILE] {
+        std::fs::copy(from.join(name), to.join(name)).unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delegate_from_genesis_dir_signs_offline_and_submits_after_the_genesis() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t = tmp.path();
+    let (root_key, root) = keyfile(t, "root");
+    let (hot_key, hot) = keyfile(t, "hot");
+    let (_, other) = keyfile(t, "other");
+    let n = TestNode::start(vec![public(&root)]).await;
+    let ev = hex::encode([0x45u8; 32]);
+
+    // Offline, with no node: the Genesis, then its Delegate from the Genesis
+    // directory alone.
+    let g = synthetic_genesis(&root);
+    let subj = g.subject();
+    let gdir = t.join("genesis");
+    g.write_dir(&gdir).unwrap();
+    let rationale = "Synthetic hot key for a new subject";
+    let d = authority::delegate_from_genesis(&root, &g, public(&hot), rationale, vec![[0x45; 32]])
+        .unwrap();
+    // Every header field comes from the Genesis.
+    assert_eq!(d.instance(), INSTANCE);
+    assert_eq!(d.subject(), subj);
+    assert_eq!(d.parent(), subj);
+    assert_eq!(d.grant(), root_grant(subj));
+    assert_eq!(d.author(), public(&root));
+    assert_eq!(
+        d.envelope().subject_key,
+        g.signed.envelope().subject_key,
+        "the subject key is copied from the Genesis"
+    );
+    assert_eq!(
+        d.operation(),
+        Operation::Delegate {
+            grantee: public(&hot),
+            issuer: root_grant(subj),
+        }
+    );
+    // Offline refusals: a key other than the Genesis author, and the author
+    // delegating to itself.
+    let text = err(authority::delegate_from_genesis(
+        &hot,
+        &g,
+        public(&other),
+        "x",
+        vec![[1; 32]],
+    ));
+    assert!(text.contains("is not the Genesis author"), "{text}");
+    let text = err(authority::delegate_from_genesis(
+        &root,
+        &g,
+        public(&root),
+        "x",
+        vec![[1; 32]],
+    ));
+    assert!(text.contains("a delegate key must be fresh"), "{text}");
+
+    // The CLI: `delegate --genesis-dir` signs the same bytes.
+    let delegate = |key: &Path, gdir: &Path, grantee: &SecretKey, out: &Path| {
+        let mut c = publisher();
+        c.args(["v1", "delegate", "--key", s(key), "--genesis-dir", s(gdir)])
+            .args(["--grantee", &hex::encode(public(grantee))])
+            .args(["--rationale", rationale, "--evidence", &ev])
+            .args(["--out", s(out)]);
+        c
+    };
+    let ddir = t.join("delegate");
+    let (code, stdout, err_text) = run(&mut delegate(&root_key, &gdir, &hot, &ddir));
+    assert_eq!(code, 0, "{err_text}");
+    assert!(stdout.contains("nothing was submitted"), "{stdout}");
+    assert!(stdout.contains("no receipt.json"), "{stdout}");
+    assert!(
+        stdout.contains("submit the Genesis before this delegate"),
+        "{stdout}"
+    );
+    assert_eq!(
+        std::fs::read(ddir.join(ENVELOPE_FILE)).unwrap(),
+        d.signed.bytes()
+    );
+    assert_eq!(AuthorityEvent::load_dir(&ddir).unwrap().id(), d.id());
+    let preview: Json =
+        serde_json::from_slice(&std::fs::read(ddir.join(PREVIEW_FILE)).unwrap()).unwrap();
+    assert_eq!(preview["event_kind"], "delegate");
+    assert_eq!(preview["subject"], hex::encode(subj));
+    assert_eq!(preview["parent"], hex::encode(subj));
+    assert_eq!(preview["grant"], hex::encode(root_grant(subj)));
+    assert_eq!(preview["delegate"]["issuer"], hex::encode(root_grant(subj)));
+    assert_eq!(preview["delegate"]["grantee"], hex::encode(public(&hot)));
+    assert_eq!(preview["delegate"]["new_grant"], hex::encode(d.id()));
+
+    // CLI refusals write nothing: a key that is not the Genesis author, the
+    // author as grantee, and a tampered Genesis directory.
+    let bad = t.join("bad");
+    let (code, _, err_text) = run(&mut delegate(&hot_key, &gdir, &other, &bad));
+    assert_eq!(code, 1);
+    assert!(err_text.contains("is not the Genesis author"), "{err_text}");
+    assert!(!bad.exists());
+    let (code, _, err_text) = run(&mut delegate(&root_key, &gdir, &root, &bad));
+    assert_eq!(code, 1);
+    assert!(
+        err_text.contains("a delegate key must be fresh"),
+        "{err_text}"
+    );
+    assert!(!bad.exists());
+    let tampered = t.join("tampered");
+    copy_genesis_dir(&gdir, &tampered);
+    let path = tampered.join(ENVELOPE_FILE);
+    let mut bytes = std::fs::read(&path).unwrap();
+    *bytes.last_mut().unwrap() ^= 0x01;
+    std::fs::write(&path, bytes).unwrap();
+    let (code, _, err_text) = run(&mut delegate(&root_key, &tampered, &hot, &bad));
+    assert_eq!(code, 1);
+    assert!(err_text.contains("genesis directory"), "{err_text}");
+    assert!(
+        err_text.contains("envelope.bin: bad_signature"),
+        "{err_text}"
+    );
+    assert!(!bad.exists());
+    // Exactly one source: both, or neither, is a parser error.
+    let mut both = delegate(&root_key, &gdir, &hot, &bad);
+    both.args(["--grants", s(&t.join("grants.json"))]);
+    let (code, _, err_text) = run(&mut both);
+    assert_eq!(code, 2, "{err_text}");
+    assert!(
+        err_text.contains("--grants") && err_text.contains("--genesis-dir"),
+        "{err_text}"
+    );
+    let mut neither = publisher();
+    neither
+        .args(["v1", "delegate", "--key", s(&root_key)])
+        .args(["--grantee", &hex::encode(public(&hot))])
+        .args(["--rationale", rationale, "--evidence", &ev])
+        .args(["--out", s(&bad)]);
+    let (code, _, err_text) = run(&mut neither);
+    assert_eq!(code, 2, "{err_text}");
+    assert!(
+        err_text.contains("--grants") && err_text.contains("--genesis-dir"),
+        "{err_text}"
+    );
+    assert!(!bad.exists());
+
+    // Submitted before its Genesis, the client refuses it: the node does
+    // not know the subject, and nothing is posted.
+    let before = n.candidates().await;
+    let text = err(node::submit(&n.writer(), &ddir, false).await);
+    assert!(text.contains("does not know subject"), "{text}");
+    assert_eq!(n.candidates().await, before);
+    assert!(!ddir.join(RECEIPT_FILE).exists());
+
+    // The Genesis, then the Delegate. It is exactly the event the grants path
+    // would sign from a grants file read in between.
+    node::submit(&n.writer(), &gdir, false).await.unwrap();
+    assert!(gdir.join(RECEIPT_FILE).exists());
+    let ctx0 = n.grants(subj).await;
+    let via_grants =
+        authority::delegate(&root, &ctx0, public(&hot), rationale, vec![[0x45; 32]]).unwrap();
+    assert_eq!(via_grants.signed.bytes(), d.signed.bytes());
+    let done = node::submit(&n.writer(), &ddir, false).await.unwrap();
+    assert_eq!(done.receipt["admission"]["result"], "admitted");
+    assert_eq!(
+        done.receipt["readback"]["delegate"]["new_grant"]["holder"],
+        hex::encode(public(&hot))
+    );
+    let ctx = n.grants(subj).await;
+    let row = ctx.grant(d.id()).unwrap();
+    assert_eq!(row.status, GrantStatus::Active);
+    assert_eq!(row.holder, public(&hot));
+    assert_eq!(row.issuer, Some(root_grant(subj)));
+    assert_eq!(row.lineage, vec![root_grant(subj), d.id()]);
+    assert_eq!(ctx.frontier, vec![d.id()]);
+
+    // The hot key's Correction is admitted and becomes the current revision.
+    let body = b"Corrected by the hot key.\n";
+    let c = correction(&hot, &ctx, d.id(), d.id(), hash(&g.body), body);
+    assert_eq!(
+        post(&n, &c, body).await,
+        (StatusCode::CREATED, "valid".into(), String::new())
+    );
+    assert_eq!(current(&n, subj).await.0, revision_id(subj, c.id()));
+
+    // The directory still builds a Delegate after submission (the receipt is
+    // reported), but one whose parent, the Genesis, is no longer the head:
+    // submit refuses it, and nothing is posted.
+    let late = t.join("late");
+    let (code, stdout, err_text) = run(&mut delegate(&root_key, &gdir, &other, &late));
+    assert_eq!(code, 0, "{err_text}");
+    assert!(stdout.contains("receipt.json present"), "{stdout}");
+    let before = n.candidates().await;
+    let text = err(node::submit(&n.writer(), &late, false).await);
+    assert!(text.contains("nothing was written"), "{text}");
+    assert!(text.contains("is not the subject's sole head"), "{text}");
+    assert_eq!(n.candidates().await, before);
+    assert!(!late.join(RECEIPT_FILE).exists());
     n.cleanup.cleanup().await;
 }

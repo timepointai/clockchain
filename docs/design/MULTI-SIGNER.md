@@ -584,6 +584,9 @@ operational evidence for every launch gate.
 
 1. Threshold/role-separated authority grants. V1 grants body authority plus
    scoped downstream authority; the root remains the recovery trust boundary.
+   Delegate-scope option A (a new subject's first Delegate signed offline from
+   its Genesis directory, `docs/KEYS.md`) is publisher tooling only: the grant
+   stays per subject and no fold rule changes.
 2. Delegated edge-author rotation. V1 fixes the original edge author; replacement
    assertions remain possible without rewriting an old edge.
 3. Projection indexing/checkpoint performance. Full deterministic replay is the

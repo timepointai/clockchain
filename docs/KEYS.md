@@ -3,6 +3,8 @@
 This runbook covers the `cc-publisher v1` authority commands: `grants`,
 `delegate` and `revoke`, and `submit` for their output. They let the owner keep
 the root (curator) seed offline and do routine signing with a delegated hot key.
+For a new subject, `delegate --genesis-dir` signs the first Delegate from the
+`genesis` directory in the same offline session as the Genesis, with no node.
 This page describes operator procedures. Dated ceremony evidence and current key
 custody are recorded in the owner's private handoff. Every command below is an
 owner action, run from the owner's workstation or the owner's offline machine.
@@ -31,7 +33,10 @@ lines are the rules; this page restates them where a step depends on them.
   - *New subjects.* A Genesis needs no grant, but a subject counts for support
     only when its Genesis author is a curator. With the root as the only
     curator, every new subject needs the root key for its Genesis, and then a
-    Delegate if a hot key is to correct it.
+    Delegate if a hot key is to correct it. Both can be signed in one offline
+    session: the Delegate from the `genesis` directory
+    ([delegate from a Genesis directory](#delegate-from-a-genesis-directory)),
+    submitted after the Genesis.
   - *The curator set.* The curator set is part of the bound rule identity. A
     bound fold v1 store refuses a different identity, so a hot key cannot be
     made a curator on the running store. Changing the curator set is an owner
@@ -69,12 +74,15 @@ lines are the rules; this page restates them where a step depends on them.
 | `root.seed` | Root (curator) seed | Offline machine and offline backups only |
 | `hot.seed` | Hot-key seed | Owner's workstation, mode 0600 |
 | `grants.json` | A subject's grants and events as one node served them, plus that node's URL | Private; not a secret, but it names the node |
+| `genesis/` | `envelope.bin`, `body.bin`, `preview.json`, and after submit `receipt.json`; the input of `delegate --genesis-dir` | Private working directory |
 | `delegate/`, `revoke/` | `envelope.bin`, `preview.json`, and after submit `receipt.json` | Private working directories |
 
 Seeds follow the key-file rules in [PUBLISHER-V1.md](PUBLISHER-V1.md#key-files).
 `delegate` and `revoke` never contact a node: copy `grants.json` to the offline
-machine, and copy the output directory back. Removable media is fine; neither
-file is secret. Never put a seed, a grants file or a receipt in this repository.
+machine, and copy the output directory back. A new subject's `genesis/`
+directory is written on the offline machine, so its first Delegate needs no
+copy in. Removable media is fine; neither file is secret. Never put a seed, a
+grants file or a receipt in this repository.
 
 ## Commands
 
@@ -138,6 +146,60 @@ writes nothing, when:
 includes the signer, signing grant, parent and grantee. It also includes
 `new_grant`: the Delegate's event id, which is the new grant's id. Stdout
 repeats this as a review summary.
+
+### delegate from a Genesis directory
+
+```sh
+cc-publisher v1 delegate --key ROOT.seed --genesis-dir GENESIS_DIR \
+  --grantee GRANTEE_PUBKEY_HEX --rationale "TEXT" \
+  --evidence SHA256_HEX [--evidence ...] --out DIR
+```
+
+Offline, with no node and no grants file. Exactly one of `--grants` and
+`--genesis-dir` is given; neither, or both, is a parser error (exit 2).
+`GENESIS_DIR` is a directory `genesis` wrote. A new subject's first Delegate
+is fixed by its Genesis, so nothing a node knows is needed to sign it:
+
+- the instance, subject id and subject key are the Genesis's (a later event
+  must repeat the Genesis key exactly);
+- the signing grant and issuer are the root grant,
+  `sha256(cc.root-grant.v1|genesis)`, which the Genesis author holds;
+- the parent is the Genesis, the subject's only event;
+- the Genesis author is the subject's only key, so any other grantee is
+  fresh.
+
+It reloads `GENESIS_DIR` with every check `genesis` ran (envelope, body,
+preview), then signs and classifies the pair `{Genesis, Delegate}` with
+`cc_ledger::v1::classify`, the ledger's branch-local admission rule (the node adds
+its instance, writability and trust checks on top); the Delegate must be `valid`.
+It refuses, and writes nothing, when:
+
+- the Genesis directory does not reload: a missing or tampered `envelope.bin`,
+  `body.bin` or `preview.json`;
+- the key is not the Genesis author. Only the author holds the root grant;
+- the grantee is the Genesis author, or is not a valid Ed25519 public key;
+- the rationale, evidence or `--out` checks of `delegate` fail.
+
+`DIR` gets the same `envelope.bin` and `preview.json` as `delegate --grants`,
+and `submit` sends it the same way. The summary's `context` line names the
+Genesis directory and says whether it held a `receipt.json`, that is, whether
+the Genesis was already submitted from it. The envelope is the same bytes
+either way: a Delegate built this way equals the one `delegate --grants`
+would sign from a grants file read after the Genesis and before any other
+event (the real-node test
+`delegate_from_genesis_dir_signs_offline_and_submits_after_the_genesis`
+checks the two byte for byte).
+
+Order of submission: the Genesis first, then the Delegate. `submit` refuses
+the Delegate while the node does not know the subject (nothing is posted; the
+node would otherwise hold it pending). The Delegate extends the Genesis, so
+once any other event is admitted on the subject, its parent is no longer the
+sole head and `submit` refuses it; a Delegate on a subject that has moved on
+is signed from a grants file.
+
+This is publisher tooling over the existing per-subject grant. No fold rule,
+grant scope or admission check changes; the node admits the Delegate exactly
+as it admits one signed from a grants file.
 
 ### revoke
 
@@ -271,7 +333,8 @@ Run on the workstation unless marked **offline**. Placeholders are in capitals.
    `active`, its holder the hot key and its issuer the root grant.
 8. **Offline:** the root seed goes back to cold storage. It is needed again
    only for:
-   - a new subject's Genesis and its Delegate;
+   - a new subject's Genesis and its Delegate, signed together in one offline
+     session (`genesis`, then `delegate --genesis-dir`; submit in that order);
    - rotation;
    - the compromise playbook.
 
@@ -295,7 +358,8 @@ Run on the workstation unless marked **offline**. Placeholders are in capitals.
   Whatever builds the Correction, it signs under the hot key's grant id (the
   Delegate event id) and extends the sole head.
 - The hot key cannot do any of these; each needs the root:
-  - create curator-trusted subjects;
+  - create curator-trusted subjects, or sign a new subject's first Delegate
+    (`delegate --genesis-dir` refuses any key but the Genesis author);
   - author edges that count as support;
   - change the curator set.
 
@@ -403,8 +467,9 @@ outcomes.
 
 ## Where this is tested
 
-All tests are in `crates/cc-publisher/tests/v1_authority.rs`. They run against
-the real v1 serving router over real PostgreSQL, with synthetic keys only.
+All tests but the last are in `crates/cc-publisher/tests/v1_authority.rs`. They
+run against the real v1 serving router over real PostgreSQL, with synthetic
+keys only.
 
 | Test | Shows |
 |---|---|
@@ -416,3 +481,5 @@ the real v1 serving router over real PostgreSQL, with synthetic keys only.
 | `non_cascade_cancels_only_direct_delegates_issued_outside_its_past` | A non-cascade revoke on an earlier parent keeps the target's acknowledged delegate and that delegate's later sub-grant, and cancels a direct delegate issued outside its past. The summary counts match. |
 | `revoke_on_an_earlier_parent_can_leave_the_subject_contested` | A revoke parented before the root's own later Correction leaves two heads; `submit` reports the subject `contested`. |
 | `cli_grants_delegate_revoke_and_submit` | The CLI round trip. Cascade must be explicit, an ungranted key writes nothing, and tampered grants files and previews are refused. |
+| `delegate_from_genesis_dir_signs_offline_and_submits_after_the_genesis` | A new subject's Genesis and Delegate are signed offline from the `genesis` directory alone, with the bytes the grants path would sign. `submit` refuses the Delegate before the Genesis and posts nothing; after it, the grant is active and a hot-key Correction is admitted. A signer other than the author, the author as grantee, a tampered `envelope.bin`, and both or neither source flag write nothing; after a later Correction the Delegate's parent is not the head and `submit` refuses it. |
+| `delegate_from_genesis_dir_is_deterministic` (`v1_offline.rs`) | Same inputs give the same bytes, in the library and through the binary; every header field is the Genesis's; the directory reloads. |
