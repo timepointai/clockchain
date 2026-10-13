@@ -439,14 +439,16 @@ separate owner step per repository.
 
 To keep a deployment off, leave `CLOCKCHAIN_V1_PUBLIC_ENABLED` unset or set it
 to `false`. An empty value may fail settings validation at boot. The flag takes
-effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`; the published
-value is `https://timepoint-clockchain-gateway.fly.dev/public/v1`.
+effect only together with a non-empty `CLOCKCHAIN_V1_PUBLIC_URL`. The value is the
+bare gateway origin, `https://timepoint-clockchain-gateway.fly.dev`: the vendored client appends
+`/public/v1` itself, so a value that already ends in `/public/v1` produces
+`/public/v1/public/v1` and every read fails.
 
 | Repository | PR and status | With the flag on |
 |---|---|---|
-| timepoint-mcp | [timepoint-mcp#13](https://github.com/timepointai/timepoint-mcp/pull/13), merged 2026-10-09 flag off | v1 read tools replace the legacy read tools; write tools unchanged |
-| timepoint-api-gateway | [timepoint-api-gateway#56](https://github.com/timepointai/timepoint-api-gateway/pull/56), merged 2026-10-09 flag off | Read-only `/api/v1/clockchain/v1/*` passthrough to `/public/v1` |
-| timepoint-web-app | [timepoint-web-app#345](https://github.com/timepointai/timepoint-web-app/pull/345), merged 2026-10-09 flag off | `/clockchain` lists v1 subjects, and `/clockchain/v1/subjects/{id}` shows one. With the flag off that URL still reaches the legacy handler |
+| timepoint-mcp | [timepoint-mcp#13](https://github.com/timepointai/timepoint-mcp/pull/13), merged 2026-10-09; on since 2026-10-12 on Fly | v1 read tools replace the legacy read tools; write tools unchanged |
+| timepoint-api-gateway | [timepoint-api-gateway#56](https://github.com/timepointai/timepoint-api-gateway/pull/56), merged 2026-10-09; on since 2026-10-12 on Fly | Read-only `/api/v1/clockchain/v1/*` passthrough to `/public/v1` |
+| timepoint-web-app | [timepoint-web-app#345](https://github.com/timepointai/timepoint-web-app/pull/345), merged 2026-10-09; on since 2026-10-12 on Fly | `/clockchain` lists v1 subjects, and `/clockchain/v1/subjects/{id}` shows one. With the flag off that URL still reaches the legacy handler |
 
 No PR was opened for timepoint-beta, which has nothing to migrate, or for
 timepoint-flash, which is archived and has no v1 mapping.

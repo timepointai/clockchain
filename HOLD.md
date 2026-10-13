@@ -207,6 +207,25 @@ never from CI or a cloud session.
   item is closed.
 - Deferred by the owner: the removable key copy and any read-key rotation.
 
+Execution record, 2026-10-12 (UTC): the database app moved to the pending
+image version at 21:01Z; the node reconnected and the monitor reports identity
+match on build `df094748ad64` with the commitment unchanged; the verified
+backup immediately before the move failed on the workstation's Fly tunnel, so
+the latest verified backup predates it by 52 minutes, and the verified backup
+after it is pending until that tunnel is restored. The explorer is served from its own Fly app
+at `https://timepoint-clockchain-explorer.fly.dev` (template merged as PR #41,
+deployed 22:3xZ, public IPv6 and shared IPv4, wasm served as such). The
+delegation tooling is PR #42. In session the owner also decided, after learning
+the consumer services had no Fly deployment, to stand them up fresh on Fly with
+empty databases; the three services now run as
+`timepoint-api-gateway-prod`, `timepoint-web-app-prod` and `timepoint-mcp-prod`
+on Fly with a new database cluster, the clockchain read integration on in each
+(URL set to the bare gateway origin), and every owner-only credential (OAuth,
+payments, email, model keys) still unset; their Fly configurations are open
+pull requests in each repository. The 2026-10-09 merges and the 2026-10-12
+enablement are thereby executed on Fly rather than on the host those
+repositories previously deployed to.
+
 Still held: generation and model calls beyond the single 1973 proposal above;
 any entry, edge or media, including the 1973 claim and its edge until the
 owner authors and submits them; both images; key generation, rotation or

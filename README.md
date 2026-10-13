@@ -43,8 +43,9 @@ The v1 surfaces are:
 
 - the node in v1 mode: [using the node](docs/USING-THE-NODE.md#v1-mode);
 - public reads: the [read-only gateway](docs/PUBLIC-ACCESS.md) (`/public/v1`),
-  plus a static [explorer and verifier](web/explorer/README.md) that reads the
-  gateway when the owner builds and hosts it (not itself deployed);
+  plus the static [explorer and verifier](web/explorer/README.md) served at
+  `https://timepoint-clockchain-explorer.fly.dev`, which reads the gateway and verifies in
+  the browser;
 - signing and submission: [publisher v1](docs/PUBLISHER-V1.md) and the
   [key runbook](docs/KEYS.md) (cold root, hot delegate);
 - operations: routine [update releases, backups, monitoring and the seal
