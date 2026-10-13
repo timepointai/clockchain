@@ -11,8 +11,11 @@ the code does.
   `verify` use only the node's HTTP API. No `v1` command opens a database or
   reads `DATABASE_URL`. The envelope is built with the `cc_core::v1` types the
   node decodes. This page covers Genesis; `grants`, `delegate`, `revoke` and
-  `submit` of their output are in [KEYS.md](KEYS.md). The v0 commands are
-  unchanged.
+  `submit` of their output are in [KEYS.md](KEYS.md). A `genesis` directory
+  is also the input of `delegate --genesis-dir`, which signs the new
+  subject's first Delegate offline from it
+  ([KEYS.md](KEYS.md#delegate-from-a-genesis-directory)). The v0 commands
+  are unchanged.
 - Hex arguments (`--instance`, `--evidence`, `--nonce`, `--subject`) are
   exactly 64 hex characters, either case. Printed hex is lowercase.
 - Exit status is 0 on success and 1 on any refusal or failure, with
@@ -247,7 +250,10 @@ cc-publisher v1 submit --node URL --dir DIR [--allow-untrusted]
 
 Needs `CC_NODE_API_KEY`; the token and URL are checked first. Steps 1 to 5
 only read. A `delegate` or `revoke` directory takes the authority path in
-[KEYS.md](KEYS.md#submit) instead; the steps below are for a Genesis.
+[KEYS.md](KEYS.md#submit) instead; the steps below are for a Genesis. A
+Delegate built from this Genesis directory (`delegate --genesis-dir`) is
+submitted after the Genesis, by a second `submit`; before that, `submit`
+refuses it because the node does not know the subject.
 
 1. Reload `DIR` with the signing checks: `envelope.bin` (at most 1 MiB) is a
    canonical, correctly signed `cc.event.v1` Genesis; kind, namespace, value

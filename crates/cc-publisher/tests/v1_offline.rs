@@ -7,12 +7,15 @@
 //! `synthetic.publisher`. `vectors/v1-genesis.txt` was derived outside Rust
 //! (Python stdlib framing and SHA-256, Ed25519 from the `cryptography`
 //! package), so its pinned values check this crate rather than restate it.
-//! Only the admission check in the first test uses PostgreSQL
-//! (`TEST_DATABASE_URL`, read by `cc_testkit`).
+//! The last test signs the vector subject's first Delegate from the written
+//! `genesis` directory alone (`delegate --genesis-dir`) and checks that it
+//! is deterministic. Only the admission check in the first test uses
+//! PostgreSQL (`TEST_DATABASE_URL`, read by `cc_testkit`).
 use cc_core::v1::{AssertedTime, Hash};
 use cc_core::{B256Constants, SecretKey, Tick};
 use cc_filter::v1::FilterIdentity;
 use cc_ledger::v1::{classify, ProjectionState, State, Store};
+use cc_publisher::v1::authority::{self, AuthorityEvent};
 use cc_publisher::v1::genesis::{
     self, Genesis, GenesisInput, BODY_FILE, ENVELOPE_FILE, MAX_BODY, MAX_KEY_FIELD, PREVIEW_FILE,
 };
@@ -1405,4 +1408,159 @@ fn genesis_dir_refuses_overwrite_and_tamper() {
         err.contains(&format!("open {}", missing.display())),
         "{err}"
     );
+}
+
+/// `delegate --genesis-dir`: the vector subject's first Delegate, signed by
+/// the vector key from the written `genesis` directory with no node context.
+/// Same inputs give the same bytes, in the library and through the binary,
+/// and every signed header field is the Genesis's.
+#[test]
+fn delegate_from_genesis_dir_is_deterministic() {
+    let fx = Fixture::new();
+    let gdir = fx.path("genesis");
+    let g = vector_genesis();
+    g.write_dir(&gdir).unwrap();
+    let signer = SecretKey::from_seed(SEED);
+    // A fixed synthetic grantee: `cc_testkit::v1::key(1)`.
+    let grantee = cc_testkit::v1::key(1).author().to_bytes();
+    let rationale = "Synthetic hot key for vector-1";
+    let build = || {
+        authority::delegate_from_genesis(&signer, &g, grantee, rationale, EVIDENCE.to_vec())
+            .unwrap()
+    };
+    let d = build();
+    assert_eq!(
+        build().signed.bytes(),
+        d.signed.bytes(),
+        "signing the same input twice must give the same bytes"
+    );
+
+    // (a) The header is the Genesis's: instance, subject, key, root grant
+    // as the signing grant and issuer, and the Genesis as the one parent.
+    assert_eq!(hex::encode(d.instance()), "09".repeat(32));
+    assert_eq!(hex::encode(d.subject()), EVENT);
+    assert_eq!(hex::encode(d.parent()), EVENT);
+    assert_eq!(hex::encode(d.grant()), ROOT_GRANT);
+    assert_eq!(hex::encode(d.author()), AUTHOR);
+    assert_eq!(d.envelope().subject_key, g.signed.envelope().subject_key);
+    assert_eq!(d.envelope().asserted_time, None);
+    let decision = d.envelope().payload.decision().unwrap();
+    assert_eq!(decision.rationale, rationale);
+    assert_eq!(
+        decision.evidence.0,
+        vec![[0xaa; 32], [0xbb; 32]],
+        "evidence is carried sorted"
+    );
+    assert_eq!(
+        d.operation(),
+        authority::Operation::Delegate {
+            grantee,
+            issuer: unhex(ROOT_GRANT),
+        }
+    );
+
+    // (b) The binary signs the same bytes, twice, and writes only the
+    // delegate layout; the directory reloads as a Delegate.
+    let args = |out: &Path| -> Vec<OsString> {
+        vec![
+            "v1".into(),
+            "delegate".into(),
+            "--key".into(),
+            fx.key.clone().into(),
+            "--genesis-dir".into(),
+            gdir.clone().into(),
+            "--grantee".into(),
+            hex::encode(grantee).into(),
+            "--rationale".into(),
+            rationale.into(),
+            "--evidence".into(),
+            hex::encode(EVIDENCE[0]).into(),
+            "--evidence".into(),
+            hex::encode(EVIDENCE[1]).into(),
+            "--out".into(),
+            out.into(),
+        ]
+    };
+    let (d1, d2) = (fx.path("d1"), fx.path("d2"));
+    let stdout = succeeded(&publisher_umask_000(args(&d1)));
+    assert!(stdout.contains("nothing was submitted"), "{stdout}");
+    assert!(stdout.contains("no receipt.json"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("new grant      {}", hex::encode(d.id()))),
+        "{stdout}"
+    );
+    succeeded(&publisher(args(&d2)));
+    assert_eq!(snapshot(&d1), snapshot(&d2));
+    assert_eq!(names(&d1), set_of(&[ENVELOPE_FILE, PREVIEW_FILE]));
+    assert_eq!(fs::read(d1.join(ENVELOPE_FILE)).unwrap(), d.signed.bytes());
+    assert_eq!(mode_of(&d1), 0o700);
+    assert_eq!(mode_of(&d1.join(ENVELOPE_FILE)), 0o600);
+    assert_eq!(AuthorityEvent::load_dir(&d1).unwrap().id(), d.id());
+    let preview: Value = serde_json::from_slice(&fs::read(d1.join(PREVIEW_FILE)).unwrap()).unwrap();
+    assert_eq!(preview, d.preview());
+    assert_eq!(preview["schema"], "cc.publisher.v1.authority-preview");
+    assert_eq!(preview["event_kind"], "delegate");
+    assert_eq!(preview["subject"], EVENT);
+    assert_eq!(preview["parent"], EVENT);
+    assert_eq!(preview["grant"], ROOT_GRANT);
+    assert_eq!(preview["author"], AUTHOR);
+    assert_eq!(preview["delegate"]["issuer"], ROOT_GRANT);
+    assert_eq!(preview["delegate"]["grantee"], hex::encode(grantee));
+    assert_eq!(preview["delegate"]["new_grant"], hex::encode(d.id()));
+    assert_eq!(preview["envelope_bytes"], d.signed.bytes().len());
+
+    // (c) Refusals write nothing: a signer that is not the Genesis author,
+    // the author as grantee, and a tampered or incomplete Genesis directory.
+    let other = fx.path("other.hex");
+    write_file(
+        &other,
+        format!("{}\n", hex::encode([2u8; 32])).as_bytes(),
+        0o600,
+    );
+    let bad = fx.path("bad");
+    let mut wrong_key = args(&bad);
+    wrong_key[3] = other.clone().into();
+    refused(&publisher(wrong_key), "is not the Genesis author");
+    assert_absent(&bad);
+    let mut self_grant = args(&bad);
+    self_grant[7] = AUTHOR.into();
+    refused(&publisher(self_grant), "a delegate key must be fresh");
+    assert_absent(&bad);
+    let tampered = fx.path("tampered");
+    fs::create_dir(&tampered).unwrap();
+    for name in [ENVELOPE_FILE, BODY_FILE, PREVIEW_FILE] {
+        fs::copy(gdir.join(name), tampered.join(name)).unwrap();
+    }
+    edit_file(&tampered.join(ENVELOPE_FILE), |b| {
+        *b.last_mut().unwrap() ^= 0x01
+    });
+    let mut from_tampered = args(&bad);
+    from_tampered[5] = tampered.clone().into();
+    let text = refused(&publisher(from_tampered), "envelope.bin: bad_signature");
+    assert!(text.contains("genesis directory"), "{text}");
+    assert_absent(&bad);
+    fs::remove_file(tampered.join(BODY_FILE)).unwrap();
+    fs::remove_file(tampered.join(ENVELOPE_FILE)).unwrap();
+    fs::copy(gdir.join(ENVELOPE_FILE), tampered.join(ENVELOPE_FILE)).unwrap();
+    let mut no_body = args(&bad);
+    no_body[5] = tampered.into();
+    refused(&publisher(no_body), "body.bin");
+    assert_absent(&bad);
+    // The library refuses the same two signing errors.
+    let err = error_text(authority::delegate_from_genesis(
+        &SecretKey::from_seed([2; 32]),
+        &g,
+        grantee,
+        rationale,
+        EVIDENCE.to_vec(),
+    ));
+    assert!(err.contains("is not the Genesis author"), "{err}");
+    let err = error_text(authority::delegate_from_genesis(
+        &signer,
+        &g,
+        signer.author().to_bytes(),
+        rationale,
+        EVIDENCE.to_vec(),
+    ));
+    assert!(err.contains("a delegate key must be fresh"), "{err}");
 }
