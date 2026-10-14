@@ -1,0 +1,1772 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Clockchain v1",
+    "version": "1.2",
+    "summary": "Public read gateway (/public/v1) and private node API.",
+    "description": "Generated from source by hand and checked against the routers by ops/test_openapi_routes.py: cc-gateway (crates/cc-gateway/src/lib.rs router) and cc-node v1 (crates/cc-node/src/serve_v1.rs router_with). Contract prose: docs/PUBLIC-ACCESS.md (gateway) and docs/USING-THE-NODE.md (node). Map of the whole stack: docs/TOPOLOGY.md.\n\nGateway rules: GET/HEAD only (other methods 405 read_only, OPTIONS 204), unknown paths 404 no_such_route, 60 requests/min per client address (429 rate_limited with Retry-After), every response carries CORS `*`, cache-control no-store, nosniff, no-referrer and a deny-all CSP. Unknown or repeated query parameters are 400 invalid_query."
+  },
+  "servers": [
+    {
+      "url": "https://clockchain.timepointai.com",
+      "description": "Public read gateway (cc-gateway); also https://timepoint-clockchain-gateway.fly.dev"
+    }
+  ],
+  "tags": [
+    {
+      "name": "public",
+      "description": "Unauthenticated, read-only. Served by cc-gateway."
+    },
+    {
+      "name": "node",
+      "description": "Private v1 node. Not reachable from the internet."
+    }
+  ],
+  "paths": {
+    "/public/v1/health": {
+      "get": {
+        "operationId": "publicHealth",
+        "tags": [
+          "public"
+        ],
+        "summary": "Ledger identity and posture",
+        "description": "Node /health minus `instance`. Not cached. Also answers HEAD.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK (never cached)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query or an invalid identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "502": {
+            "description": "bad_gateway: the node answered outside the contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "node_unavailable: the node is unreachable, timed out or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://clockchain.timepointai.com",
+            "description": "Public read gateway (cc-gateway); also https://timepoint-clockchain-gateway.fly.dev"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/public/v1/snapshot": {
+      "get": {
+        "operationId": "publicSnapshot",
+        "tags": [
+          "public"
+        ],
+        "summary": "The full committed corpus",
+        "description": "Maps to node GET /v1/snapshot. Pass fold_version and fold_manifest together or not at all.",
+        "parameters": [
+          {
+            "name": "fold_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          {
+            "name": "fold_manifest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (x-cache: hit|miss)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Snapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query or an invalid identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "unsupported_fold_version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "502": {
+            "description": "bad_gateway: the node answered outside the contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "node_unavailable: the node is unreachable, timed out or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://clockchain.timepointai.com",
+            "description": "Public read gateway (cc-gateway); also https://timepoint-clockchain-gateway.fly.dev"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/public/v1/subjects/{subject_id}": {
+      "get": {
+        "operationId": "publicSubject",
+        "tags": [
+          "public"
+        ],
+        "summary": "One subject as of a coordinate",
+        "description": "Maps to node GET /v1/subjects/{id}. 404 subject_unknown still returns the full body with visibility `subject_unknown`.",
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "description": "Subject id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "description": "Coordinate (64 lowercase hex)",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (x-cache: hit|miss)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query or an invalid identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "subject_unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectView"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "502": {
+            "description": "bad_gateway: the node answered outside the contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "node_unavailable: the node is unreachable, timed out or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://clockchain.timepointai.com",
+            "description": "Public read gateway (cc-gateway); also https://timepoint-clockchain-gateway.fly.dev"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/public/v1/revisions/{revision}/prose": {
+      "get": {
+        "operationId": "publicProse",
+        "tags": [
+          "public"
+        ],
+        "summary": "Prose body of a revision",
+        "description": "Maps to node GET /v1/revisions/{rev}/prose.",
+        "parameters": [
+          {
+            "name": "revision",
+            "in": "path",
+            "required": true,
+            "description": "Revision id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (x-cache: hit|miss)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Prose"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query or an invalid identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "revision_unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "502": {
+            "description": "bad_gateway: the node answered outside the contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "node_unavailable: the node is unreachable, timed out or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://clockchain.timepointai.com",
+            "description": "Public read gateway (cc-gateway); also https://timepoint-clockchain-gateway.fly.dev"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/public/v1/support": {
+      "get": {
+        "operationId": "publicSupport",
+        "tags": [
+          "public"
+        ],
+        "summary": "Recorded support between two subjects",
+        "description": "Maps to node GET /v1/support.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "From subject",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "To subject",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "description": "Coordinate",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (x-cache: hit|miss)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Support"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query or an invalid identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "502": {
+            "description": "bad_gateway: the node answered outside the contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "node_unavailable: the node is unreachable, timed out or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://clockchain.timepointai.com",
+            "description": "Public read gateway (cc-gateway); also https://timepoint-clockchain-gateway.fly.dev"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/public/v1/receipts/{event}": {
+      "get": {
+        "operationId": "publicReceipts",
+        "tags": [
+          "public"
+        ],
+        "summary": "Node receipts for one event",
+        "description": "Maps to node GET /v1/receipts/{event}. Never cached.",
+        "parameters": [
+          {
+            "name": "event",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (never cached)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipts"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query or an invalid identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no_receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "502": {
+            "description": "bad_gateway: the node answered outside the contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "node_unavailable: the node is unreachable, timed out or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://clockchain.timepointai.com",
+            "description": "Public read gateway (cc-gateway); also https://timepoint-clockchain-gateway.fly.dev"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "nodeHealth",
+        "tags": [
+          "node"
+        ],
+        "summary": "Identity, build, posture",
+        "description": "Includes `instance`. Auth: none.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": []
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "nodeReady",
+        "tags": [
+          "node"
+        ],
+        "summary": "Readiness",
+        "description": "200 {serving:true,posture}; 503 {serving:false,posture,reason}. Auth: none.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "serving"
+          },
+          "503": {
+            "description": "not serving"
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": []
+      }
+    },
+    "/robots.txt": {
+      "get": {
+        "operationId": "nodeRobots",
+        "tags": [
+          "node"
+        ],
+        "summary": "Deny-all robots",
+        "description": "text/plain. Auth: none.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "User-agent: * / Disallow: /",
+            "content": {
+              "text/plain": {}
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": []
+      }
+    },
+    "/v1/snapshot": {
+      "get": {
+        "operationId": "nodeSnapshot",
+        "tags": [
+          "node"
+        ],
+        "summary": "Committed corpus",
+        "description": "Same body as the public route, which strips any top-level `instance`. Auth: Bearer CC_NODE_API_KEY or CC_NODE_READ_KEY.",
+        "parameters": [
+          {
+            "name": "fold_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          {
+            "name": "fold_manifest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/subjects/{subject_id}": {
+      "get": {
+        "operationId": "nodeSubject",
+        "tags": [
+          "node"
+        ],
+        "summary": "Subject as of a coordinate",
+        "description": "Same body as the public route, which strips any top-level `instance`. Auth: Bearer CC_NODE_API_KEY or CC_NODE_READ_KEY.",
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "description": "Subject id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "description": "Coordinate (64 lowercase hex)",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/revisions/{revision}/prose": {
+      "get": {
+        "operationId": "nodeProse",
+        "tags": [
+          "node"
+        ],
+        "summary": "Revision prose",
+        "description": "Same body as the public route, which strips any top-level `instance`. Auth: Bearer CC_NODE_API_KEY or CC_NODE_READ_KEY.",
+        "parameters": [
+          {
+            "name": "revision",
+            "in": "path",
+            "required": true,
+            "description": "Revision id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/support": {
+      "get": {
+        "operationId": "nodeSupport",
+        "tags": [
+          "node"
+        ],
+        "summary": "Support between subjects",
+        "description": "Same body as the public route, which strips any top-level `instance`. Auth: Bearer CC_NODE_API_KEY or CC_NODE_READ_KEY.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "From subject",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "To subject",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "description": "Coordinate",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/receipts/{event}": {
+      "get": {
+        "operationId": "nodeReceipts",
+        "tags": [
+          "node"
+        ],
+        "summary": "Receipts for an event",
+        "description": "Same body as the public route, which strips any top-level `instance`. Auth: Bearer CC_NODE_API_KEY or CC_NODE_READ_KEY.",
+        "parameters": [
+          {
+            "name": "event",
+            "in": "path",
+            "required": true,
+            "description": "Event id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/seal": {
+      "get": {
+        "operationId": "nodeSeal",
+        "tags": [
+          "node"
+        ],
+        "summary": "Freshly signed seal over the committed snapshot",
+        "description": "503 no_seal_key without CC_V1_NODE_SEED. Logged hourly by ops/seal_v1.py. Auth: Bearer CC_NODE_API_KEY or CC_NODE_READ_KEY.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Seal"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/candidates": {
+      "post": {
+        "operationId": "nodeSubmitCandidate",
+        "tags": [
+          "node"
+        ],
+        "summary": "Submit one signed envelope",
+        "description": "Body is raw envelope bytes (max MAX_ENVELOPE). 201 valid, 202 pending, 422 invalid. Frozen posture answers 503 frozen. Auth: Bearer CC_NODE_API_KEY only.",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "valid"
+          },
+          "202": {
+            "description": "pending"
+          },
+          "422": {
+            "description": "invalid"
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "read_only_credential: a read key cannot write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bodies/{sha256}": {
+      "put": {
+        "operationId": "nodeRetainBody",
+        "tags": [
+          "node"
+        ],
+        "summary": "Retain a body by its SHA-256",
+        "description": "201 new, 200 existing {body_hash,new}; 422 body_hash_mismatch. Auth: Bearer CC_NODE_API_KEY only.",
+        "parameters": [
+          {
+            "name": "sha256",
+            "in": "path",
+            "required": true,
+            "description": "SHA-256 of the body",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "already retained"
+          },
+          "201": {
+            "description": "retained"
+          },
+          "400": {
+            "description": "invalid_body_hash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "body_hash_mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "read_only_credential: a read key cannot write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/export": {
+      "get": {
+        "operationId": "nodeExport",
+        "tags": [
+          "node"
+        ],
+        "summary": "Full export manifest",
+        "description": "ExportManifest JSON with `envelopes` as hex strings. Used by backups and the explorer's signature check. Auth: Bearer CC_NODE_API_KEY only.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "unauthorized (WWW-Authenticate: Bearer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "read_only_credential: a read key cannot write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "busy (Retry-After: 1), store_unavailable or frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "https://{node}",
+            "description": "Private v1 node (cc-node, CC_NODE_LEDGER=v1). Private ingress only; operators reach it through their own proxy.",
+            "variables": {
+              "node": {
+                "default": "timepoint-clockchain-prod.flycast"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "nodeBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "CC_NODE_API_KEY (read+write) or CC_NODE_READ_KEY (read)."
+      }
+    },
+    "responses": {
+      "RateLimited": {
+        "description": "rate_limited",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "examples": [
+              "invalid_query",
+              "no_such_route",
+              "rate_limited",
+              "read_only",
+              "node_unavailable",
+              "bad_gateway"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "ledger": {
+            "const": "v1"
+          },
+          "build": {
+            "type": "string"
+          },
+          "posture": {
+            "enum": [
+              "live",
+              "frozen"
+            ]
+          },
+          "instance": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Node only; the gateway strips it."
+          },
+          "fold_version": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "integer"
+              },
+              "manifest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "filter_version": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "curators": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "max_hops": {
+            "type": "integer"
+          },
+          "semantic": {
+            "type": "string"
+          }
+        }
+      },
+      "Snapshot": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "object",
+            "properties": {
+              "fold_version": {
+                "type": "integer"
+              },
+              "fold_manifest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "filter_version": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "corpus_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "commitment": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "rows": {
+            "type": "array"
+          },
+          "subjects": {
+            "type": "array"
+          },
+          "revisions": {
+            "type": "array"
+          },
+          "edges": {
+            "type": "array"
+          },
+          "media": {
+            "type": "array"
+          },
+          "authority": {
+            "type": "object",
+            "properties": {
+              "active": {},
+              "canceled": {},
+              "effective_revokes": {},
+              "effects": {},
+              "grants": {},
+              "tombstones": {}
+            }
+          }
+        }
+      },
+      "SubjectView": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "object",
+            "properties": {
+              "fold_version": {
+                "type": "integer"
+              },
+              "fold_manifest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "filter_version": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "corpus_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "commitment": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "as_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "state": {},
+          "frontier": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "revision": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "Prose": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "object",
+            "properties": {
+              "fold_version": {
+                "type": "integer"
+              },
+              "fold_manifest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "filter_version": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "corpus_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "commitment": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "availability": {
+            "enum": [
+              "available",
+              "unavailable",
+              "not_utf8"
+            ]
+          },
+          "prose": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Support": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "object",
+            "properties": {
+              "fold_version": {
+                "type": "integer"
+              },
+              "fold_manifest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "filter_version": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "corpus_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "commitment": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "as_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "support": {
+            "type": "object"
+          }
+        }
+      },
+      "Receipts": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "receipt": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "receipt_digest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "node_key": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "event": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "received_at": {},
+                "encoding_version": {},
+                "fold_version": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "integer"
+                    },
+                    "manifest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                "initial_admission_result": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "valid",
+                        "pending",
+                        "invalid"
+                      ]
+                    },
+                    "reason": {},
+                    "missing": {
+                      "type": "array"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Seal": {
+        "type": "object",
+        "properties": {
+          "seal": {
+            "type": "object",
+            "properties": {
+              "instance": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "node_key": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "fold_version": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "integer"
+                  },
+                  "manifest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              },
+              "filter_version": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "corpus_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "commitment": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "counts": {
+                "type": "object",
+                "properties": {
+                  "candidates": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "build": {
+                "type": "string"
+              },
+              "sealed_at_us": {
+                "type": "integer"
+              }
+            }
+          },
+          "signature": {
+            "type": "string"
+          },
+          "node_key": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

@@ -39,6 +39,11 @@ entries and generation remain owner decisions.
 
 Report security issues as described in [SECURITY.md](SECURITY.md).
 
+Every surface of the stack (services, hosts, consumers, operator tools, docs) is
+mapped in [docs/TOPOLOGY.md](docs/TOPOLOGY.md); every HTTP route is in the
+OpenAPI 3.1 file [docs/reference/openapi.json](docs/reference/openapi.json), which CI
+checks against the routers.
+
 The v1 surfaces are:
 
 - the node in v1 mode: [using the node](docs/USING-THE-NODE.md#v1-mode);
