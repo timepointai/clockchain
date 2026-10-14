@@ -20,6 +20,9 @@ follow-ups. The [launch evidence](docs/LAUNCH-EVIDENCE.md) maps each
 and named tests; #6 was closed by the owner on 2026-10-08. The post-launch program
 is [Stage (g)](docs/design/STAGE-G.md).
 
+For a map of every surface, see [docs/TOPOLOGY.md](docs/TOPOLOGY.md) and the
+OpenAPI file [docs/reference/openapi.json](docs/reference/openapi.json).
+
 For v1 work, read in this order:
 
 1. [MULTI-SIGNER.md](docs/design/MULTI-SIGNER.md), then stages
