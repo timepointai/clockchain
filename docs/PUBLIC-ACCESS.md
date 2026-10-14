@@ -16,7 +16,11 @@ secret. The node stays on private ingress. The verify block below passed at
 enablement and again over both IP families on 2026-10-09. The disable
 commands are in "Disable". Since 2026-10-12 the static explorer is served at
 `https://timepoint-clockchain-explorer.fly.dev` from its own Fly app ([deploy/explorer](../deploy/explorer/README.md));
-it holds no key and reads only `/public/v1`. Exposing the node's corpus to the internet was an **owner
+it holds no key and reads only `/public/v1`. Since 2026-10-14 the custom domain
+`clockchain.timepointai.com` points at the gateway: the owner authorized moving the
+certificate from the node to the gateway on 2026-10-13 and changed the DNS records on
+2026-10-14; the certificate is issued and `/public/v1/health` answers 200 there. The node
+holds no certificate. Exposing the node's corpus to the internet was an **owner
 decision**. Under [HOLD.md](../HOLD.md) and
 the Stage (g) boundary, opening public ingress and setting production secrets are
 one-command steps from the owner's workstation, run by the owner or by the

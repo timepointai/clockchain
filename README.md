@@ -28,7 +28,8 @@ monitoring, keys, node receipts, read-only gateway and explorer) is merged and
 the production node runs its build; see [OPERATIONS.md](docs/OPERATIONS.md).
 Since 2026-10-08 the read-only public gateway ([public access](docs/PUBLIC-ACCESS.md))
 serves the corpus at `https://timepoint-clockchain-gateway.fly.dev/public/v1`
-(IPv6 and, since 2026-10-09, shared IPv4); the node itself stays private.
+(IPv6 and, since 2026-10-09, shared IPv4), and since 2026-10-14 also at
+`https://clockchain.timepointai.com/public/v1`; the node itself stays private.
 `fold_version` 1 and its governed defaults are frozen; a change to admission or
 projection needs a new fold version. See the [v1.0](docs/releases/v1.0.md),
 [v1.1](docs/releases/v1.1.md) and [v1.2](docs/releases/v1.2.md) release notes, the
