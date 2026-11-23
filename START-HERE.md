@@ -1,58 +1,23 @@
 # Start here
 
-Read [README](README.md), [contributing](CONTRIBUTING.md), and the document for the
-interface you are changing. Current instructions are in [AGENTS.md](AGENTS.md);
-standing owner constraints are in [HOLD.md](HOLD.md). Work starts from an owner's
-explicit scope. Historical planning and production evidence remain private.
+New to the repo? Read the [README](README.md). It says what Clockchain is, how
+to run it and where everything lives.
 
-## Current state
+Then, by what you want to do:
 
-Clockchain v1 has been in production since 2026-10-02, the node on private ingress, with
-one subject and two events: the inaugural Engelbart 1968 Genesis and the owner's
-2026-10-05 Delegate to a hot key. Since 2026-10-08 a read-only public gateway
-serves the corpus at `https://timepoint-clockchain-gateway.fly.dev/public/v1`, and since
-2026-10-14 at `https://clockchain.timepointai.com/public/v1`
-([public access](docs/PUBLIC-ACCESS.md)).
-`fold_version` 1 is frozen. The [v1.0](docs/releases/v1.0.md),
-[v1.1](docs/releases/v1.1.md) and [v1.2](docs/releases/v1.2.md) release notes list what shipped and the known
-follow-ups. The [launch evidence](docs/LAUNCH-EVIDENCE.md) maps each
-[issue #6](https://github.com/timepointai/clockchain/issues/6) gate to merged PRs
-and named tests; #6 was closed by the owner on 2026-10-08. The post-launch program
-is [Stage (g)](docs/design/STAGE-G.md).
+- Run it on your machine: [docs/LOCAL-DEV.md](docs/LOCAL-DEV.md).
+- Understand how it fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [docs/TOPOLOGY.md](docs/TOPOLOGY.md).
+- Read the data: [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md) and the HTTP routes in [docs/reference/openapi.json](docs/reference/openapi.json).
+- Change code: [CONTRIBUTING.md](CONTRIBUTING.md).
+- Find a doc: [docs/README.md](docs/README.md) sorts every doc into start here, reference, operations and historical.
 
-For a map of every surface, see [docs/TOPOLOGY.md](docs/TOPOLOGY.md) and the
-OpenAPI file [docs/reference/openapi.json](docs/reference/openapi.json).
+## Rules that apply to everyone
 
-For v1 work, read in this order:
+- [AGENTS.md](AGENTS.md) has the current working instructions, for people and agents.
+- [HOLD.md](HOLD.md) lists the standing owner constraints. Read it before any release, publication, generation or fixture work.
+- Work starts from the owner's explicit scope. Production data, credentials and private research are not in this repo.
+- Security reports: [SECURITY.md](SECURITY.md).
 
-1. [MULTI-SIGNER.md](docs/design/MULTI-SIGNER.md), then stages
-   [(a)](docs/design/STAGE-A.md) to [(f)](docs/design/STAGE-F.md);
-2. [using the node](docs/USING-THE-NODE.md#v1-mode) and
-   [publisher v1](docs/PUBLISHER-V1.md);
-3. the owner [first-entry runbook](docs/FIRST-ENTRY.md) and
-   [owner operations](docs/CICD-FLY.md).
+## Continuing an owner session
 
-The legacy v0 paths (legacy node mode, `cc-anchor-tick`, `cc-migrator`, the v0
-`cc-publisher` commands and the v0 database archive) stay in the code for the
-archive and regression tests, but they are not part of the v1 service. The
-[README](README.md#legacy-v0-paths) lists them.
-
-## Continuity
-
-For a fresh agent continuing an owner session, follow
-[session continuity](docs/SESSION-HANDOFF.md). On the owner's workstation, the
-current task and exact operator handoff are in the owner's private `HANDOFF.md`;
-durable lessons are in the private `MEMORY.md`. The owner supplies their location
-outside this checkout. Read these before treating an old plan, approval bundle
-or experimental result as current work. Cloud
-sessions do not have these files; their scope comes from the owner's prompt and
-the current stage contract.
-
-The event log is the ledger; Postgres maintains projections. TT owns ontology and
-hash semantics. Changes must preserve identity, exact body bytes, source provenance
-and signed evidence. Content approval is separate from infrastructure permission.
-
-GitHub CI never deploys. [Private owner operations](docs/CICD-FLY.md) describes
-release checks and recovery. Production runs the v1 app and its private database,
-with no tick; tests use disposable local containers. Corpus access is private and
-authenticated.
+Agents continuing an owner session follow [docs/SESSION-HANDOFF.md](docs/SESSION-HANDOFF.md). The owner's private handoff files are outside this checkout. Cloud sessions do not have them; their scope comes from the owner's prompt and the current stage contract.
