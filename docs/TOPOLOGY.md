@@ -1,41 +1,43 @@
 # Clockchain topology
 
 One page that names every surface of the Clockchain v1 stack and where it is
-defined. Checked against source and the live hosts on 2026-10-14.
+defined. Checked against source and the live hosts on 2026-10-14; the code
+sections were rechecked on 2026-11-23. How the parts work together is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 - HTTP routes, parameters and response shapes: [reference/openapi.json](reference/openapi.json)
   (OpenAPI 3.1). `ops/test_openapi_routes.py` fails CI if the spec and the
   routers disagree.
 - Contract prose: [PUBLIC-ACCESS.md](PUBLIC-ACCESS.md) (public gateway) and
-  [USING-THE-NODE.md](USING-THE-NODE.md) (node).
+  [USING-THE-NODE.md](USING-THE-NODE.md) (node routes and data model).
 
 ```
  browsers / agents / apps
    │
    ├─ timepoint-clockchain-explorer.fly.dev ── static explorer + Wasm verifier ─┐
-   ├─ timepoint-mcp-prod.fly.dev/mcp/ ── clockchain_v1_* tools ─────────────────┤
+   ├─ Timepoint MCP server ── clockchain_v1_* tools ───────────────────────────┤
    ├─ api.timepointai.com/api/v1/clockchain/v1/* ── pass-through ───────────────┤
-   ├─ timepoint-web-app-prod.fly.dev/clockchain ── v1 pages ────────────────────┤
+   ├─ Timepoint web app /clockchain ── v1 pages ────────────────────────────────┤
    ├─ Python / TypeScript public clients ───────────────────────────────────────┤
    ▼                                                                            ▼
  clockchain.timepointai.com/public/v1   (= timepoint-clockchain-gateway.fly.dev)
  cc-gateway: GET only, no key from callers, 60 req/min per address, cached reads
    │  Bearer read key, private network
    ▼
- cc-node v1 (Fly app timepoint-clockchain-prod, private ingress)
+ cc-node v1 (private Fly app, no public ingress)
    │  writes: cc-publisher v1 (operator, Bearer API key)
    ▼
- Postgres (Fly app timepoint-clockchain-prod-db)
+ Postgres (private Fly app)
 ```
 
 ## Services
 
 | Service | Where | Source | Exposes |
 |---|---|---|---|
-| Node | `timepoint-clockchain-prod` (private) | `crates/cc-node` (`serve_v1.rs::router_with`) | 12 routes: health, ready, robots, 6 reads (snapshot, subjects, prose, support, receipts, seal), 3 writes (candidates, bodies, export). Auth: read key or API key; writes API key only. |
+| Node | private Fly app | `crates/cc-node` (`serve_v1.rs::router_with`) | 12 routes: health, ready, robots, 6 reads (snapshot, subjects, prose, support, receipts, seal), 3 writes (candidates, bodies, export). Auth: read key or API key; writes API key only. |
 | Public gateway | `clockchain.timepointai.com`, `timepoint-clockchain-gateway.fly.dev` | `crates/cc-gateway` (`lib.rs::router`), template `deploy/public/` | 6 routes under `/public/v1`: health, snapshot, subjects, prose, support, receipts. No seal or export. |
 | Explorer | `timepoint-clockchain-explorer.fly.dev` | `web/explorer`, `crates/cc-wasm-verify`, template `deploy/explorer/` | Views `#/` subjects, `#/subject/{id}`, `#/dag`, `#/edges`, `#/kind/{id}`, `#/verify`. Recomputes event ids, corpus digest, filter_version and commitment in the browser; signatures only with a supplied export. |
-| Database | `timepoint-clockchain-prod-db` | `migrations/` (v0) and the v1 store in `cc-node` | Postgres, private. |
+| Database | private Fly app | `migrations/` (v0) and the v1 store in `cc-node` | Postgres, private. |
 
 ## Consumers (other repos)
 
@@ -61,7 +63,7 @@ defined. Checked against source and the live hosts on 2026-10-14.
 
 ## Docs index
 
-Start: [README](../README.md), [START-HERE](../START-HERE.md), [HOLD](../HOLD.md).
+Start: [README](../README.md), [ARCHITECTURE](ARCHITECTURE.md), [START-HERE](../START-HERE.md), [HOLD](../HOLD.md).
 Using: [PUBLIC-ACCESS](PUBLIC-ACCESS.md), [USING-THE-NODE](USING-THE-NODE.md), [INTEGRATIONS](INTEGRATIONS.md), [clients](../clients/README.md), [explorer](../web/explorer/README.md).
 Writing: [PUBLISHER-V1](PUBLISHER-V1.md), [AUTHORING-V1](AUTHORING-V1.md), [FIRST-ENTRY](FIRST-ENTRY.md), [KEYS](KEYS.md), [ADMISSION-REVIEW](ADMISSION-REVIEW.md).
 Operating: [OPERATIONS](OPERATIONS.md), [CICD-FLY](CICD-FLY.md), [LOCAL-DEV](LOCAL-DEV.md), [GREEN-DELIVERY](GREEN-DELIVERY.md), [SESSION-HANDOFF](SESSION-HANDOFF.md).

@@ -1,134 +1,98 @@
 # Clockchain
 
-A signed, append-only temporal evidence ledger in Rust and PostgreSQL. It records
-claims, source evidence, typed relationships and media provenance, with explicit
-query coordinates and cryptographic verification. The project's goal is historical truth:
-the best-supported account of what happened, refined as evidence improves.
-Historical judgments weigh sources, corroboration, alternatives and uncertainty;
-signatures make the authorship and integrity of those judgments verifiable, not
-their truth.
-Feasibility is relative to recorded evidence. See the
-[historical evidence standard](docs/evaluation/design-boundaries.md).
+Clockchain is a signed, append-only ledger of historical claims, written in Rust
+on PostgreSQL. This repo is the public core. The owner runs a private instance.
 
-This repository contains the core implementation and reusable operator tooling.
-Production data, credentials, backups, approvals and private research are not part
-of the public repository. Public source does not provide access to the owner's
-private instance. No software license is granted beyond applicable repository-host
-terms; existing upstream dependency licenses remain in force.
+## What it does
+
+A historical claim is only useful if you can see where it came from. Clockchain
+records each claim with its source evidence, typed links to other claims, and
+any media, such as an image. Every entry is signed, so you can check who wrote
+it and that nobody changed it. Every read says which moment in time it asks
+about, so the answer does not drift.
+
+Signatures prove authorship and integrity. They do not prove a claim is true.
+The goal is historical truth: the best-supported account of what happened,
+revised as evidence improves. The ledger therefore keeps three things apart:
+the cryptographic checks, the structural checks, and the historical confidence
+in a claim. A missing body, missing evidence, an unknown date and a deliberate
+absence of media are four different states. The ledger never fills a gap with
+an assertion. See the [historical evidence standard](docs/evaluation/design-boundaries.md).
+
+## Why it exists
+
+Clockchain is the record layer of the Timepoint system: the place where
+historical claims are kept with their evidence and a signature. It is a leaf
+service. Other Timepoint services read from it; it calls none of them. Readers
+use a public, read-only gateway or the typed clients in `clients/`. The shared
+vocabulary comes from Timepoint Telemetry (TT), which is upstream and defines
+the ontology and hash rules; the pinned copy is in `vendor/tt/`.
+
+Some older Timepoint services were written for the retired Python Clockchain
+API, which v1 does not serve. Timepoint Beta, the simulation engine, does not
+call Clockchain at all. [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) records
+each consumer and its migration path, and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) shows where Clockchain sits.
 
 ## Status
 
-Clockchain v1 has been in production since 2026-10-02. The production node runs
-`cc-node` in v1 mode (`CC_NODE_LEDGER=v1`) on a fresh v1 database, behind
-private ingress only. It holds one subject and two events: the inaugural
-Engelbart 1968 Genesis and the owner's Delegate of a per-subject hot signing key
-(2026-10-05). The
-Stage (g) post-launch program (update releases, scheduled verified backups,
-monitoring, keys, node receipts, read-only gateway and explorer) is merged and
-the production node runs its build; see [OPERATIONS.md](docs/OPERATIONS.md).
-Since 2026-10-08 the read-only public gateway ([public access](docs/PUBLIC-ACCESS.md))
-serves the corpus at `https://timepoint-clockchain-gateway.fly.dev/public/v1`
-(IPv6 and, since 2026-10-09, shared IPv4), and since 2026-10-14 also at
-`https://clockchain.timepointai.com/public/v1`; the node itself stays private.
-`fold_version` 1 and its governed defaults are frozen; a change to admission or
-projection needs a new fold version. See the [v1.0](docs/releases/v1.0.md),
-[v1.1](docs/releases/v1.1.md) and [v1.2](docs/releases/v1.2.md) release notes, the
-[launch evidence](docs/LAUNCH-EVIDENCE.md) for the
-[issue #6](https://github.com/timepointai/clockchain/issues/6) gates (closed
-2026-10-08), and the standing owner constraints in [HOLD.md](HOLD.md). Further
-entries and generation remain owner decisions.
+Version 1 has run in production since 2026-10-02. The data is small: one
+subject, the 1968 Engelbart demo, and two events. The node is private. A
+read-only public gateway serves the corpus at
+`https://clockchain.timepointai.com/public/v1`, and a static
+[explorer](web/explorer/README.md) at `https://timepoint-clockchain-explorer.fly.dev`
+reads it and verifies entries in your browser. Further entries and any content
+generation are owner decisions, listed in [HOLD.md](HOLD.md). Release notes are
+in [docs/releases/](docs/releases/v1.2.md).
 
-Report security issues as described in [SECURITY.md](SECURITY.md).
+Public source does not give access to the private instance or its data. No
+software license is granted beyond the repository host's terms; upstream
+dependency licenses still apply.
 
-Every surface of the stack (services, hosts, consumers, operator tools, docs) is
-mapped in [docs/TOPOLOGY.md](docs/TOPOLOGY.md); every HTTP route is in the
-OpenAPI 3.1 file [docs/reference/openapi.json](docs/reference/openapi.json), which CI
-checks against the routers.
+## Quick start
 
-The v1 surfaces are:
+You need Docker and the Rust toolchain pinned in `rust-toolchain.toml`
+(`rustup` installs it on first use).
 
-- the node in v1 mode: [using the node](docs/USING-THE-NODE.md#v1-mode);
-- public reads: the [read-only gateway](docs/PUBLIC-ACCESS.md) (`/public/v1`),
-  plus the static [explorer and verifier](web/explorer/README.md) served at
-  `https://timepoint-clockchain-explorer.fly.dev`, which reads the gateway and verifies in
-  the browser;
-- signing and submission: [publisher v1](docs/PUBLISHER-V1.md) and the
-  [key runbook](docs/KEYS.md) (cold root, hot delegate);
-- operations: routine [update releases, backups, monitoring and the seal
-  log](docs/OPERATIONS.md); the completed one-time [first entry](docs/FIRST-ENTRY.md)
-  runbook and [Fly deployment](docs/CICD-FLY.md);
-- the rules: [multi-signer design](docs/design/MULTI-SIGNER.md), stages
-  [(a)](docs/design/STAGE-A.md) to [(f)](docs/design/STAGE-F.md) and the
-  [post-launch program (g)](docs/design/STAGE-G.md); sealing options in
-  [SEALING.md](docs/design/SEALING.md).
+```sh
+make db-up        # Postgres in Docker
+make check        # format, Clippy, then the Rust tests on a real database
+```
 
-### Legacy v0 paths
+Tests run against a real Postgres. There are no database mocks. To run a node
+and read from it, follow [docs/LOCAL-DEV.md](docs/LOCAL-DEV.md).
 
-These remain in the code for the archive and for regression tests. They are not
-part of the v1 service. Nothing here removes them.
+## Map of the repo
 
-- **Legacy node mode.** `cc-node` without `CC_NODE_LEDGER=v1`, its v0 routes
-  (`/health/deep`, `/v1/entities/…`, `/v1/feasibility`, `/v1/events` and the
-  rest) and `cc-node migrate`, which v1 mode refuses.
-- **`cc-anchor-tick`.** The hourly v0 seal and anchor job. v1 runs no tick.
-- **`cc-migrator`.** The v0 exhibit replay writer.
-- **v0 publisher commands.** Every `cc-publisher` command outside
-  `cc-publisher v1` (`validate`, `brief-stage`, `candidate-stage`, `approve-*`,
-  `publish`, `pause`, `resume`, `status` and the rest). Apart from the offline
-  `validate`, they act on the v0 database; `publish` writes v0 events.
-- **The v0 database.** It is kept untouched as an archive. No v1 tool reads or
-  writes it.
+- `crates/`: Rust workspace. `cc-core` (encoding, hashing, identity), `cc-filter`
+  (the feasibility rule), `cc-ledger` (event log and projections), `cc-node` (the
+  HTTP node), `cc-gateway` (public read-only gateway), `cc-publisher` (offline
+  signing and submission), `cc-authoring`, `cc-testkit`, and two Wasm crates
+  for the browser verifier. `cc-anchor` and `cc-migrator` are legacy v0.
+- `migrations/`: SQL schema migrations. Never edit one that has been applied.
+- `vendor/tt/`: pinned TT ontology and conformance vectors.
+- `web/explorer/`: the static explorer and in-browser verifier.
+- `clients/`: Python and TypeScript read clients, and recorded fixtures.
+- `ops/`: Python tools for tests, backups and owner releases.
+- `deploy/`: deploy templates for the gateway and explorer.
+- `docs/`: documentation. [docs/README.md](docs/README.md) is the index.
 
-## Structure
+Legacy v0 code (legacy node mode, `cc-anchor-tick`, `cc-migrator`, the v0
+`cc-publisher` commands and the v0 database) stays for the archive and for
+regression tests. It is not part of the v1 service.
 
-- `crates/`: core, filter, ledger, anchor, node, authoring, publisher, migrator,
-  testkit and Wasm vectors. `cc-migrator` and the `cc-anchor-tick` binary are
-  legacy v0 paths (above).
-- `migrations/`: immutable applied schema migrations.
-- `vendor/tt/`: pinned ontology artifacts and conformance vectors; TT is upstream.
-- `ops/`: validation, local acceptance, backup and owner-operated release tools.
-- `docs/`: current API, media, evaluation and operating contracts.
+## Map of the docs
 
-## Develop and verify
+- [START-HERE.md](START-HERE.md): the shortest route in.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the pieces fit together.
+- [docs/TOPOLOGY.md](docs/TOPOLOGY.md): every surface of the stack.
+- [docs/USING-THE-NODE.md](docs/USING-THE-NODE.md) and [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md): the APIs.
+- [docs/reference/openapi.json](docs/reference/openapi.json): every route.
+- [docs/LOCAL-DEV.md](docs/LOCAL-DEV.md): running it locally.
+- [docs/README.md](docs/README.md): all docs, sorted into start here, reference, operations and history.
 
-Use the pinned Rust toolchain, Docker and PostgreSQL 18. `make db-up`, then
-`make check`. CI runs format, Clippy, real-Postgres tests, Wasm compilation and
-Python operator tests. Install operator Python dependencies with
-`python3 -m pip install -r ops/requirements.txt`.
+## Working on it
 
-Corpus reads require a scoped Bearer credential. A missing body, missing
-evidence, unknown date and deliberate media absence are distinct states. Do not
-replace missing evidence with an assertion.
-
-## Generation tooling (held, v0-era)
-
-The checkout contains software and synthetic test fixtures, not a ledger.
-Generation and model calls are held by [HOLD.md](HOLD.md). The tooling below
-predates v1: it validates proposals with the v0 publisher and does not produce
-v1 envelopes.
-
-The [local permissive-model pilot](docs/LOCAL-GENERATION.md) generates at most
-three source-backed proposals outside the repository. Model output supplies the
-historical content; software supplies validation and measured provenance. The
-[model operating workflow](docs/MODEL-OPERATIONS.md) provides daily discovery,
-human model selection, bounded hosted evaluation and a configurable proposal-only
-runtime. [Adaptive generation](docs/ADAPTIVE-GENERATION.md) describes the longer-term
-batch and local-inference architecture. Deployment does not enable generation.
-
-## Private operation
-
-GitHub Actions tests code and never deploys. The owner explicitly releases a
-clean, CI-passing main commit using an immutable image digest. Acceptance runs in
-temporary local Docker containers with its own PG18, credentials and synthetic
-data; it never uses production data. The same tested image is promoted. The
-production node and its private Postgres run on Fly with no public ingress; the
-separate read-only gateway app is the only public surface, and it holds nothing
-but a read key. The v1 release refuses any running or scheduled tick machine.
-Deploys, public exposure, secrets, key ceremonies and new entries are owner
-actions run from the owner's workstation under dated decisions in
-[HOLD.md](HOLD.md).
-
-See [owner operations](docs/CICD-FLY.md), [API](docs/USING-THE-NODE.md),
-[media](docs/TYPED-MEDIA-ABSENCE.md), [evaluation](docs/evaluation/README.md) and
-[contributing](CONTRIBUTING.md). No continuous generation is implied; the public
-read service is the gateway described above, nothing more.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Report
+security issues as described in [SECURITY.md](SECURITY.md). Deploys are manual
+owner actions; CI never deploys.
