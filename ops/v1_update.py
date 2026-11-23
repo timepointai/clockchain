@@ -66,7 +66,8 @@ class ReadOnlyNode:
             with self.opener(req, timeout=TIMEOUT) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as exc:
-            return exc.code, exc.read()
+            with exc:  # an HTTPError holds its body stream open until closed
+                return exc.code, exc.read()
 
     def get(self, path, key=None):
         return self.request('GET', path, key)
